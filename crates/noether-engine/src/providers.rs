@@ -6,8 +6,9 @@
 //!   VERTEX_AI_PROJECT: GCP project (default: a2p-common)
 //!   VERTEX_AI_LOCATION: region (default: global; Mistral defaults to us-central1)
 //!   VERTEX_AI_TOKEN: auth token (required for vertex providers)
-//!   VERTEX_AI_MODEL: LLM model (default: gemini-2.5-flash; use gemini-2.5-pro for higher quality)
-//!     Mistral models: mistral-small-2503, mistral-medium-3, codestral-2
+//!   VERTEX_AI_MODEL: LLM model (default: mistral-small-2503 — fastest + cheapest on EU)
+//!     Gemini: gemini-2.5-flash (global), gemini-2.5-pro (global)
+//!     Mistral (europe-west4 only): mistral-small-2503, mistral-medium-3, codestral-2
 //!   VERTEX_AI_EMBEDDING_MODEL: embedding model (default: text-embedding-005)
 //!   VERTEX_AI_EMBEDDING_DIMENSIONS: embedding dimensions (default: 256)
 
@@ -71,8 +72,14 @@ pub fn build_llm_provider() -> (Box<dyn LlmProvider>, &'static str) {
             }
         },
         _ => {
-            // Auto-detect: check model name to route to Mistral, otherwise Gemini.
-            if is_mistral_model(&model) {
+            // Auto-detect: resolve model from env → LlmConfig default, then route.
+            let resolved = model.clone();
+            let resolved = if resolved.is_empty() {
+                crate::llm::LlmConfig::default().model
+            } else {
+                resolved
+            };
+            if is_mistral_model(&resolved) {
                 match build_mistral_llm() {
                     Ok(p) => (p, "mistral"),
                     Err(e) => {

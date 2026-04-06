@@ -58,10 +58,10 @@ pub struct LlmConfig {
 impl Default for LlmConfig {
     fn default() -> Self {
         Self {
-            // gemini-2.5-flash: fast, no thinking mode, ideal for structured JSON tasks.
-            // Use VERTEX_AI_MODEL=gemini-2.5-pro to override when quality matters more.
+            // mistral-small-2503: fastest + cheapest on europe-west4 ($0.05/1K calls).
+            // Override with VERTEX_AI_MODEL=gemini-2.5-flash or =mistral-medium-3, etc.
             model: std::env::var("VERTEX_AI_MODEL")
-                .unwrap_or_else(|_| "gemini-2.5-flash".into()),
+                .unwrap_or_else(|_| "mistral-small-2503".into()),
             max_tokens: 8192,
             temperature: 0.2,
         }

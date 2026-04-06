@@ -19,7 +19,9 @@ impl VertexAiConfig {
     ///   3. Error — no token available
     pub fn from_env() -> Result<Self, String> {
         let project = std::env::var("VERTEX_AI_PROJECT").unwrap_or_else(|_| "a2p-common".into());
-        let location = std::env::var("VERTEX_AI_LOCATION").unwrap_or_else(|_| "global".into());
+        // Default to europe-west4: works for both Gemini and Mistral, lower latency from EU.
+        // Gemini also works on "global"; Mistral requires a regional endpoint.
+        let location = std::env::var("VERTEX_AI_LOCATION").unwrap_or_else(|_| "europe-west4".into());
 
         let token = if let Ok(t) = std::env::var("VERTEX_AI_TOKEN") {
             t
