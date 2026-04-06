@@ -3,10 +3,8 @@ mod output;
 
 use clap::{Parser, Subcommand};
 use noether_core::stdlib::load_stdlib;
-use noether_engine::index::embedding::MockEmbeddingProvider;
 use noether_engine::index::{IndexConfig, SemanticIndex};
-use noether_engine::llm::vertex::{VertexAiConfig, VertexAiLlmProvider};
-use noether_engine::llm::MockLlmProvider;
+use noether_engine::providers;
 use noether_engine::trace::JsonFileTraceStore;
 use noether_store::{JsonFileStore, StageStore};
 
@@ -90,15 +88,11 @@ enum StoreCommands {
 }
 
 fn noether_dir() -> std::path::PathBuf {
-    dirs_or_default("NOETHER_HOME", ".noether")
-}
-
-fn dirs_or_default(env_var: &str, default_subdir: &str) -> std::path::PathBuf {
-    if let Ok(dir) = std::env::var(env_var) {
+    if let Ok(dir) = std::env::var("NOETHER_HOME") {
         std::path::PathBuf::from(dir)
     } else {
         let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-        std::path::PathBuf::from(home).join(default_subdir)
+        std::path::PathBuf::from(home).join(".noether")
     }
 }
 
@@ -113,10 +107,8 @@ fn init_store() -> JsonFileStore {
         JsonFileStore::open("/dev/null").unwrap()
     });
 
-    // Seed stdlib if store is empty (first run)
     if store.is_empty() {
         for stage in load_stdlib() {
-            // Ignore AlreadyExists errors (shouldn't happen on empty store)
             let _ = store.put(stage);
         }
     }
@@ -130,6 +122,24 @@ fn init_trace_store() -> JsonFileTraceStore {
         eprintln!("Warning: failed to open trace store: {e}");
         JsonFileTraceStore::open("/tmp/noether-traces.json").unwrap()
     })
+}
+
+fn build_index(store: &dyn StageStore) -> SemanticIndex {
+    let (provider, name) = providers::build_embedding_provider();
+    if name != "mock" {
+        eprintln!("Embedding provider: {name}");
+    }
+
+    if name == "mock" {
+        // No caching needed for mock
+        SemanticIndex::build(store, provider, IndexConfig::default()).unwrap()
+    } else {
+        // Use cached embeddings for real providers
+        let cache_path = noether_dir().join("embeddings.json");
+        let cached =
+            noether_engine::index::cache::CachedEmbeddingProvider::new(provider, cache_path);
+        SemanticIndex::build_cached(store, cached, IndexConfig::default()).unwrap()
+    }
 }
 
 fn main() {
@@ -152,12 +162,7 @@ fn main() {
             let mut store = init_store();
             match command {
                 StageCommands::Search { query } => {
-                    let index = SemanticIndex::build(
-                        &store,
-                        Box::new(MockEmbeddingProvider::new(128)),
-                        IndexConfig::default(),
-                    )
-                    .unwrap();
+                    let index = build_index(&store);
                     commands::stage::cmd_search(&store, &index, &query);
                 }
                 StageCommands::Add { spec } => commands::stage::cmd_add(&mut store, &spec),
@@ -186,22 +191,11 @@ fn main() {
             input,
         } => {
             let store = init_store();
-            let index = SemanticIndex::build(
-                &store,
-                Box::new(MockEmbeddingProvider::new(128)),
-                IndexConfig::default(),
-            )
-            .unwrap();
-
-            // Use Vertex AI if configured, otherwise mock
-            let llm: Box<dyn noether_engine::llm::LlmProvider> = match VertexAiConfig::from_env() {
-                Ok(config) => Box::new(VertexAiLlmProvider::new(config)),
-                Err(_) => {
-                    eprintln!("Warning: Vertex AI not configured. Set VERTEX_AI_PROJECT and VERTEX_AI_TOKEN.");
-                    eprintln!("Using mock LLM (will return empty response).");
-                    Box::new(MockLlmProvider::new("{}"))
-                }
-            };
+            let index = build_index(&store);
+            let (llm, llm_name) = providers::build_llm_provider();
+            if llm_name != "mock" {
+                eprintln!("LLM provider: {llm_name}");
+            }
 
             let input_value = input
                 .as_deref()

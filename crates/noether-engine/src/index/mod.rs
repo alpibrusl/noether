@@ -1,3 +1,4 @@
+pub mod cache;
 pub mod embedding;
 pub mod search;
 pub mod text;
@@ -68,6 +69,43 @@ impl SemanticIndex {
             index.add_stage(stage)?;
         }
         Ok(index)
+    }
+
+    /// Build using a CachedEmbeddingProvider for persistent embedding cache.
+    pub fn build_cached(
+        store: &dyn StageStore,
+        mut cached_provider: cache::CachedEmbeddingProvider,
+        config: IndexConfig,
+    ) -> Result<Self, EmbeddingError> {
+        let mut signature_index = SubIndex::new();
+        let mut semantic_index = SubIndex::new();
+        let mut example_index = SubIndex::new();
+
+        for stage in store.list(None) {
+            if matches!(stage.lifecycle, StageLifecycle::Tombstone) {
+                continue;
+            }
+            let sig_emb = cached_provider.embed_cached(&text::signature_text(stage))?;
+            let desc_emb = cached_provider.embed_cached(&text::description_text(stage))?;
+            let ex_emb = cached_provider.embed_cached(&text::examples_text(stage))?;
+
+            signature_index.add(stage.id.clone(), sig_emb);
+            semantic_index.add(stage.id.clone(), desc_emb);
+            example_index.add(stage.id.clone(), ex_emb);
+        }
+
+        cached_provider.flush();
+
+        // Wrap the inner provider for future queries
+        let provider: Box<dyn EmbeddingProvider> = Box::new(cached_provider);
+
+        Ok(Self {
+            provider,
+            signature_index,
+            semantic_index,
+            example_index,
+            config,
+        })
     }
 
     /// Add a single stage to all three indexes.
