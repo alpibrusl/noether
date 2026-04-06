@@ -54,6 +54,13 @@ pub struct Stage {
     pub lifecycle: StageLifecycle,
     pub ed25519_signature: Option<String>,
     pub signer_public_key: Option<String>,
+    /// Source code of the implementation, if this is a synthesized or user-authored stage.
+    /// Stdlib stages leave this None (their implementation is compiled into the binary).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub implementation_code: Option<String>,
+    /// Language of the implementation: "python", "javascript", "bash", etc.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub implementation_language: Option<String>,
 }
 
 #[cfg(test)]
@@ -88,6 +95,8 @@ mod tests {
             lifecycle: StageLifecycle::Active,
             ed25519_signature: None,
             signer_public_key: None,
+            implementation_code: None,
+            implementation_language: None,
         };
         let json = serde_json::to_string_pretty(&stage).unwrap();
         let deserialized: Stage = serde_json::from_str(&json).unwrap();

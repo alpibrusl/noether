@@ -163,10 +163,9 @@ mod tests {
         .unwrap();
         assert_eq!(result, json!("abcNUMdefNUM"));
 
-        assert!(regex_replace(
-            &json!({"text": "x", "pattern": "[invalid", "replacement": ""})
-        )
-        .is_err());
+        assert!(
+            regex_replace(&json!({"text": "x", "pattern": "[invalid", "replacement": ""})).is_err()
+        );
     }
 
     #[test]

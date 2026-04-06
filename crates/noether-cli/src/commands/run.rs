@@ -1,13 +1,18 @@
 use crate::output::{acli_error, acli_ok};
 use noether_engine::checker::check_graph;
-use noether_engine::executor::inline::InlineExecutor;
+use noether_engine::executor::composite::CompositeExecutor;
 use noether_engine::executor::runner::run_composition;
 use noether_engine::lagrange::{compute_composition_id, parse_graph};
 use noether_engine::planner::plan_graph;
 use noether_store::StageStore;
 use serde_json::json;
 
-pub fn cmd_run(store: &impl StageStore, graph_path: &str, dry_run: bool, input: &serde_json::Value) {
+pub fn cmd_run(
+    store: &impl StageStore,
+    graph_path: &str,
+    dry_run: bool,
+    input: &serde_json::Value,
+) {
     // 1. Read and parse
     let content = match std::fs::read_to_string(graph_path) {
         Ok(c) => c,
@@ -69,8 +74,8 @@ pub fn cmd_run(store: &impl StageStore, graph_path: &str, dry_run: bool, input: 
         return;
     }
 
-    // 4. Execute
-    let executor = InlineExecutor::from_store(store);
+    // 4. Execute — use CompositeExecutor so synthesized stages run via Nix.
+    let executor = CompositeExecutor::from_store(store);
     match run_composition(&graph.root, input, &executor, &composition_id) {
         Ok(result) => {
             println!(

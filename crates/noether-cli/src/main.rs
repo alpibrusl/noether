@@ -178,7 +178,11 @@ fn main() {
                 StoreCommands::Stats => commands::store::cmd_stats(&store),
             }
         }
-        Commands::Run { graph, dry_run, input } => {
+        Commands::Run {
+            graph,
+            dry_run,
+            input,
+        } => {
             let store = init_store();
             let input_value = input
                 .as_deref()

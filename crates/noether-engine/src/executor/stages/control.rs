@@ -48,10 +48,7 @@ pub fn is_subtype(input: &Value) -> Result<Value, ExecutionError> {
 
 /// Try a list of stage IDs in order; return first success.
 /// Delegates execution back to the parent executor.
-pub fn fallback<E: StageExecutor>(
-    executor: &E,
-    input: &Value,
-) -> Result<Value, ExecutionError> {
+pub fn fallback<E: StageExecutor>(executor: &E, input: &Value) -> Result<Value, ExecutionError> {
     let stage_ids = input
         .get("stages")
         .and_then(|v| v.as_array())
@@ -74,10 +71,7 @@ pub fn fallback<E: StageExecutor>(
 }
 
 /// Run N stages on N inputs concurrently (sequentially in this impl).
-pub fn parallel_n<E: StageExecutor>(
-    executor: &E,
-    input: &Value,
-) -> Result<Value, ExecutionError> {
+pub fn parallel_n<E: StageExecutor>(executor: &E, input: &Value) -> Result<Value, ExecutionError> {
     let stages = input
         .get("stages")
         .and_then(|v| v.as_array())

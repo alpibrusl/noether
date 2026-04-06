@@ -1,6 +1,4 @@
-use super::stages::{
-    execute_executor_stage, find_implementation, is_executor_stage, StageFn,
-};
+use super::stages::{execute_executor_stage, find_implementation, is_executor_stage, StageFn};
 use super::{ExecutionError, StageExecutor};
 use noether_core::stage::StageId;
 use noether_store::StageStore;

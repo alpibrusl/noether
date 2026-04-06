@@ -61,6 +61,8 @@ fn full_stage_round_trip() {
         lifecycle: StageLifecycle::Active,
         ed25519_signature: Some(signature),
         signer_public_key: Some(public_key.clone()),
+        implementation_code: None,
+        implementation_language: None,
     };
 
     // 6. Serialize to JSON and back

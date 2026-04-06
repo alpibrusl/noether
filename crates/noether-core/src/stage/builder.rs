@@ -28,6 +28,8 @@ pub struct StageBuilder {
     cost: CostEstimate,
     description: Option<String>,
     examples: Vec<Example>,
+    implementation_code: Option<String>,
+    implementation_language: Option<String>,
 }
 
 impl StageBuilder {
@@ -45,7 +47,17 @@ impl StageBuilder {
             },
             description: None,
             examples: Vec::new(),
+            implementation_code: None,
+            implementation_language: None,
         }
+    }
+
+    /// Attach the source code + language (e.g. "python") for synthesized stages.
+    /// The `implementation_hash` fed into the signature will be derived from this code.
+    pub fn implementation_code(mut self, code: &str, language: &str) -> Self {
+        self.implementation_code = Some(code.into());
+        self.implementation_language = Some(language.into());
+        self
     }
 
     pub fn input(mut self, t: NType) -> Self {
@@ -146,6 +158,8 @@ impl StageBuilder {
             lifecycle: StageLifecycle::Active,
             ed25519_signature: Some(sig_hex),
             signer_public_key: Some(pub_hex),
+            implementation_code: None,
+            implementation_language: None,
         })
     }
 
@@ -180,6 +194,8 @@ impl StageBuilder {
             lifecycle: StageLifecycle::Draft,
             ed25519_signature: None,
             signer_public_key: None,
+            implementation_code: self.implementation_code,
+            implementation_language: self.implementation_language,
         })
     }
 }

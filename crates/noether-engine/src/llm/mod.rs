@@ -101,9 +101,7 @@ pub struct SequenceMockLlmProvider {
 impl SequenceMockLlmProvider {
     pub fn new(responses: Vec<impl Into<String>>, fallback: impl Into<String>) -> Self {
         Self {
-            responses: std::sync::Mutex::new(
-                responses.into_iter().map(|s| s.into()).collect(),
-            ),
+            responses: std::sync::Mutex::new(responses.into_iter().map(|s| s.into()).collect()),
             fallback: fallback.into(),
         }
     }

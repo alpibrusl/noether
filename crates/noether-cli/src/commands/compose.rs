@@ -1,7 +1,7 @@
 use crate::output::{acli_error, acli_ok};
 use noether_engine::agent::CompositionAgent;
 use noether_engine::checker::check_graph;
-use noether_engine::executor::inline::InlineExecutor;
+use noether_engine::executor::composite::CompositeExecutor;
 use noether_engine::executor::runner::run_composition;
 use noether_engine::index::SemanticIndex;
 use noether_engine::lagrange::{compute_composition_id, serialize_graph};
@@ -79,8 +79,17 @@ pub fn cmd_compose(
         return;
     }
 
-    // Execute with inline executor
-    let executor = InlineExecutor::from_store(store);
+    // Build executor — CompositeExecutor picks up synthesized stages from the store,
+    // then we register any freshly synthesized stages for immediate execution.
+    let mut executor = CompositeExecutor::from_store(store);
+    for syn in &result.synthesized {
+        executor.register_synthesized(&syn.stage_id, &syn.implementation, &syn.language);
+    }
+
+    if !result.synthesized.is_empty() && !executor.nix_available() {
+        eprintln!("Warning: synthesized stages will use fallback execution (nix not available).");
+    }
+
     match run_composition(&graph.root, input, &executor, &composition_id) {
         Ok(exec_result) => {
             println!(

@@ -91,8 +91,6 @@ pub fn execute_executor_stage<E: StageExecutor>(
         "Run N stages concurrently on N inputs; collect all results" => {
             control::parallel_n(executor, input)
         }
-        _ => Err(ExecutionError::StageNotFound(StageId(
-            "unknown".into(),
-        ))),
+        _ => Err(ExecutionError::StageNotFound(StageId("unknown".into()))),
     }
 }

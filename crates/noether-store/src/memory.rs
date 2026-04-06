@@ -130,6 +130,8 @@ mod tests {
             lifecycle: StageLifecycle::Active,
             ed25519_signature: None,
             signer_public_key: None,
+            implementation_code: None,
+            implementation_language: None,
         }
     }
 

@@ -1,5 +1,7 @@
+pub mod composite;
 pub mod inline;
 pub mod mock;
+pub mod nix;
 pub mod runner;
 pub mod stages;
 

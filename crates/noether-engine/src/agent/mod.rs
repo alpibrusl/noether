@@ -4,8 +4,8 @@ use crate::checker::check_graph;
 use crate::index::SemanticIndex;
 use crate::lagrange::{parse_graph, CompositionGraph};
 use crate::llm::{LlmConfig, LlmProvider, Message};
-use noether_core::stage::{StageBuilder, StageId, StageLifecycle};
 use noether_core::stage::validation::infer_type;
+use noether_core::stage::{StageBuilder, StageId, StageLifecycle};
 use noether_core::types::{is_subtype_of, TypeCompatibility};
 use noether_store::{StageStore, StoreError};
 use prompt::{
@@ -131,8 +131,7 @@ impl<'a> CompositionAgent<'a> {
                 // search_results and candidates (which borrow store) are dropped here
             };
 
-            let mut messages =
-                vec![Message::system(&system_prompt), Message::user(&user_msg)];
+            let mut messages = vec![Message::system(&system_prompt), Message::user(&user_msg)];
             let mut last_errors = String::new();
             let mut last_error_type = LastErrorType::None;
             let mut did_synthesize_this_round = false;
@@ -233,12 +232,10 @@ impl<'a> CompositionAgent<'a> {
             return Err(match last_error_type {
                 LastErrorType::NoJson => AgentError::NoJsonInResponse,
                 LastErrorType::InvalidGraph => AgentError::InvalidGraph(last_errors),
-                LastErrorType::TypeCheck | LastErrorType::None => {
-                    AgentError::TypeCheckFailed {
-                        attempts: self.max_retries,
-                        errors: last_errors,
-                    }
-                }
+                LastErrorType::TypeCheck | LastErrorType::None => AgentError::TypeCheckFailed {
+                    attempts: self.max_retries,
+                    errors: last_errors,
+                },
             });
         }
     }
@@ -269,11 +266,9 @@ impl<'a> CompositionAgent<'a> {
                 }
             };
 
-            if let Err(e) = validate_synthesis_examples(
-                &syn_resp.examples,
-                &spec.input,
-                &spec.output,
-            ) {
+            if let Err(e) =
+                validate_synthesis_examples(&syn_resp.examples, &spec.input, &spec.output)
+            {
                 last_error = e;
                 continue;
             }
@@ -283,7 +278,8 @@ impl<'a> CompositionAgent<'a> {
             let mut builder = StageBuilder::new(&spec.name)
                 .input(spec.input.clone())
                 .output(spec.output.clone())
-                .description(&spec.description);
+                .description(&spec.description)
+                .implementation_code(&syn_resp.implementation, &syn_resp.language);
 
             for ex in &syn_resp.examples {
                 builder = builder.example(ex.input.clone(), ex.output.clone());
@@ -341,10 +337,7 @@ fn validate_synthesis_examples(
     output_type: &noether_core::types::NType,
 ) -> Result<(), String> {
     if examples.len() < 3 {
-        return Err(format!(
-            "need at least 3 examples, got {}",
-            examples.len()
-        ));
+        return Err(format!("need at least 3 examples, got {}", examples.len()));
     }
 
     for (i, ex) in examples.iter().enumerate() {
@@ -656,7 +649,12 @@ mod tests {
         );
 
         let llm = SequenceMockLlmProvider::new(
-            vec![synthesis_request, bad_codegen.clone(), bad_codegen.clone(), bad_codegen],
+            vec![
+                synthesis_request,
+                bad_codegen.clone(),
+                bad_codegen.clone(),
+                bad_codegen,
+            ],
             String::new(),
         );
 
