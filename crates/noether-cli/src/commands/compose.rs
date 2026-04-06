@@ -7,6 +7,7 @@ use noether_engine::index::SemanticIndex;
 use noether_engine::lagrange::{compute_composition_id, serialize_graph};
 use noether_engine::llm::{LlmConfig, LlmProvider};
 use noether_engine::planner::plan_graph;
+use noether_engine::providers;
 use noether_store::StageStore;
 use serde_json::json;
 
@@ -81,7 +82,15 @@ pub fn cmd_compose(
 
     // Build executor — CompositeExecutor picks up synthesized stages from the store,
     // then we register any freshly synthesized stages for immediate execution.
-    let mut executor = CompositeExecutor::from_store(store);
+    // Also wire in the LLM so llm_* stdlib stages actually run.
+    let mut executor = CompositeExecutor::from_store(store).with_llm(
+        providers::build_llm_provider().0,
+        LlmConfig {
+            model: model.into(),
+            max_tokens: 4096,
+            temperature: 0.2,
+        },
+    );
     for syn in &result.synthesized {
         executor.register_synthesized(&syn.stage_id, &syn.implementation, &syn.language);
     }

@@ -3,6 +3,7 @@ pub mod inline;
 pub mod mock;
 pub mod nix;
 pub mod runner;
+pub mod runtime;
 pub mod stages;
 
 use noether_core::stage::StageId;
