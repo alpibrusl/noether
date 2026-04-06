@@ -1,4 +1,4 @@
-use crate::output::{acli_error, acli_ok};
+use crate::output::{acli_error, acli_error_hint, acli_ok};
 use noether_core::stage::{Stage, StageId};
 use noether_engine::index::SemanticIndex;
 use noether_store::{StageStore, StoreError};
@@ -42,13 +42,44 @@ pub fn cmd_get(store: &impl StageStore, hash: &str) {
             println!("{}", acli_ok(json));
         }
         Ok(None) => {
-            eprintln!("{}", acli_error(&format!("stage {hash} not found")));
+            // Try to find a prefix match for a useful hint
+            let hint = find_prefix_hint(store, hash);
+            eprintln!(
+                "{}",
+                acli_error_hint(
+                    &format!("stage {hash} not found"),
+                    hint.as_deref(),
+                )
+            );
             std::process::exit(1);
         }
         Err(e) => {
             eprintln!("{}", acli_error(&format!("{e}")));
             std::process::exit(1);
         }
+    }
+}
+
+/// Return a hint string if a stage ID starts with `prefix`.
+fn find_prefix_hint(store: &impl StageStore, prefix: &str) -> Option<String> {
+    if prefix.len() < 4 {
+        return None;
+    }
+    let matches: Vec<_> = store
+        .list(None)
+        .into_iter()
+        .filter(|s| s.id.0.starts_with(prefix))
+        .take(3)
+        .collect();
+    if matches.is_empty() {
+        Some(
+            "No stage with that ID. Try `noether stage search \"<description>\"` \
+             or `noether stage list` to browse all stages."
+                .into(),
+        )
+    } else {
+        let ids: Vec<_> = matches.iter().map(|s| &s.id.0[..16.min(s.id.0.len())]).collect();
+        Some(format!("Did you mean one of: {}?", ids.join(", ")))
     }
 }
 

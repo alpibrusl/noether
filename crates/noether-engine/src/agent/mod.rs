@@ -293,6 +293,25 @@ impl<'a> CompositionAgent<'a> {
                 }
             };
 
+            // Pre-insertion deduplication: if an existing stage is semantically
+            // near-identical (>= 0.92 cosine on description), reuse it instead.
+            if let Ok(Some((existing_id, similarity))) =
+                self.index.check_duplicate_before_insert(&spec.description, 0.92)
+            {
+                eprintln!(
+                    "Synthesis dedup: description matches existing stage {} \
+                     (similarity {similarity:.3}); reusing.",
+                    existing_id.0
+                );
+                return Ok(SynthesisResult {
+                    stage_id: existing_id,
+                    implementation: syn_resp.implementation,
+                    language: syn_resp.language,
+                    attempts: attempt,
+                    is_new: false,
+                });
+            }
+
             let (stage_id, is_new) = match store.put(stage) {
                 Ok(id) => {
                     // Newly inserted as Draft — promote to Active.

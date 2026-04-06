@@ -45,6 +45,11 @@ impl SubIndex {
         self.entries.is_empty()
     }
 
+    /// Read-only access to all entries (used by near-duplicate scanning).
+    pub fn entries(&self) -> &[IndexEntry] {
+        &self.entries
+    }
+
     /// Brute-force search: compute cosine similarity against all entries,
     /// return top-k results sorted by descending score.
     pub fn search(&self, query: &Embedding, top_k: usize) -> Vec<SubSearchResult> {

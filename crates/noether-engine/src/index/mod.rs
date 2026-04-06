@@ -187,6 +187,57 @@ impl SemanticIndex {
         results.truncate(top_k);
         Ok(results)
     }
+
+    /// Check whether a candidate description is a near-duplicate of an existing stage.
+    ///
+    /// Returns `Some((stage_id, similarity))` if any existing stage's semantic embedding
+    /// exceeds `threshold` (default 0.92). Returns `None` if the description is novel enough.
+    pub fn check_duplicate_before_insert(
+        &self,
+        description: &str,
+        threshold: f32,
+    ) -> Result<Option<(StageId, f32)>, EmbeddingError> {
+        let emb = self.provider.embed(description)?;
+        let results = self.semantic_index.search(&emb, 1);
+        if let Some(top) = results.first() {
+            if top.score >= threshold {
+                return Ok(Some((top.stage_id.clone(), top.score)));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Scan all active stages for near-duplicate pairs.
+    ///
+    /// Returns pairs `(id_a, id_b, similarity)` where semantic similarity >= `threshold`.
+    /// Each pair appears only once (id_a < id_b lexicographically).
+    pub fn find_near_duplicates(
+        &self,
+        threshold: f32,
+    ) -> Vec<(StageId, StageId, f32)> {
+        use search::cosine_similarity;
+
+        let entries = self.semantic_index.entries().to_vec();
+        let mut pairs: Vec<(StageId, StageId, f32)> = Vec::new();
+
+        for i in 0..entries.len() {
+            for j in (i + 1)..entries.len() {
+                let sim = cosine_similarity(&entries[i].embedding, &entries[j].embedding);
+                if sim >= threshold {
+                    let (a, b) = if entries[i].stage_id.0 < entries[j].stage_id.0 {
+                        (entries[i].stage_id.clone(), entries[j].stage_id.clone())
+                    } else {
+                        (entries[j].stage_id.clone(), entries[i].stage_id.clone())
+                    };
+                    pairs.push((a, b, sim));
+                }
+            }
+        }
+
+        // Sort by similarity descending
+        pairs.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+        pairs
+    }
 }
 
 #[cfg(test)]

@@ -92,6 +92,18 @@ enum StageCommands {
 enum StoreCommands {
     /// Show store statistics
     Stats,
+    /// Scan for near-duplicate stages and optionally deprecate them
+    Retro {
+        /// Show the report without applying changes
+        #[arg(long)]
+        dry_run: bool,
+        /// Apply suggested deprecations and merges
+        #[arg(long)]
+        apply: bool,
+        /// Cosine similarity threshold (default: 0.92)
+        #[arg(long, default_value_t = 0.92)]
+        threshold: f32,
+    },
 }
 
 fn noether_dir() -> std::path::PathBuf {
@@ -177,9 +189,13 @@ fn main() {
             }
         }
         Commands::Store { command } => {
-            let store = init_store();
+            let mut store = init_store();
             match command {
                 StoreCommands::Stats => commands::store::cmd_stats(&store),
+                StoreCommands::Retro { dry_run, apply, threshold } => {
+                    let index = build_index(&store);
+                    commands::store::cmd_retro(&mut store, &index, dry_run, apply, threshold);
+                }
             }
         }
         Commands::Run {
