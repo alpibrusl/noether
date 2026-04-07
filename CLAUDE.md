@@ -120,5 +120,55 @@ Caloron decides **what** to do (sprint planning, task decomposition). Noether de
 | 1 | Store + Stdlib — 50 stdlib stages, test harness | **Done** |
 | 2 | Composition Engine — DAG executor, trace output | **Done** |
 | 3 | Agent Interface — Composition Agent, semantic index | **Done** |
-| 4 | Hardening — security, deduplication, store health | Planned |
-| 5 | Effects v2 — effect inference & enforcement | Planned |
+| 4 | Hardening — deduplication, store health, CI, docs site | **Done** |
+| 5 | noether-cloud foundation — registry API, scheduler, library API | **In progress** |
+| 6 | Effects enforcement — Nix sandbox resource limits, effect mismatch errors | Planned |
+| 7 | Public cloud registry — multi-tenant, billing, dashboard | Planned |
+
+## noether-cloud Architecture
+
+noether-cloud (`/home/alpibru/workspace/noether-cloud/`) depends on noether as a library.
+Each noether-cloud crate adds HTTP/scheduling/billing infrastructure; all business logic lives in
+Noether compositions.
+
+```
+noether-cloud/
+├── registry/      # Axum HTTP registry (POST /stages, GET /stages/search, POST /compositions/run)
+└── scheduler/     # Cron composition runner — reads scheduler.json, fires webhooks on result
+```
+
+### Library entry points for noether-cloud
+- `noether_engine::checker::check_graph(node, store)` — type-check a graph
+- `noether_engine::planner::plan_graph(node, store)` — produce ExecutionPlan
+- `noether_engine::executor::runner::run_composition(node, input, executor, id)` — execute
+- `noether_engine::index::SemanticIndex::build(store, embedding, config)` — build search index
+- `noether_engine::providers::{build_embedding_provider, build_llm_provider}` — env-based provider factory
+- `noether_store::StageStore::{get_owned, list_owned}` — owned clones for async contexts
+
+### Registry API routes
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/stages` | Submit + validate a stage (hash check, signature verify, dedup warn) |
+| `GET` | `/stages` | List active stages (paginated) |
+| `GET` | `/stages/:id` | Get a stage by ID |
+| `PATCH` | `/stages/:id/lifecycle` | Update lifecycle (draft→active→deprecated→tombstone) |
+| `GET` | `/stages/search?q=` | Semantic search (three-index cosine similarity) |
+| `POST` | `/compositions/run` | Run or dry-run a composition graph |
+| `GET` | `/health` | Store stats + index size |
+
+Auth: `X-API-Key` header. Disabled when `NOETHER_API_KEY=""`.
+
+### Scheduler config format (`scheduler.json`)
+```json
+{
+  "store_path": ".noether/registry.json",
+  "jobs": [
+    {
+      "name": "hourly-health",
+      "cron": "0 * * * *",
+      "graph": "graphs/health-check.json",
+      "webhook": "https://hooks.example.com/noether-health"
+    }
+  ]
+}
+```

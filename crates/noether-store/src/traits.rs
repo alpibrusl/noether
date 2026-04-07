@@ -42,4 +42,17 @@ pub trait StageStore {
         lifecycle: StageLifecycle,
     ) -> Result<(), StoreError>;
     fn stats(&self) -> StoreStats;
+
+    // ── Owned accessors (default impls — no need to override) ──────────────
+
+    /// Return an owned clone of the stage. Useful for async contexts where
+    /// holding a borrow across lock boundaries is not permitted.
+    fn get_owned(&self, id: &StageId) -> Result<Option<Stage>, StoreError> {
+        Ok(self.get(id)?.cloned())
+    }
+
+    /// Return owned clones of all matching stages.
+    fn list_owned(&self, lifecycle: Option<&StageLifecycle>) -> Vec<Stage> {
+        self.list(lifecycle).into_iter().cloned().collect()
+    }
 }
