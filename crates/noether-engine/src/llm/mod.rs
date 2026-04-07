@@ -1,3 +1,4 @@
+pub mod mistral;
 pub mod vertex;
 
 use serde::{Deserialize, Serialize};
