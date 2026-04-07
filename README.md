@@ -267,7 +267,7 @@ Or via the stdlib stages: `kv_get`, `kv_set`, `kv_delete`, `kv_exists`, `kv_list
 Noether is designed to be called **by** agents, not to contain them:
 
 ```bash
-# An agent (e.g. Caloron) calls Noether to execute a sub-problem
+# An AI agent calls Noether to execute a sub-problem
 noether compose "extract key entities from these documents" --input '...'
 
 # The agent receives structured ACLI output and continues

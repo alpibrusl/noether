@@ -2,6 +2,18 @@
 
 **A technical case study — 4 search engines, 1 pattern, 98% cost reduction**
 
+> **Run this experiment yourself** — all four search engines are in the repository:
+>
+> ```bash
+> # Run the multi-source search composition (GitHub + npm + HN + crates.io)
+> cargo run --bin noether -- run examples/multi-source-search.json
+>
+> # Or run a single engine
+> cargo run --bin noether -- compose "search crates.io packages given a query string"
+> ```
+>
+> Source: [`examples/multi-source-search.json`](https://github.com/alpibrusl/noether/blob/main/examples/multi-source-search.json) · [`examples/README.md`](https://github.com/alpibrusl/noether/blob/main/examples/README.md)
+
 ---
 
 ## The Problem Every AI Agent Has
@@ -268,3 +280,7 @@ LLM: mistral-small-2503 on Vertex AI europe-west4. Platform: Noether 0.1.0. Stor
 ---
 
 *Noether 0.1.0 · github.com/solv/noether · Named after Emmy Noether: type signature symmetry guarantees composition correctness.*
+
+---
+
+*Prefer a visual layout? The same data is available as a [standalone visual report](../case-studies/noether-case-study.html) (dark-mode bar charts, engine cards, extrapolation table).*

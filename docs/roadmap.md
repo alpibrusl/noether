@@ -18,7 +18,7 @@
 6. [The Composition Agent (Internal)](#6-the-composition-agent-internal)
 7. [The ACLI Interface](#7-the-acli-interface)
 8. [Security Model](#8-security-model)
-9. [Relationship with Caloron](#9-relationship-with-caloron)
+9. [Integration with External AI Agents](#9-integration-with-external-ai-agents)
 10. [Implementation Roadmap](#10-implementation-roadmap)
 11. [Technology Stack](#11-technology-stack)
 12. [Success Metrics by Phase](#12-success-metrics-by-phase)
@@ -38,7 +38,7 @@ The platform takes its name from Emmy Noether's theorem: every symmetry implies 
 
 - Not a human-facing CLI tool (though it exposes one for introspection and debugging)
 - Not a general-purpose workflow engine (Airflow, Prefect, Temporal)
-- Not an AI agent framework (that is Caloron's domain)
+- Not an AI agent framework (those call Noether as a tool)
 - Not a package manager (it uses Nix for that)
 
 ### 1.2 Philosophical Foundations
@@ -64,7 +64,7 @@ Noether is structured in four layers. Each layer has a single responsibility and
 | L3 | Composition Engine | Type checking, DAG verification, execution planning, data routing between stages |
 | L4 | Agent Interface | ACLI-compliant CLI, Composition Agent, semantic search index |
 
-External agents (Caloron, Claude, any LLM-based system) interact exclusively with L4. They never need to understand L1, L2, or L3. The ACLI contract is the only public API.
+External agents (Claude, GPT-4, any LLM-based system) interact exclusively with L4. They never need to understand L1, L2, or L3. The ACLI contract is the only public API.
 
 ### 2.1 The Relationship with Nix
 
@@ -276,7 +276,7 @@ Every execution produces a structured trace automatically. This trace is the pri
 
 ## 6. The Composition Agent (Internal)
 
-The Composition Agent is an LLM-powered agent that lives inside Noether. Its sole responsibility is to translate a problem description into a valid composition graph. It is not a general-purpose agent — it reasons exclusively about types, stages, and compositions. External agents (Caloron, Claude) call Noether without needing to understand its internals.
+The Composition Agent is an LLM-powered agent that lives inside Noether. Its sole responsibility is to translate a problem description into a valid composition graph. It is not a general-purpose agent — it reasons exclusively about types, stages, and compositions. External agents call Noether without needing to understand its internals.
 
 > The Composition Agent is an implementation detail of Noether. External agents see a black box: problem in, verified composition out. The intelligence is encapsulated.
 
@@ -381,27 +381,26 @@ Every stage in the store carries a cryptographic signature (Ed25519). The Noethe
 
 ### What Noether Does Not Guarantee
 
-Noether does not attempt to solve the full problem of adversarial stage injection. A stage that correctly declares its capabilities and passes signing verification can still produce undesirable outputs. This is the responsibility of the external agent (Caloron) that decides whether to trust a particular stage source.
+Noether does not attempt to solve the full problem of adversarial stage injection. A stage that correctly declares its capabilities and passes signing verification can still produce undesirable outputs. This is the responsibility of the external agent that decides whether to trust a particular stage source.
 
 ---
 
-## 9. Relationship with Caloron
+## 9. Integration with External AI Agents
 
-Noether and Caloron have complementary and non-overlapping responsibilities. This separation must be maintained as both platforms evolve.
+Noether is designed as a tool that AI agents call, not as an agent itself. The boundary is strict: Noether handles computation (how) and agents handle reasoning (what and why). This separation must be maintained as the ecosystem evolves.
 
-| Concern | Caloron | Noether |
+| Concern | External Agent | Noether |
 |---|---|---|
-| What to do | ✓ Sprint planning, task decomposition | ✗ |
+| What to do | ✓ Goal decomposition, task planning | ✗ |
 | How to execute it | ✗ | ✓ Composition, type checking, execution |
-| Agent orchestration | ✓ Multi-agent coordination, retro | ✗ |
+| Agent orchestration | ✓ Multi-step coordination | ✗ |
 | Computation verification | ✗ | ✓ Type guarantees, reproducibility |
-| Learning between sprints | ✓ Retro agent modifies prompts/models | ✓ Store retro removes near-duplicates |
-| LLM reasoning | ✓ High-level planning and strategy | ✓ Composition Agent (scoped to types/stages) |
-| Human interface | ✓ Sprint dashboard, user stories | ✗ (agents only) |
+| LLM reasoning | ✓ High-level planning and strategy | ✓ Composition Agent (scoped to types/stages only) |
+| Human interface | ✓ User-facing output, decisions | ✗ (agents only) |
 
-> **The clean boundary:** Caloron tells Noether WHAT problem needs solving. Noether tells Caloron HOW it was solved and whether it was correct. Neither crosses into the other's domain.
+> **The clean boundary:** An external agent tells Noether WHAT problem needs solving. Noether tells the agent HOW it was solved and whether it was correct. Neither crosses into the other's domain.
 
-From Caloron's perspective, Noether is an ACLI tool. Caloron calls `noether compose <problem>` and receives a structured result. It does not know about stages, type signatures, or Nix.
+From any agent's perspective, Noether is an ACLI tool. The agent calls `noether compose <problem>` and receives a structured result. It does not need to know about stages, type signatures, or Nix.
 
 ---
 
