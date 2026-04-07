@@ -1,0 +1,29 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Europe/Madrid
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+    ignore:
+      # Only auto-update patch versions for cryptographic deps — review minor/major manually
+      - dependency-name: "ed25519-dalek"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "ring"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Europe/Madrid
+    labels:
+      - dependencies
+      - ci
