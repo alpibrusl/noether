@@ -5,3 +5,12 @@ Cargo.lock
 *~
 .DS_Store
 result
+
+# Compiled demo binaries
+/demos/
+
+# Dev-internal AI assistant context (not relevant to contributors)
+CLAUDE.md
+
+# Local data directory (never commit store/keys/DB)
+.noether/
