@@ -1,0 +1,44 @@
+{
+  "name": "counter-component",
+  "description": "Render a reactive counter UI component as a VNode",
+  "input": { "kind": "Record", "value": { "count": { "kind": "Number" } } },
+  "output": { "kind": "VNode" },
+  "effects": [],
+  "language": "rust",
+  "implementation": {
+    "code": "fn execute(input: &serde_json::Value) -> serde_json::Value {\n    let count = input.get(\"count\").and_then(|v| v.as_f64()).unwrap_or(0.0) as i64;\n    serde_json::json!({\n        \"tag\": \"div\",\n        \"props\": {\"class\": \"counter\"},\n        \"children\": [\n            {\"tag\": \"h1\", \"props\": {\"class\": \"counter-value\"}, \"children\": [{\"$text\": format!(\"Count: {}\", count)}]},\n            {\"tag\": \"div\", \"props\": {\"class\": \"counter-buttons\"}, \"children\": [\n                {\"tag\": \"button\", \"props\": {\"class\": \"btn btn-dec\", \"onClick\": {\"$event\": \"decrement\"}}, \"children\": [{\"$text\": \"-\"}]},\n                {\"tag\": \"button\", \"props\": {\"class\": \"btn btn-inc\", \"onClick\": {\"$event\": \"increment\"}}, \"children\": [{\"$text\": \"+\"}]},\n                {\"tag\": \"button\", \"props\": {\"class\": \"btn btn-reset\", \"onClick\": {\"$event\": \"reset\"}}, \"children\": [{\"$text\": \"Reset\"}]}\n            ]}\n        ]\n    })\n}",
+    "language": "rust"
+  },
+  "examples": [
+    {
+      "input": { "count": 0 },
+      "output": {
+        "tag": "div",
+        "props": { "class": "counter" },
+        "children": [
+          { "tag": "h1", "props": { "class": "counter-value" }, "children": [{ "$text": "Count: 0" }] },
+          { "tag": "div", "props": { "class": "counter-buttons" }, "children": [
+            { "tag": "button", "props": { "class": "btn btn-dec", "onClick": { "$event": "decrement" } }, "children": [{ "$text": "-" }] },
+            { "tag": "button", "props": { "class": "btn btn-inc", "onClick": { "$event": "increment" } }, "children": [{ "$text": "+" }] },
+            { "tag": "button", "props": { "class": "btn btn-reset", "onClick": { "$event": "reset" } }, "children": [{ "$text": "Reset" }] }
+          ]}
+        ]
+      }
+    },
+    {
+      "input": { "count": 5 },
+      "output": {
+        "tag": "div",
+        "props": { "class": "counter" },
+        "children": [
+          { "tag": "h1", "props": { "class": "counter-value" }, "children": [{ "$text": "Count: 5" }] },
+          { "tag": "div", "props": { "class": "counter-buttons" }, "children": [
+            { "tag": "button", "props": { "class": "btn btn-dec", "onClick": { "$event": "decrement" } }, "children": [{ "$text": "-" }] },
+            { "tag": "button", "props": { "class": "btn btn-inc", "onClick": { "$event": "increment" } }, "children": [{ "$text": "+" }] },
+            { "tag": "button", "props": { "class": "btn btn-reset", "onClick": { "$event": "reset" } }, "children": [{ "$text": "Reset" }] }
+          ]}
+        ]
+      }
+    }
+  ]
+}

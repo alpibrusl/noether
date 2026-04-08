@@ -7,6 +7,7 @@ mod kv;
 mod llm;
 mod scalar;
 mod text;
+mod ui;
 mod validation;
 
 use crate::stage::Stage;
@@ -34,6 +35,7 @@ pub fn load_stdlib() -> Vec<Stage> {
     stages.extend(text::stages(&key));
     stages.extend(kv::stages(&key));
     stages.extend(validation::stages(&key));
+    stages.extend(ui::stages(&key));
     stages
 }
 
@@ -44,7 +46,7 @@ mod tests {
     #[test]
     fn load_stdlib_returns_50_stages() {
         let stages = load_stdlib();
-        assert_eq!(stages.len(), 75); // 70 + 5 validation stages
+        assert_eq!(stages.len(), 76); // 75 existing + 1 ui (router)
     }
 
     #[test]

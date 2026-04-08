@@ -30,6 +30,7 @@ pub struct StageBuilder {
     examples: Vec<Example>,
     implementation_code: Option<String>,
     implementation_language: Option<String>,
+    ui_style: Option<String>,
 }
 
 impl StageBuilder {
@@ -49,6 +50,7 @@ impl StageBuilder {
             examples: Vec::new(),
             implementation_code: None,
             implementation_language: None,
+            ui_style: None,
         }
     }
 
@@ -57,6 +59,13 @@ impl StageBuilder {
     pub fn implementation_code(mut self, code: &str, language: &str) -> Self {
         self.implementation_code = Some(code.into());
         self.implementation_language = Some(language.into());
+        self
+    }
+
+    /// Attach scoped CSS for this stage's UI component.
+    /// The browser build automatically prefixes every selector with `.nr-<id8>`.
+    pub fn ui_style(mut self, css: &str) -> Self {
+        self.ui_style = Some(css.into());
         self
     }
 
@@ -160,6 +169,7 @@ impl StageBuilder {
             signer_public_key: Some(pub_hex),
             implementation_code: None,
             implementation_language: None,
+            ui_style: None,
         })
     }
 
@@ -205,6 +215,7 @@ impl StageBuilder {
             signer_public_key: Some(pub_hex),
             implementation_code: self.implementation_code,
             implementation_language: self.implementation_language,
+            ui_style: self.ui_style,
         })
     }
 
@@ -241,6 +252,7 @@ impl StageBuilder {
             signer_public_key: None,
             implementation_code: self.implementation_code,
             implementation_language: self.implementation_language,
+            ui_style: self.ui_style,
         })
     }
 }

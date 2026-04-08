@@ -282,4 +282,24 @@ mod tests {
         )]);
         assert_eq!(t, expected);
     }
+
+    #[test]
+    fn infer_vnode_with_hint() {
+        let vnode = json!({
+            "tag": "div",
+            "props": {"class": "counter"},
+            "children": [{"$text": "Count: 0"}]
+        });
+        let t = infer_type_with_hint(&vnode, Some(&NType::VNode));
+        assert_eq!(t, NType::VNode);
+    }
+
+    #[test]
+    fn infer_vnode_without_hint_gives_record() {
+        // Without VNode hint, the type checker infers Record (the underlying JSON structure).
+        let vnode = json!({"tag": "div", "props": {}, "children": []});
+        let t = infer_type(&vnode);
+        // Should be a Record, not VNode (VNode requires an explicit hint)
+        assert!(matches!(t, NType::Record(_)));
+    }
 }

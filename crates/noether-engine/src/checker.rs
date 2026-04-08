@@ -95,6 +95,7 @@ fn collect_capability_violations(
                 }
             }
         }
+        CompositionNode::RemoteStage { .. } => {} // remote stages have no local capabilities
         CompositionNode::Const { .. } => {} // no capabilities in a constant
         CompositionNode::Sequential { stages } => {
             for s in stages {
@@ -226,6 +227,7 @@ fn collect_signature_violations(
             // have reported an unknown-stage error; skip here.
         }
         CompositionNode::Const { .. } => {} // constants have no signature to verify
+        CompositionNode::RemoteStage { .. } => {} // remote stages have no local signature to verify
         CompositionNode::Sequential { stages } => {
             for s in stages {
                 collect_signature_violations(s, store, violations);
@@ -448,6 +450,7 @@ fn collect_warnings_inner(
                 // Fallible without retry is handled at the parent sequential level
             }
         }
+        CompositionNode::RemoteStage { .. } => {} // remote calls have no local effects to warn about
         CompositionNode::Const { .. } => {} // no effects in a constant
         CompositionNode::Sequential { stages } => {
             for (i, s) in stages.iter().enumerate() {
@@ -534,6 +537,12 @@ fn check_node(
 ) -> Option<ResolvedType> {
     match node {
         CompositionNode::Stage { id } => check_stage(id, store, errors),
+        // RemoteStage: types are declared inline — no store lookup needed.
+        // The type checker trusts the declared input/output types.
+        CompositionNode::RemoteStage { input, output, .. } => Some(ResolvedType {
+            input: input.clone(),
+            output: output.clone(),
+        }),
         // Const: accepts Any input, emits Any output (actual type is inferred from value at runtime)
         CompositionNode::Const { .. } => Some(ResolvedType {
             input: NType::Any,
@@ -821,6 +830,7 @@ mod tests {
             signer_public_key: None,
             implementation_code: None,
             implementation_language: None,
+            ui_style: None,
         }
     }
 
@@ -978,5 +988,67 @@ mod tests {
         let policy = CapabilityPolicy::restrict([Capability::Network]);
         let violations = check_capabilities(&stage("net_stage3"), &store, &policy);
         assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn remote_stage_resolves_declared_types() {
+        let store = test_store();
+        let node = CompositionNode::RemoteStage {
+            url: "http://api.example.com".into(),
+            input: NType::Text,
+            output: NType::Number,
+        };
+        let result = check_graph(&node, &store).unwrap();
+        assert_eq!(result.resolved.input, NType::Text);
+        assert_eq!(result.resolved.output, NType::Number);
+    }
+
+    #[test]
+    fn remote_stage_in_sequential_type_flows() {
+        let mut store = test_store();
+        store
+            .put(make_stage("num_render", NType::Number, NType::Text))
+            .unwrap();
+
+        // Text -> RemoteStage(Text->Number) -> num_render(Number->Text) = Text->Text
+        let node = CompositionNode::Sequential {
+            stages: vec![
+                CompositionNode::RemoteStage {
+                    url: "http://api:8080".into(),
+                    input: NType::Text,
+                    output: NType::Number,
+                },
+                CompositionNode::Stage {
+                    id: StageId("num_render".into()),
+                },
+            ],
+        };
+        let result = check_graph(&node, &store).unwrap();
+        assert_eq!(result.resolved.input, NType::Text);
+        assert_eq!(result.resolved.output, NType::Text);
+    }
+
+    #[test]
+    fn remote_stage_type_mismatch_is_detected() {
+        let store = test_store();
+        // RemoteStage outputs Number, but next stage expects Text
+        let node = CompositionNode::Sequential {
+            stages: vec![
+                CompositionNode::RemoteStage {
+                    url: "http://api:8080".into(),
+                    input: NType::Text,
+                    output: NType::Bool,
+                },
+                CompositionNode::Stage {
+                    id: StageId("text_to_num".into()),
+                },
+            ],
+        };
+        let result = check_graph(&node, &store);
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|e| matches!(e, GraphTypeError::SequentialTypeMismatch { .. })));
     }
 }

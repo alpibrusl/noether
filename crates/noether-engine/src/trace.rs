@@ -75,16 +75,19 @@ impl MemoryTraceStore {
 }
 
 /// File-backed trace store. Persists to JSON on every put.
+#[cfg(feature = "native")]
 pub struct JsonFileTraceStore {
     path: std::path::PathBuf,
     traces: HashMap<String, CompositionTrace>,
 }
 
+#[cfg(feature = "native")]
 #[derive(Serialize, Deserialize)]
 struct TraceFile {
     traces: Vec<CompositionTrace>,
 }
 
+#[cfg(feature = "native")]
 impl JsonFileTraceStore {
     pub fn open(path: impl Into<std::path::PathBuf>) -> Result<Self, String> {
         let path = path.into();

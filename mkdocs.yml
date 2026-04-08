@@ -82,6 +82,8 @@ nav:
   - Stdlib:
     - Overview: stdlib/overview.md
     - Stage Catalogue: stdlib/catalogue.md
+  - Examples:
+    - Overview: examples/index.md
   - Guides:
     - Building Custom Stages: guides/custom-stages.md
     - Composition Graphs: guides/composition-graphs.md

@@ -28,15 +28,27 @@ const NOETHER_CLI_DIR: &str = env!("CARGO_MANIFEST_DIR");
 pub struct BuildOptions<'a> {
     /// Path to the Lagrange graph JSON file.
     pub graph_path: &'a str,
-    /// Destination path for the compiled binary.
+    /// Destination path for the compiled binary (native) or output directory (browser).
     pub output_path: &'a str,
     /// Override the binary / ACLI command name. Defaults to the output filename.
     pub app_name: Option<&'a str>,
     /// One-line description surfaced in `--help`. Defaults to the graph description.
     pub description: Option<&'a str>,
+    /// Build target: "native" (default), "browser", or "react-native".
+    pub target: &'a str,
+    /// After building (native only): immediately exec the binary with `--serve <addr>`.
+    pub serve_addr: Option<&'a str>,
 }
 
 pub fn cmd_build(store: &dyn StageStore, opts: BuildOptions<'_>) {
+    if opts.target == "browser" {
+        super::build_browser::cmd_build_browser(store, opts);
+        return;
+    }
+    if opts.target == "react-native" {
+        super::build_mobile::cmd_build_mobile(store, opts);
+        return;
+    }
     // ── 1. Parse graph ────────────────────────────────────────────────────────
     let graph_json = match std::fs::read_to_string(opts.graph_path) {
         Ok(s) => s,
@@ -274,6 +286,35 @@ pub fn cmd_build(store: &dyn StageStore, opts: BuildOptions<'_>) {
             "description": description,
         }))
     );
+
+    // If --serve was requested, immediately exec the binary as an HTTP server.
+    // On Unix this replaces the current process image (exec syscall).
+    // On Windows we fall back to spawning a child and blocking on it.
+    if let Some(addr) = opts.serve_addr {
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            let err = Command::new(output_path)
+                .arg("--serve")
+                .arg(addr)
+                .exec();
+            // exec() only returns on error
+            eprintln!("{}", acli_error(&format!("Failed to exec server: {err}")));
+            std::process::exit(1);
+        }
+        #[cfg(not(unix))]
+        {
+            let status = Command::new(output_path)
+                .arg("--serve")
+                .arg(addr)
+                .status()
+                .unwrap_or_else(|e| {
+                    eprintln!("{}", acli_error(&format!("Failed to start server: {e}")));
+                    std::process::exit(1);
+                });
+            std::process::exit(status.code().unwrap_or(0));
+        }
+    }
 }
 
 // ── Code generation ───────────────────────────────────────────────────────────

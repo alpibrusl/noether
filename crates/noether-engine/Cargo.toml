@@ -3,6 +3,13 @@ name = "noether-engine"
 version.workspace = true
 edition.workspace = true
 
+[features]
+# The "native" feature enables OS-dependent modules: Nix execution, HTTP clients,
+# SQLite KV store, LLM providers, semantic index, and registry client.
+# When building for wasm32 (browser target), compile with --no-default-features.
+default = ["native"]
+native = ["dep:reqwest", "dep:rusqlite", "dep:arrow", "dep:base64"]
+
 [dependencies]
 noether-core = { path = "../noether-core" }
 noether-store = { path = "../noether-store" }
@@ -11,12 +18,18 @@ serde_json = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
 thiserror = { workspace = true }
-reqwest = { workspace = true }
+reqwest = { workspace = true, optional = true }
 regex = { workspace = true }
 chrono = { workspace = true }
 ed25519-dalek = { workspace = true }
 rand = { workspace = true }
-rusqlite = { version = "0.39.0", features = ["bundled"] }
+rusqlite = { version = "0.39.0", features = ["bundled"], optional = true }
+arrow = { version = "54", optional = true, default-features = false, features = ["ipc"] }
+base64 = { version = "0.22", optional = true }
+wasm-bindgen = { version = "0.2", optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.2", features = ["js"] }
 
 [dev-dependencies]
 proptest = { workspace = true }

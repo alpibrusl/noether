@@ -30,6 +30,15 @@ noether run examples/fleet-briefing.json --input '{
 | [`multi-source-search.json`](multi-source-search.json) | Search GitHub + HN + crates.io in one call | 2 | GitHub, HN Algolia, crates.io |
 | [`fleet-briefing.json`](fleet-briefing.json) | EV fleet operator morning briefing | 8 (parallel) | OpenChargeMap, Open-Meteo |
 | [`travel-intelligence.json`](travel-intelligence.json) | OTA travel market intelligence | 8 (parallel) | OpenChargeMap, Open-Meteo |
+| [`todo/`](todo/) | Full-stack todo app — browser WASM + native backend | 2 + RemoteStage | — |
+| [`stage-explorer/`](stage-explorer/) | Browse the stdlib in a browser — full-stack search UI | 2 + RemoteStage | — |
+
+### Full-stack examples (browser + backend)
+
+The `todo/` and `stage-explorer/` examples demonstrate the full Noether stack:
+`noether build --target browser` for the WASM frontend and
+`noether build --target native --serve :8080` for the backend.
+See each directory's `README.md` for setup instructions.
 
 ## Stage IDs used
 

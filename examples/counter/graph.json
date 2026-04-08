@@ -1,0 +1,20 @@
+{
+  "description": "Interactive counter app — demonstrates NoetherReact browser UI",
+  "version": "0.1.0",
+  "root": {
+    "op": "Stage",
+    "id": "3121480ab1ac1f27e05ae0db335358a917f3bc6d030714881951da2a34d1d71c",
+    "_comment": "counter-component — Record { count: Number } → VNode"
+  },
+  "ui": {
+    "atoms": {
+      "count": 0
+    },
+    "events": {
+      "increment": "atoms => ({ count: atoms.count + 1 })",
+      "decrement": "atoms => ({ count: Math.max(0, atoms.count - 1) })",
+      "reset":     "_atoms => ({ count: 0 })"
+    },
+    "style": "body { display: flex; align-items: center; justify-content: center; min-height: 100vh; } .counter { text-align: center; padding: 48px; } .counter-value { font-size: 4rem; color: var(--accent); margin-bottom: 32px; } .counter-buttons { display: flex; gap: 16px; justify-content: center; } .btn { padding: 12px 28px; border: 1px solid var(--edge); background: var(--surface); color: var(--text); font-size: 1.2rem; cursor: pointer; border-radius: 4px; font-family: inherit; transition: all 0.15s; } .btn:hover { border-color: var(--accent); color: var(--accent); } .btn-inc { background: var(--accent); color: var(--bg); border-color: var(--accent); } .btn-inc:hover { opacity: 0.85; color: var(--bg); }"
+  }
+}

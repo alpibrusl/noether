@@ -210,6 +210,9 @@ fn execute_node<E: StageExecutor + Sync>(
                 attempts: *max_attempts,
             }))
         }
+        CompositionNode::RemoteStage { url, .. } => {
+            execute_remote_stage(url, input)
+        }
     }
 }
 
@@ -284,6 +287,54 @@ fn hash_value(value: &Value) -> String {
     let bytes = serde_json::to_vec(value).unwrap_or_default();
     let hash = Sha256::digest(&bytes);
     hex::encode(hash)
+}
+
+/// Execute a remote Noether API call via HTTP POST.
+///
+/// Sends `{"input": <value>}` to `url` and extracts the output from the
+/// ACLI response envelope `{"data": {"output": <value>}}`.
+///
+/// In native builds this uses `reqwest::blocking`. In WASM builds this
+/// function returns an error — remote calls are handled by the JS runtime.
+fn execute_remote_stage(url: &str, input: &Value) -> Result<Value, ExecutionError> {
+    #[cfg(feature = "native")]
+    {
+        use reqwest::blocking::Client;
+
+        let client = Client::new();
+        let body = serde_json::json!({ "input": input });
+        let resp = client
+            .post(url)
+            .json(&body)
+            .send()
+            .map_err(|e| ExecutionError::RemoteCallFailed {
+                url: url.to_string(),
+                reason: e.to_string(),
+            })?;
+
+        let resp_json: Value = resp.json().map_err(|e| ExecutionError::RemoteCallFailed {
+            url: url.to_string(),
+            reason: format!("invalid JSON response: {e}"),
+        })?;
+
+        // Extract output from ACLI envelope: {"data": {"output": ...}}
+        resp_json
+            .get("data")
+            .and_then(|d| d.get("output"))
+            .cloned()
+            .ok_or_else(|| ExecutionError::RemoteCallFailed {
+                url: url.to_string(),
+                reason: "response missing data.output field".to_string(),
+            })
+    }
+    #[cfg(not(feature = "native"))]
+    {
+        let _ = (url, input);
+        Err(ExecutionError::RemoteCallFailed {
+            url: url.to_string(),
+            reason: "remote calls are handled by the JS runtime in WASM builds".to_string(),
+        })
+    }
 }
 
 #[cfg(test)]

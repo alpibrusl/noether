@@ -1,61 +1,46 @@
 # Noether Research
 
-> **Status: Experimental.** These are design documents and proofs-of-concept for directions
-> beyond Noether's current roadmap. Nothing here is stable or committed.
+This directory contains design documents for Noether features, kept up to date as research matures into shipped code.
 
-This directory contains research into extending Noether toward three frontier areas:
+## Active
 
-1. **[NoetherReact](./noether-react/DESIGN.md)** — content-addressed, typed reactive UI
-2. **[WASM Compilation](./wasm-target/DESIGN.md)** — stages that compile to WebAssembly and run in browsers
-3. **[Cloud Registry](./cloud-registry/DESIGN.md)** — federated, content-addressed stage distribution
-
----
-
-## Why these three?
-
-They form a natural progression:
-
-```
-Today:      stage (Python/JS/Bash) → Nix subprocess → JSON output
-                                                            ↓
-WASM:       stage (any lang) → .wasm component → browser / edge / server
-                                                            ↓
-NoetherReact: stage output = VNode → reactive runtime → live DOM
-                                                            ↓
-Registry:   stage identity (hash) → distributed CDN → any client
-```
-
-Each step unlocks the next. WASM gives you browser-native execution without Nix. NoetherReact gives you reactive UI from WASM stages. The cloud registry makes both available globally, identified by hash, no install required.
-
----
-
-## Connection to existing work
-
-| Research area | Related external work | Gap Noether fills |
+| Directory | Status | Description |
 |---|---|---|
-| WASM target | Bytecode Alliance Component Model (WIT/wac) | UI layer, reactive runtime |
-| NoetherReact | Solid.js (fine-grained reactivity), Elm (typed model) | Content-addressed components, AI composition |
-| Cloud registry | MTHDS Know-How Graph, AgentHub | Execution, not just discovery |
+| [`ui-port/`](ui-port/DESIGN.md) | **Implemented** | Complete Noether UI platform: VNode type, WASM browser build, JS reactive runtime, full-stack RemoteStage, client-side routing, scoped styles, keyed reconciliation, mobile target |
 
----
+## What has been built (quick reference)
 
-## How to contribute
+### Noether as a UI framework
+Noether stages whose output type is `VNode` become UI components. The type system, composition graph, and CLI all handle them natively. Stages are compiled to WebAssembly and run directly in the browser.
 
-These documents are living designs — open questions are clearly marked with `❓`.
-If you have answers, open a PR.
+### Full-stack with type-safe network boundary
+`RemoteStage` is a `CompositionNode` variant that declares a remote HTTP API endpoint inline in the composition graph. Its input/output types are checked statically at `noether build` time, giving compile-time safety across the network boundary.
 
-If you want to prototype something, start a directory here:
-```
-noether-research/
-  noether-react/
-    DESIGN.md         ← architecture design
-    prototype/        ← proof-of-concept code (any language)
-  wasm-target/
-    DESIGN.md
-    prototype/
-  cloud-registry/
-    DESIGN.md
-```
+### `noether build` targets
 
-Prototypes don't need to compile, pass tests, or be production-quality.
-They need to be clear enough that someone else can pick them up.
+| `--target` | Output | Use case |
+|---|---|---|
+| `native` (default) | Self-contained binary | Backend APIs, CLIs |
+| `browser` | `index.html` + WASM | Web apps |
+| `react-native` | Expo project | iOS / Android apps |
+
+### `--serve <addr>` shorthand
+`noether build api/graph.json --output ./server --serve :8080` builds the native binary and immediately execs it as an HTTP server — one command for the full dev workflow.
+
+### Routing
+`runtime.navigate(path)` + `popstate` listener + `_route` auto-injected atom. The new `noether.router` stdlib stage maps route paths to VNodes with prefix matching.
+
+### Scoped styles
+Stages declare `ui_style` CSS. The browser build scopes every selector to `.nr-<id8>` so stage styles never collide.
+
+### Keyed list reconciliation
+`NoetherRuntime._patchChildren` is now key-aware. Stages emit `"key": "stable-id"` in VNode props to enable efficient reuse of DOM nodes across re-renders.
+
+## Archived
+
+The original research sub-documents have been merged into `ui-port/DESIGN.md`:
+
+- `noether-react/` — NoetherReact: content-addressed reactive UI (merged)
+- `wasm-target/` — WASM compilation target design (merged)
+
+Cloud registry research is tracked separately in `noether-cloud` (in progress).

@@ -1,0 +1,48 @@
+{
+  "description": "Todo app — full-stack Noether app with RemoteStage backend",
+  "version": "0.1.0",
+  "root": {
+    "op": "Sequential",
+    "stages": [
+      {
+        "op": "RemoteStage",
+        "url": "http://localhost:8080",
+        "input": {
+          "kind": "Record",
+          "value": {
+            "action":   { "kind": "Text" },
+            "items":    { "kind": "List", "value": { "kind": "Text" } },
+            "new_item": { "kind": "Text" },
+            "index":    { "kind": "Number" }
+          }
+        },
+        "output": {
+          "kind": "Record",
+          "value": {
+            "items":    { "kind": "List", "value": { "kind": "Text" } },
+            "new_item": { "kind": "Text" }
+          }
+        },
+        "_comment": "todo-api backend — full atom record → { items, new_item }"
+      },
+      {
+        "op": "Stage",
+        "id": "4d76a323a46ff81865d6dd59c8aa8e7af8c0c6b808473616fce932f2949bc283",
+        "_comment": "todo-ui — Record { items, new_item } → VNode"
+      }
+    ]
+  },
+  "ui": {
+    "atoms": {
+      "action":   "list",
+      "items":    [],
+      "new_item": "",
+      "index":    -1
+    },
+    "events": {
+      "add":    "atoms => ({ action: 'add' })",
+      "remove": "(atoms, _, spec) => ({ action: 'remove', index: spec.$index })"
+    },
+    "style": "body { display: flex; align-items: flex-start; justify-content: center; min-height: 100vh; padding-top: 64px; } .todo-app { width: 480px; } .todo-title { font-size: 2rem; color: var(--accent); margin-bottom: 24px; letter-spacing: -0.02em; } .todo-list { list-style: none; margin: 16px 0; } .todo-item { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border: 1px solid var(--edge); margin-bottom: 8px; border-radius: 4px; background: var(--surface); font-size: 0.95rem; } .todo-empty { padding: 12px 16px; color: var(--dim); font-size: 0.85rem; font-style: italic; } .todo-add { display: flex; gap: 8px; } .todo-input { flex: 1; padding: 10px 14px; border: 1px solid var(--edge); background: var(--surface); color: var(--text); font-family: inherit; font-size: 0.9rem; border-radius: 4px; outline: none; } .todo-input:focus { border-color: var(--accent); } .btn { padding: 10px 18px; border: 1px solid var(--edge); background: var(--surface); color: var(--text); font-size: 0.9rem; cursor: pointer; border-radius: 4px; font-family: inherit; transition: all 0.15s; } .btn:hover { border-color: var(--accent); color: var(--accent); } .btn-add { background: var(--accent); color: var(--bg); border-color: var(--accent); } .btn-add:hover { opacity: 0.85; color: var(--bg); } .btn-del { padding: 4px 10px; font-size: 0.75rem; color: var(--dim); border-color: transparent; } .btn-del:hover { color: var(--bad); border-color: var(--bad); }"
+  }
+}

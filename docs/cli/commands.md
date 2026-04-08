@@ -122,14 +122,33 @@ Requires `VERTEX_AI_PROJECT`, `VERTEX_AI_LOCATION`, `VERTEX_AI_TOKEN` env vars. 
 ## `noether build`
 
 ```bash
+# Native binary (default)
 noether build graph.json --output my-tool
-noether build graph.json --output my-tool --target wasm  # planned
+noether build graph.json --output my-tool --serve :8080   # start HTTP server immediately
+
+# Browser WASM app
+noether build --target browser graph.json --output ./dist
 ```
 
-Compiles a composition graph into a standalone binary. The binary:
+Compiles a composition graph into a deployable artifact.
+
+**`--target native`** (default) — produces a self-contained binary that:
 
 - Runs once and prints ACLI JSON when invoked without flags.
-- Serves a browser dashboard on `--serve :PORT`.
+- Starts an HTTP server on `--serve :PORT` that accepts `POST /run` with `{"input": ...}`.
+
+**`--target browser`** — compiles all Rust stages to WebAssembly via `wasm-pack` and emits three files into `--output`:
+
+| File | Purpose |
+|---|---|
+| `index.html` | Self-contained app shell with the reactive `NoetherRuntime` |
+| `noether.js` | wasm-bindgen JS glue (`execute`, `execute_stage`, `get_graph_json`) |
+| `noether_bg.wasm` | Compiled stage graph |
+
+Serve with any static file server:
+```bash
+cd dist && python3 -m http.server 3000
+```
 
 ## `noether trace`
 

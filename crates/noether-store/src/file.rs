@@ -198,6 +198,7 @@ mod tests {
             signer_public_key: None,
             implementation_code: None,
             implementation_language: None,
+            ui_style: None,
         }
     }
 

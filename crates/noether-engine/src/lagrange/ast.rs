@@ -1,4 +1,5 @@
 use noether_core::stage::StageId;
+use noether_core::types::NType;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -8,6 +9,21 @@ use std::collections::BTreeMap;
 pub enum CompositionNode {
     /// Leaf node: reference to a stage by its content hash.
     Stage { id: StageId },
+
+    /// Call a remote Noether API endpoint over HTTP.
+    ///
+    /// The declared `input` and `output` types are verified by the type checker
+    /// at build time — the remote server does not need to be running during
+    /// `noether build`. In native builds, execution uses reqwest. In browser
+    /// builds, the JS runtime makes a `fetch()` call.
+    RemoteStage {
+        /// URL of the remote Noether API (e.g. "http://localhost:8080")
+        url: String,
+        /// Declared input type — what this node accepts from the pipeline
+        input: NType,
+        /// Declared output type — what this node returns to the pipeline
+        output: NType,
+    },
 
     /// Emits a constant JSON value, ignoring its input entirely.
     /// Used to inject literal strings, numbers, or objects into a pipeline.
@@ -79,6 +95,7 @@ pub fn collect_stage_ids(node: &CompositionNode) -> Vec<&StageId> {
 fn collect_ids_recursive<'a>(node: &'a CompositionNode, ids: &mut Vec<&'a StageId>) {
     match node {
         CompositionNode::Stage { id } => ids.push(id),
+        CompositionNode::RemoteStage { .. } => {} // no local stage ID; URL is resolved at runtime
         CompositionNode::Const { .. } => {} // no stage IDs in a constant
         CompositionNode::Sequential { stages } => {
             for s in stages {
@@ -235,5 +252,71 @@ mod tests {
         let v: serde_json::Value = serde_json::to_value(&node).unwrap();
         assert_eq!(v["op"], json!("Stage"));
         assert_eq!(v["id"], json!("abc123"));
+    }
+
+    #[test]
+    fn serde_remote_stage_round_trip() {
+        let node = CompositionNode::RemoteStage {
+            url: "http://localhost:8080".into(),
+            input: NType::record([("count", NType::Number)]),
+            output: NType::VNode,
+        };
+        let json = serde_json::to_string(&node).unwrap();
+        let parsed: CompositionNode = serde_json::from_str(&json).unwrap();
+        assert_eq!(node, parsed);
+    }
+
+    #[test]
+    fn remote_stage_json_shape() {
+        let node = CompositionNode::RemoteStage {
+            url: "http://api.example.com".into(),
+            input: NType::Text,
+            output: NType::Number,
+        };
+        let v: serde_json::Value = serde_json::to_value(&node).unwrap();
+        assert_eq!(v["op"], json!("RemoteStage"));
+        assert_eq!(v["url"], json!("http://api.example.com"));
+        assert!(v["input"].is_object());
+        assert!(v["output"].is_object());
+    }
+
+    #[test]
+    fn collect_stage_ids_skips_remote_stage() {
+        let node = CompositionNode::Sequential {
+            stages: vec![
+                stage("local-a"),
+                CompositionNode::RemoteStage {
+                    url: "http://remote".into(),
+                    input: NType::Text,
+                    output: NType::Text,
+                },
+                stage("local-b"),
+            ],
+        };
+        let ids = collect_stage_ids(&node);
+        // Only local stages contribute IDs
+        assert_eq!(ids.len(), 2);
+        assert_eq!(ids[0].0, "local-a");
+        assert_eq!(ids[1].0, "local-b");
+    }
+
+    #[test]
+    fn remote_stage_in_full_graph_serde() {
+        let graph = CompositionGraph::new(
+            "full-stack pipeline",
+            CompositionNode::Sequential {
+                stages: vec![
+                    CompositionNode::RemoteStage {
+                        url: "http://api:8080".into(),
+                        input: NType::record([("query", NType::Text)]),
+                        output: NType::List(Box::new(NType::Text)),
+                    },
+                    stage("render"),
+                ],
+            },
+        );
+        let json = serde_json::to_string_pretty(&graph).unwrap();
+        let parsed: CompositionGraph = serde_json::from_str(&json).unwrap();
+        assert_eq!(graph, parsed);
     }
 }

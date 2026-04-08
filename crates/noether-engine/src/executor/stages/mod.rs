@@ -1,10 +1,15 @@
 pub mod collections;
 pub mod control;
 pub mod data;
+#[cfg(feature = "native")]
+pub mod arrow;
+#[cfg(feature = "native")]
 pub mod io;
+#[cfg(feature = "native")]
 pub mod kv;
 pub mod scalar;
 pub mod text;
+pub mod ui;
 pub mod validation;
 
 use super::{ExecutionError, StageExecutor};
@@ -70,23 +75,43 @@ pub fn find_implementation(description: &str) -> Option<StageFn> {
         "Select between two values based on a boolean condition" => Some(control::branch),
         "Check if one type is a structural subtype of another" => Some(control::is_subtype),
 
-        // I/O
+        // UI
+        "Route a path to a VNode: return routes[route] or routes[default]" => {
+            Some(ui::router)
+        }
+
+        // I/O (native only: requires reqwest + std::fs)
+        #[cfg(feature = "native")]
         "Read a file's contents as text" => Some(io::read_file),
+        #[cfg(feature = "native")]
         "Write text content to a file" => Some(io::write_file),
+        #[cfg(feature = "native")]
         "Write text to standard output" => Some(io::stdout_write),
+        #[cfg(feature = "native")]
         "Read all available text from standard input" => Some(io::stdin_read),
+        #[cfg(feature = "native")]
         "Read an environment variable; returns null if not set" => Some(io::env_get),
+        #[cfg(feature = "native")]
         "Make an HTTP GET request" => Some(io::http_get),
+        #[cfg(feature = "native")]
         "Make an HTTP POST request" => Some(io::http_post),
+        #[cfg(feature = "native")]
         "Make an HTTP PUT request" => Some(io::http_put),
+        #[cfg(feature = "native")]
         "Extract the body text from an HTTP response record" => Some(io::http_body),
+        #[cfg(feature = "native")]
         "Extract the status code from an HTTP response record" => Some(io::http_status),
 
-        // KV store
+        // KV store (native only: requires rusqlite)
+        #[cfg(feature = "native")]
         "Store a JSON value under a key in the persistent key-value store; returns \"ok\"" => Some(kv::kv_set),
+        #[cfg(feature = "native")]
         "Retrieve a JSON value by key from the persistent key-value store; returns null if not found" => Some(kv::kv_get),
+        #[cfg(feature = "native")]
         "Delete a key from the persistent key-value store; returns true if the key existed" => Some(kv::kv_delete),
+        #[cfg(feature = "native")]
         "Check whether a key exists in the persistent key-value store" => Some(kv::kv_exists),
+        #[cfg(feature = "native")]
         "List all keys in the persistent key-value store that start with a given prefix" => Some(kv::kv_list),
 
         // Validation pipeline (Rust-native, no Nix)
@@ -106,6 +131,12 @@ pub fn find_implementation(description: &str) -> Option<StageFn> {
             Some(validation::merge_validation_checks)
         }
 
+        // Arrow IPC (native only: requires arrow + base64)
+        #[cfg(feature = "native")]
+        "Convert a list of records to Apache Arrow IPC bytes" => Some(arrow::arrow_from_records),
+        #[cfg(feature = "native")]
+        "Decode Apache Arrow IPC bytes to a list of record maps" => Some(arrow::records_to_arrow),
+
         _ => None,
     }
 }
@@ -117,6 +148,9 @@ pub fn is_executor_stage(description: &str) -> bool {
         description,
         "Try stages in order until one succeeds; fails if all fail"
             | "Run N stages concurrently on N inputs; collect all results"
+            | "Retry a fallible stage up to N times with optional delay between attempts"
+            | "Run a stage with a deadline; fails if the stage exceeds the timeout"
+            | "Run multiple stages concurrently; return the first to complete"
     )
 }
 
@@ -131,6 +165,15 @@ pub fn execute_executor_stage<E: StageExecutor>(
         }
         "Run N stages concurrently on N inputs; collect all results" => {
             control::parallel_n(executor, input)
+        }
+        "Retry a fallible stage up to N times with optional delay between attempts" => {
+            control::retry_hof(executor, input)
+        }
+        "Run a stage with a deadline; fails if the stage exceeds the timeout" => {
+            control::timeout_hof(executor, input)
+        }
+        "Run multiple stages concurrently; return the first to complete" => {
+            control::race_hof(executor, input)
         }
         _ => Err(ExecutionError::StageNotFound(StageId("unknown".into()))),
     }

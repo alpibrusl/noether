@@ -49,6 +49,16 @@ impl CompositeExecutor {
         self
     }
 
+    /// Attach an embedding provider so `llm_embed` uses real embeddings and
+    /// `store_search` uses cosine similarity instead of substring matching.
+    pub fn with_embedding(mut self, provider: Box<dyn crate::index::embedding::EmbeddingProvider>) -> Self {
+        // Rebuild runtime with embedding (pre-computes embeddings for all cached stages).
+        // We need to apply `with_embedding` to the existing runtime; since RuntimeExecutor
+        // doesn't expose a `set_embedding` method we re-build via destructure.
+        self.runtime = self.runtime.with_embedding(provider);
+        self
+    }
+
     /// Register a freshly synthesized stage so it can be executed immediately
     /// without reloading the store.
     pub fn register_synthesized(&mut self, stage_id: &StageId, code: &str, language: &str) {

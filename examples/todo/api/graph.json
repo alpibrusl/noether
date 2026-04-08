@@ -1,0 +1,9 @@
+{
+  "description": "Todo API backend — handles add/remove/list operations on a todo list",
+  "version": "0.1.0",
+  "root": {
+    "op": "Stage",
+    "id": "5d7b52beb30ce2b6b28af739c8d1dfe728997d3c0b75b77e0515dd70d2271bf1",
+    "_comment": "todo-api — Record { action, items, new_item, index } → Record { items, new_item }"
+  }
+}

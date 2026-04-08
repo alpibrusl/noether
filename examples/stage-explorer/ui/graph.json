@@ -1,0 +1,21 @@
+{
+  "description": "Stage Explorer — browser UI (WASM, self-contained)",
+  "version": "0.1.0",
+  "root": {
+    "op": "Stage",
+    "id": "3b467edf077f11fa9331b242f3ea722b8d64730376d869b7ef09c19518b6d4ce",
+    "_comment": "explorer-ui: { query, limit } → VNode (search + render, catalog embedded)"
+  },
+  "ui": {
+    "atoms": {
+      "query": "",
+      "limit": 12
+    },
+    "events": {
+      "search": "atoms => atoms",
+      "type":   "(atoms, event) => ({ query: event && event.target ? event.target.value : atoms.query })",
+      "hint":   "(atoms, event, spec) => ({ query: spec && spec.$hint ? spec.$hint : atoms.query })"
+    },
+    "style": ""
+  }
+}

@@ -63,6 +63,7 @@ fn full_stage_round_trip() {
         signer_public_key: Some(public_key.clone()),
         implementation_code: None,
         implementation_language: None,
+            ui_style: None,
     };
 
     // 6. Serialize to JSON and back

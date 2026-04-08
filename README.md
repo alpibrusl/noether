@@ -293,10 +293,10 @@ noether compose "extract key entities from these documents" --input '...'
 | 3 — Agent Interface (Composition Agent, semantic index) | ✅ Done |
 | 4 — Hardening (signatures, dedup, store health) | ✅ Done |
 | 5 — Effects v2 (inference & enforcement) | 🔜 Next |
-| 6 — WASM compilation target | 🔬 Research |
+| 6 — UI Port (VNode type, `--target browser`, JS reactive runtime) | ✅ Done |
 | 7 — Cloud stage registry | 🔜 Planned |
 
-See [`noether-research/`](./noether-research/) for the WASM/reactive UI research direction.
+See [`noether-research/ui-port/`](./noether-research/ui-port/DESIGN.md) for the UI port architecture, and [`examples/stage-explorer/`](./examples/stage-explorer/README.md) for the Stage Explorer full-stack demo (searches all 77 stdlib stages in WASM, instant load, no backend). See [`examples/counter/`](./examples/counter/README.md) for the minimal counter app walkthrough.
 
 ---
 

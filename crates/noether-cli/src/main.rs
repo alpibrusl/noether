@@ -68,7 +68,7 @@ enum Commands {
     Build {
         /// Path to the Lagrange graph JSON file
         graph: String,
-        /// Output binary path (default: ./noether-app)
+        /// Output binary path (native) or directory (browser). Default: ./noether-app
         #[arg(short, long, default_value = "./noether-app")]
         output: String,
         /// Override the binary name used in ACLI output and --help (default: output filename)
@@ -77,6 +77,13 @@ enum Commands {
         /// One-line description shown in the binary's --help (default: graph description)
         #[arg(long)]
         description: Option<String>,
+        /// Build target: "native" (default), "browser" (produces HTML+WASM directory), or "react-native"
+        #[arg(long, default_value = "native")]
+        target: String,
+        /// After building (native target only): immediately start the binary as an HTTP server.
+        /// Accepts ":PORT" shorthand or "HOST:PORT". E.g. --serve :8080
+        #[arg(long)]
+        serve: Option<String>,
     },
     /// Compose a solution from a problem description using the Composition Agent
     Compose {
@@ -400,6 +407,7 @@ fn main() {
             budget_cents,
         } => {
             let store = build_store(registry);
+            let mut trace_store = init_trace_store();
             let input_value = input
                 .as_deref()
                 .map(|s| serde_json::from_str(s).unwrap_or(serde_json::Value::String(s.into())))
@@ -407,6 +415,7 @@ fn main() {
             let policy = parse_capability_policy(allow_capabilities.as_deref());
             commands::run::cmd_run(
                 store.as_ref(),
+                &mut trace_store,
                 &graph,
                 dry_run,
                 &input_value,
@@ -423,6 +432,8 @@ fn main() {
             output,
             name,
             description,
+            target,
+            serve,
         } => {
             let store = build_store(registry);
             commands::build::cmd_build(
@@ -432,6 +443,8 @@ fn main() {
                     output_path: &output,
                     app_name: name.as_deref(),
                     description: description.as_deref(),
+                    target: &target,
+                    serve_addr: serve.as_deref(),
                 },
             );
         }

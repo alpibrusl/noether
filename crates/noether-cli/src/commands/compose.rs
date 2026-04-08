@@ -223,14 +223,16 @@ fn emit_result(store: &mut dyn StageStore, ctx: EmitCtx<'_>) {
         return;
     }
 
-    let mut executor = CompositeExecutor::from_store(store).with_llm(
-        providers::build_llm_provider().0,
-        LlmConfig {
-            model: ctx.model.into(),
-            max_tokens: 4096,
-            temperature: 0.2,
-        },
-    );
+    let mut executor = CompositeExecutor::from_store(store)
+        .with_llm(
+            providers::build_llm_provider().0,
+            LlmConfig {
+                model: ctx.model.into(),
+                max_tokens: 4096,
+                temperature: 0.2,
+            },
+        )
+        .with_embedding(providers::build_embedding_provider().0);
     for syn in ctx.synthesized {
         executor.register_synthesized(&syn.stage_id, &syn.implementation, &syn.language);
     }

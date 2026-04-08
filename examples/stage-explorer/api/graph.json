@@ -1,0 +1,9 @@
+{
+  "description": "Stage Explorer API — searches the Noether stdlib catalog",
+  "version": "0.1.0",
+  "root": {
+    "op": "Stage",
+    "id": "871aceaad98b6da97aaf667bd93e5c200a2242a08fd3d47d4eae129f33ace5da",
+    "_comment": "explorer-api (Python): { query, limit } → { query, results }"
+  }
+}

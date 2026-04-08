@@ -72,6 +72,11 @@ fn flatten_node(
             // in the runner without touching the store.
             depends_on.to_vec()
         }
+        CompositionNode::RemoteStage { .. } => {
+            // RemoteStage nodes produce no local execution step.
+            // Native runner handles these via reqwest; browser runtime via fetch().
+            depends_on.to_vec()
+        }
         CompositionNode::Sequential { stages } => {
             let mut prev_indices = depends_on.to_vec();
 

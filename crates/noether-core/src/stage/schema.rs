@@ -61,6 +61,11 @@ pub struct Stage {
     /// Language of the implementation: "python", "javascript", "bash", etc.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub implementation_language: Option<String>,
+    /// Optional CSS scoped to this stage's UI component.
+    /// The browser build automatically prefixes every selector with `.nr-<id8>`
+    /// to avoid collisions with other stages' styles.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ui_style: Option<String>,
 }
 
 #[cfg(test)]
@@ -97,6 +102,7 @@ mod tests {
             signer_public_key: None,
             implementation_code: None,
             implementation_language: None,
+            ui_style: None,
         };
         let json = serde_json::to_string_pretty(&stage).unwrap();
         let deserialized: Stage = serde_json::from_str(&json).unwrap();

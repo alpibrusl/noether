@@ -1,0 +1,22 @@
+{
+  "name": "todo-api",
+  "description": "Todo list backend: processes add/remove/list actions on items. Returns { items, new_item } so the UI stage can render both the updated list and the current input value.",
+  "input": {
+    "kind": "Record",
+    "value": {
+      "action":   { "kind": "Text" },
+      "items":    { "kind": "List", "value": { "kind": "Text" } },
+      "new_item": { "kind": "Text" },
+      "index":    { "kind": "Number" }
+    }
+  },
+  "output": {
+    "kind": "Record",
+    "value": {
+      "items":    { "kind": "List", "value": { "kind": "Text" } },
+      "new_item": { "kind": "Text" }
+    }
+  },
+  "language": "rust",
+  "implementation": "use serde_json::{json, Value};\nfn execute(input: &Value) -> Value {\n    let action = input[\"action\"].as_str().unwrap_or(\"list\");\n    let new_item_str = input[\"new_item\"].as_str().unwrap_or(\"\");\n    let items: Vec<String> = input[\"items\"]\n        .as_array()\n        .map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())\n        .unwrap_or_default();\n    let (updated_items, clear_new) = match action {\n        \"add\" => {\n            if new_item_str.is_empty() {\n                (items, false)\n            } else {\n                let mut out = items;\n                out.push(new_item_str.to_string());\n                (out, true)\n            }\n        }\n        \"remove\" => {\n            let idx = input[\"index\"].as_u64().unwrap_or(u64::MAX) as usize;\n            let out: Vec<String> = items.into_iter().enumerate()\n                .filter(|(i, _)| *i != idx)\n                .map(|(_, v)| v)\n                .collect();\n            (out, false)\n        }\n        _ => (items, false),\n    };\n    json!({\n        \"items\": updated_items,\n        \"new_item\": if clear_new { \"\" } else { new_item_str }\n    })\n}"
+}
