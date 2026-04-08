@@ -97,33 +97,80 @@ impl RemoteStageStore {
         Some(Self::connect(&url, key.as_deref()))
     }
 
-    /// Re-fetch all stages from the registry and reload the cache.
+    /// Re-fetch all stages from the registry using offset pagination and
+    /// rebuild the local cache. Each page is 200 stages; iteration stops when
+    /// the server returns an empty page or `offset >= total`.
+    ///
     /// Call this if you know the registry was mutated externally.
     pub fn refresh(&mut self) -> Result<usize, StoreError> {
-        let resp = self
-            .get_req("/stages?limit=2000")
-            .send()
-            .map_err(|e| StoreError::IoError {
-                message: format!("registry unreachable at {}: {e}", self.base_url),
-            })?;
+        const PAGE: usize = 200;
+        let mut offset = 0usize;
+        let mut new_cache = MemoryStore::new();
 
-        let result = extract_result(resp)?;
-        let stages: Vec<Stage> =
-            serde_json::from_value(result["stages"].clone()).map_err(|e| StoreError::IoError {
-                message: format!("malformed /stages response: {e}"),
-            })?;
+        loop {
+            let path = format!("/stages?lifecycle=active&limit={PAGE}&offset={offset}");
+            let resp = self
+                .get_req(&path)
+                .send()
+                .map_err(|e| StoreError::IoError {
+                    message: format!("registry unreachable at {}: {e}", self.base_url),
+                })?;
 
-        let count = stages.len();
-        self.cache = MemoryStore::new();
-        for stage in stages {
-            self.cache.upsert(stage).ok();
+            let result = extract_result(resp)?;
+            let page: Vec<Stage> =
+                serde_json::from_value(result["stages"].clone()).map_err(|e| {
+                    StoreError::IoError {
+                        message: format!("malformed /stages response: {e}"),
+                    }
+                })?;
+
+            let total = result["total"].as_u64().unwrap_or(0) as usize;
+            let fetched = page.len();
+            for stage in page {
+                new_cache.upsert(stage).ok();
+            }
+
+            offset += fetched;
+            if fetched == 0 || offset >= total {
+                break;
+            }
         }
+
+        let count = new_cache.list(None).len();
+        self.cache = new_cache;
         Ok(count)
     }
 
     /// The base URL this store is connected to.
     pub fn base_url(&self) -> &str {
         &self.base_url
+    }
+
+    /// Fetch a single stage directly from the registry, bypassing the cache.
+    /// On success the stage is inserted into the local cache so subsequent
+    /// `get()` calls will find it without another HTTP round-trip.
+    ///
+    /// Returns `Ok(None)` when the server returns 404.
+    pub fn get_live(&mut self, id: &StageId) -> Result<Option<&Stage>, StoreError> {
+        let resp = self
+            .get_req(&format!("/stages/{}", id.0))
+            .send()
+            .map_err(|e| StoreError::IoError {
+                message: e.to_string(),
+            })?;
+
+        match extract_result(resp) {
+            Ok(body) => {
+                let stage: Stage =
+                    serde_json::from_value(body).map_err(|e| StoreError::IoError {
+                        message: format!("malformed /stages/:id response: {e}"),
+                    })?;
+                self.cache.upsert(stage).ok();
+                self.cache.get(id)
+            }
+            Err(StoreError::IoError { message }) if message.contains("NOT_FOUND") => Ok(None),
+            Err(e) => Err(e),
+        }
     }
 
     // ── internal request helpers ────────────────────────────────────────────
@@ -138,6 +185,10 @@ impl RemoteStageStore {
 
     fn patch_req(&self, path: &str) -> reqwest::blocking::RequestBuilder {
         self.with_auth(self.client.patch(format!("{}{path}", self.base_url)))
+    }
+
+    fn delete_req(&self, path: &str) -> reqwest::blocking::RequestBuilder {
+        self.with_auth(self.client.delete(format!("{}{path}", self.base_url)))
     }
 
     fn with_auth(&self, b: reqwest::blocking::RequestBuilder) -> reqwest::blocking::RequestBuilder {
@@ -195,11 +246,34 @@ impl StageStore for RemoteStageStore {
         }
     }
 
-    /// Removes only from the local cache — there is no public DELETE endpoint.
+    /// Removes the stage from the remote registry (DELETE /stages/:id) and
+    /// then from the local cache.
     fn remove(&mut self, id: &StageId) -> Result<(), StoreError> {
-        self.cache.remove(id)
+        let resp = self
+            .delete_req(&format!("/stages/{}", id.0))
+            .send()
+            .map_err(|e| StoreError::IoError {
+                message: e.to_string(),
+            })?;
+
+        let status_str = extract_result(resp)
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_default();
+        if !status_str.is_empty() && !status_str.contains("NOT_FOUND") {
+            return Err(StoreError::IoError {
+                message: status_str,
+            });
+        }
+        // Best-effort cache eviction (stage may already be absent from cache).
+        let _ = self.cache.remove(id);
+        Ok(())
     }
 
+    /// Returns the stage from the local cache.
+    ///
+    /// For a guaranteed-fresh read use [`RemoteStageStore::get_live`] (which
+    /// takes `&mut self` so it can update the cache).
     fn get(&self, id: &StageId) -> Result<Option<&Stage>, StoreError> {
         self.cache.get(id)
     }
