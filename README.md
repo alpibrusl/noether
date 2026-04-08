@@ -43,7 +43,7 @@ Noether is **not** a workflow orchestrator, AI agent framework, or pipeline runn
 │  Type checker · DAG planner · Executor · Trace store     │
 ├─────────────────────────────────────────────────────────┤
 │  L2 — Stage Store                                        │
-│  Immutable SHA-256 registry · Lifecycle · 50-stage stdlib│
+│  Immutable SHA-256 registry · Lifecycle · 76-stage stdlib│
 ├─────────────────────────────────────────────────────────┤
 │  L1 — Execution Layer                                    │
 │  Nix hermetic sandboxing · Python/JS/Bash runtimes       │
@@ -54,7 +54,7 @@ Noether is **not** a workflow orchestrator, AI agent framework, or pipeline runn
 
 | Crate | Purpose |
 |---|---|
-| `noether-core` | Type system (`NType`), effects, stage schema, stdlib (50 stages), Ed25519 signing |
+| `noether-core` | Type system (`NType`), effects, stage schema, stdlib (76 stages), Ed25519 signing |
 | `noether-store` | `StageStore` trait, `MemoryStore`, `JsonFileStore`, lifecycle validation |
 | `noether-engine` | Lagrange graph format, type checker, planner, executor, semantic index, LLM agent |
 | `noether-cli` | ACLI-compliant CLI — `stage`, `store`, `run`, `build`, `compose`, `trace` |
@@ -78,7 +78,7 @@ noether version
 ### Run a composition
 
 ```bash
-# List all 50 stdlib stages
+# List all 76 stdlib stages
 noether stage list
 
 # Search by capability
@@ -247,7 +247,7 @@ Or via the stdlib stages: `kv_get`, `kv_set`, `kv_delete`, `kv_exists`, `kv_list
 
 ---
 
-## Stdlib (50 stages)
+## Stdlib (76 stages)
 
 | Category | Stages |
 |---|---|
@@ -288,15 +288,16 @@ noether compose "extract key entities from these documents" --input '...'
 | Phase | Status |
 |---|---|
 | 0 — Foundation (type system, hashing, stage schema) | ✅ Done |
-| 1 — Store + Stdlib (50 stages, test harness) | ✅ Done |
+| 1 — Store + Stdlib (76 stages, test harness) | ✅ Done |
 | 2 — Composition Engine (DAG executor, traces) | ✅ Done |
 | 3 — Agent Interface (Composition Agent, semantic index) | ✅ Done |
 | 4 — Hardening (signatures, dedup, store health) | ✅ Done |
-| 5 — Effects v2 (inference & enforcement) | 🔜 Next |
-| 6 — UI Port (VNode type, `--target browser`, JS reactive runtime) | ✅ Done |
-| 7 — Cloud stage registry | 🔜 Planned |
+| 5 — Effects v2 (inference & enforcement, `--allow-effects`) | ✅ Done |
+| 6 — NixExecutor hardening (timeout, error classification, warmup) | ✅ Done |
+| 7 — Cloud Registry hardening (DELETE, paginated refresh, scheduler) | ✅ Done |
+| 8 — Runtime budget enforcement (`--budget-cents`, `BudgetedExecutor`) | ✅ Done |
 
-See [`noether-research/ui-port/`](./noether-research/ui-port/DESIGN.md) for the UI port architecture, and [`examples/stage-explorer/`](./examples/stage-explorer/README.md) for the Stage Explorer full-stack demo (searches all 77 stdlib stages in WASM, instant load, no backend). See [`examples/counter/`](./examples/counter/README.md) for the minimal counter app walkthrough.
+See [roadmap.md](./docs/roadmap.md) for near-term improvements and future directions.
 
 ---
 

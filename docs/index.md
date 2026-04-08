@@ -90,11 +90,14 @@ graph TD
 | Phase | Focus | Status |
 |---|---|---|
 | 0 | Foundation — type system, hashing, stage schema | ✅ Done |
-| 1 | Store + Stdlib — 50 stdlib stages | ✅ Done |
+| 1 | Store + Stdlib — 76 stdlib stages | ✅ Done |
 | 2 | Composition Engine — DAG executor, trace output | ✅ Done |
 | 3 | Agent Interface — Composition Agent, semantic index | ✅ Done |
-| 4 | Hardening — security, deduplication, store health | 🔄 In progress |
-| 5 | Effects v2 — effect inference & enforcement | 📋 Planned |
+| 4 | Hardening — signatures, deduplication, store health | ✅ Done |
+| 5 | Effects v2 — effect inference & enforcement | ✅ Done |
+| 6 | NixExecutor hardening — timeout, error classification, warmup | ✅ Done |
+| 7 | Cloud Registry hardening — DELETE, paginated refresh, scheduler | ✅ Done |
+| 8 | Runtime budget enforcement — `--budget-cents`, `BudgetedExecutor` | ✅ Done |
 
 ## Quick install
 

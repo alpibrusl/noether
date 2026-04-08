@@ -99,7 +99,7 @@ silent regressions structurally impossible.
 
 ### Performance
 
-100 searches over 75 stages complete in < 500 ms (the test asserts this):
+100 searches over 76 stages complete in < 500 ms (the test asserts this):
 
 ```rust
 // From crates/noether-engine/tests/index_integration.rs
@@ -112,7 +112,7 @@ assert!(elapsed.as_millis() < 500);  // 100 searches < 500ms = < 5ms each
 ```
 
 In practice on a dev machine, 100 searches complete in ~200 ms — roughly **2 ms per search**
-for 75 stages using brute-force cosine similarity.
+for 76 stages using brute-force cosine similarity.
 
 ### Relevance
 
@@ -178,7 +178,7 @@ cd noether
 cargo test                          # run all 390+ tests
 cargo test -p noether-engine        # 156 type-checker + index + executor tests
 cargo test -p noether-core          # 55 type system + stdlib tests
-cargo run --bin noether -- stage list  # see all 75 stages with real IDs
+cargo run --bin noether -- stage list  # see all 76 stages with real IDs
 noether run --dry-run examples/fleet-briefing.json   # type-check a real graph
 ```
 

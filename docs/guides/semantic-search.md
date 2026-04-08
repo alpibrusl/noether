@@ -34,7 +34,7 @@ above `b89d34eb` (parse_json) even though both mention JSON — the example sign
 
 ## Performance
 
-100 queries over 75 stages complete in < 500 ms (brute-force cosine similarity).
+100 queries over 76 stages complete in < 500 ms (brute-force cosine similarity).
 In practice on a dev machine: ~2 ms per search.
 
 At 10,000 stages the brute-force approach would take ~200 ms; the index interface
@@ -130,4 +130,4 @@ index.remove_stage(&stage_id);
 ```
 
 The index is held in memory — no persistence layer.  A registry restart rebuilds it
-from the store in < 100 ms for 75 stages.
+from the store in < 100 ms for 76 stages.

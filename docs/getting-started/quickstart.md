@@ -4,7 +4,7 @@ This guide walks you through the four core Noether workflows in under 10 minutes
 
 ## 1 — Explore the stdlib
 
-Noether ships with 50 stdlib stages covering scalar ops, collections, I/O, LLM primitives, data processing, and text.
+Noether ships with 76 stdlib stages covering scalar ops, collections, I/O, LLM primitives, data processing, and text.
 
 ```bash
 # List all stdlib stages

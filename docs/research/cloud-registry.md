@@ -20,6 +20,7 @@ noether CLI / AI agent
 │  POST   /stages                │  Submit + validate a stage
 │  GET    /stages                │  List by lifecycle
 │  GET    /stages/:id            │  Fetch by content hash
+│  DELETE /stages/:id            │  Delete a stage (requires API key)
 │  POST   /stages/:id/lifecycle  │  Promote / deprecate
 │  GET    /stages/search         │  Semantic search
 │  POST   /compositions/run      │  Execute a composition graph
