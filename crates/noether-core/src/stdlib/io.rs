@@ -53,6 +53,8 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
             .example(json!({"path": "/etc/hostname"}), json!({"content": "myhost\n", "size_bytes": 7}))
             .example(json!({"path": "empty.txt"}), json!({"content": "", "size_bytes": 0}))
             .example(json!({"path": "config.json"}), json!({"content": "{}", "size_bytes": 2}))
+            .tag("io").tag("filesystem").tag("file")
+            .alias("file_read").alias("load_file").alias("cat")
             .build_stdlib(key)
             .unwrap(),
         StageBuilder::new("write_file")
@@ -72,6 +74,8 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
             .example(json!({"path": "empty.txt", "content": ""}), json!({"path": "empty.txt", "bytes_written": 0}))
             .example(json!({"path": "log.txt", "content": "entry\n"}), json!({"path": "log.txt", "bytes_written": 6}))
             .example(json!({"path": "out.json", "content": "{}"}), json!({"path": "out.json", "bytes_written": 2}))
+            .tag("io").tag("filesystem").tag("file")
+            .alias("file_write").alias("save_file").alias("write")
             .build_stdlib(key)
             .unwrap(),
         StageBuilder::new("http_get")
@@ -85,6 +89,8 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
             .example(json!({"url": "https://api.example.com/404", "headers": null}), json!({"status": 404, "body": "not found", "headers": {"content-type": "text/plain"}}))
             .example(json!({"url": "https://api.example.com/json", "headers": null}), json!({"status": 200, "body": "[]", "headers": {"content-type": "application/json"}}))
             .example(json!({"url": "https://example.com/health", "headers": null}), json!({"status": 200, "body": "ok", "headers": {"content-type": "text/plain"}}))
+            .tag("io").tag("http").tag("network").tag("web")
+            .alias("fetch").alias("wget").alias("curl_get").alias("get_request")
             .build_stdlib(key)
             .unwrap(),
         StageBuilder::new("http_post")
@@ -98,6 +104,8 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
             .example(json!({"url": "https://api.example.com/form", "body": "field=value", "headers": null, "content_type": "application/x-www-form-urlencoded"}), json!({"status": 200, "body": "done", "headers": {"content-type": "text/plain"}}))
             .example(json!({"url": "https://api.example.com/err", "body": "{}", "headers": null, "content_type": null}), json!({"status": 400, "body": "bad request", "headers": {"content-type": "text/plain"}}))
             .example(json!({"url": "https://api.example.com/xml", "body": "<data/>", "headers": null, "content_type": "application/xml"}), json!({"status": 200, "body": "<ok/>", "headers": {"content-type": "application/xml"}}))
+            .tag("io").tag("http").tag("network").tag("web")
+            .alias("post_request").alias("curl_post").alias("submit")
             .build_stdlib(key)
             .unwrap(),
         StageBuilder::new("http_put")
@@ -111,6 +119,8 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
             .example(json!({"url": "https://api.example.com/new", "body": "{}", "headers": null, "content_type": "application/json"}), json!({"status": 201, "body": "{\"id\":2}", "headers": {"content-type": "application/json"}}))
             .example(json!({"url": "https://api.example.com/err", "body": "bad", "headers": null, "content_type": null}), json!({"status": 500, "body": "error", "headers": {"content-type": "text/plain"}}))
             .example(json!({"url": "https://api.example.com/ok", "body": "test", "headers": {"x-key": "val"}, "content_type": null}), json!({"status": 200, "body": "ok", "headers": {"content-type": "text/plain"}}))
+            .tag("io").tag("http").tag("network").tag("web")
+            .alias("put_request").alias("curl_put").alias("update_resource")
             .build_stdlib(key)
             .unwrap(),
         StageBuilder::new("stdin_read")
@@ -123,6 +133,8 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
             .example(json!(null), json!(""))
             .example(json!(null), json!("user input"))
             .example(json!(null), json!("42"))
+            .tag("io").tag("stdin").tag("pipe")
+            .alias("read_stdin").alias("getline").alias("read_input")
             .build_stdlib(key)
             .unwrap(),
         StageBuilder::new("stdout_write")
@@ -135,6 +147,8 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
             .example(json!({"text": ""}), json!(null))
             .example(json!({"text": "result: 42"}), json!(null))
             .example(json!({"text": "done\n"}), json!(null))
+            .tag("io").tag("stdout").tag("pipe")
+            .alias("print").alias("echo").alias("write_output")
             .build_stdlib(key)
             .unwrap(),
         StageBuilder::new("env_get")
@@ -148,6 +162,8 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
             .example(json!({"name": "UNDEFINED_VAR"}), json!(null))
             .example(json!({"name": "USER"}), json!("alice"))
             .example(json!({"name": "LANG"}), json!("en_US.UTF-8"))
+            .tag("io").tag("environment").tag("config")
+            .alias("getenv").alias("os_getenv").alias("read_env_var")
             .build_stdlib(key)
             .unwrap(),
         // ── HTTP response adapters ─────────────────────────────────────────────
@@ -161,6 +177,8 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
             .example(json!({"status": 200, "body": "", "headers": {}}), json!(""))
             .example(json!({"status": 201, "body": "{\"id\":1}", "headers": {"content-type": "application/json"}}), json!("{\"id\":1}"))
             .example(json!({"status": 200, "body": "ok", "headers": {"content-type": "text/plain"}}), json!("ok"))
+            .tag("io").tag("http").tag("network").tag("pure")
+            .alias("response_body").alias("get_body")
             .build_stdlib(key)
             .unwrap(),
         StageBuilder::new("http_status")
@@ -173,6 +191,8 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
             .example(json!({"status": 201, "body": "{}", "headers": {}}), json!(201.0))
             .example(json!({"status": 500, "body": "error", "headers": {}}), json!(500.0))
             .example(json!({"status": 301, "body": "", "headers": {"location": "/new"}}), json!(301.0))
+            .tag("io").tag("http").tag("network").tag("pure")
+            .alias("response_status").alias("status_code").alias("get_status")
             .build_stdlib(key)
             .unwrap(),
     ]

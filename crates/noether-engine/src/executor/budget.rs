@@ -222,6 +222,8 @@ mod tests {
             implementation_code: None,
             implementation_language: None,
             ui_style: None,
+            tags: vec![],
+            aliases: vec![],
         }
     }
 
@@ -344,6 +346,8 @@ mod tests {
             implementation_code: None,
             implementation_language: None,
             ui_style: None,
+            tags: vec![],
+            aliases: vec![],
         };
         store.put(free).unwrap();
 

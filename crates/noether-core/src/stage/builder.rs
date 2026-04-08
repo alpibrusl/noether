@@ -31,6 +31,8 @@ pub struct StageBuilder {
     implementation_code: Option<String>,
     implementation_language: Option<String>,
     ui_style: Option<String>,
+    tags: Vec<String>,
+    aliases: Vec<String>,
 }
 
 impl StageBuilder {
@@ -51,6 +53,8 @@ impl StageBuilder {
             implementation_code: None,
             implementation_language: None,
             ui_style: None,
+            tags: Vec::new(),
+            aliases: Vec::new(),
         }
     }
 
@@ -66,6 +70,18 @@ impl StageBuilder {
     /// The browser build automatically prefixes every selector with `.nr-<id8>`.
     pub fn ui_style(mut self, css: &str) -> Self {
         self.ui_style = Some(css.into());
+        self
+    }
+
+    /// Append a single browsable tag (e.g. `"network"`, `"pure"`, `"text"`).
+    pub fn tag(mut self, t: impl Into<String>) -> Self {
+        self.tags.push(t.into());
+        self
+    }
+
+    /// Append a single alias / alternative name to improve search recall.
+    pub fn alias(mut self, a: impl Into<String>) -> Self {
+        self.aliases.push(a.into());
         self
     }
 
@@ -170,6 +186,8 @@ impl StageBuilder {
             implementation_code: None,
             implementation_language: None,
             ui_style: None,
+            tags: self.tags,
+            aliases: self.aliases,
         })
     }
 
@@ -216,6 +234,8 @@ impl StageBuilder {
             implementation_code: self.implementation_code,
             implementation_language: self.implementation_language,
             ui_style: self.ui_style,
+            tags: self.tags,
+            aliases: self.aliases,
         })
     }
 
@@ -253,6 +273,8 @@ impl StageBuilder {
             implementation_code: self.implementation_code,
             implementation_language: self.implementation_language,
             ui_style: self.ui_style,
+            tags: self.tags,
+            aliases: self.aliases,
         })
     }
 }

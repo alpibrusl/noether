@@ -49,6 +49,8 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
                 json!({"cmd": "ruby", "args": ["agent.rb"], "env": null, "cwd": "/workspace/agent"}),
                 json!({"pid": 12349, "started_at": 1712345700}),
             )
+            .tag("process").tag("os").tag("subprocess").tag("lifecycle")
+            .alias("run_process").alias("exec").alias("popen").alias("execute")
             .build_stdlib(key)
             .unwrap(),
 
@@ -85,6 +87,8 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
                 json!({"pid": 12348, "timeout_ms": 1000}),
                 json!({"exited": false, "timed_out": true}),
             )
+            .tag("process").tag("os").tag("subprocess").tag("lifecycle")
+            .alias("wait_pid").alias("process_wait").alias("join_process")
             .build_stdlib(key)
             .unwrap(),
 
@@ -120,6 +124,8 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
                 json!({"pid": 99999, "signal": "TERM"}),
                 json!({"sent": false}),
             )
+            .tag("process").tag("os").tag("subprocess")
+            .alias("kill_signal").alias("send_signal").alias("os_kill")
             .build_stdlib(key)
             .unwrap(),
 
@@ -135,6 +141,8 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
             .example(json!({"pid": 99999}), json!({"killed": false}))
             .example(json!({"pid": 12347}), json!({"killed": true}))
             .example(json!({"pid": 12348}), json!({"killed": true}))
+            .tag("process").tag("os").tag("subprocess")
+            .alias("terminate").alias("stop_process").alias("sigkill")
             .build_stdlib(key)
             .unwrap(),
     ]

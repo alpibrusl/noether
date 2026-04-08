@@ -199,6 +199,8 @@ mod tests {
             implementation_code: None,
             implementation_language: None,
             ui_style: None,
+            tags: vec![],
+            aliases: vec![],
         }
     }
 

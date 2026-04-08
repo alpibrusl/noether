@@ -19,6 +19,8 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
             .example(json!({"items": [], "stage_id": "abc123"}), json!([]))
             .example(json!({"items": [true], "stage_id": "ghi789"}), json!([false]))
             .example(json!({"items": [1], "stage_id": "abc123"}), json!([2]))
+            .tag("collections").tag("list").tag("functional").tag("pure")
+            .alias("list_map").alias("array_map").alias("transform")
             .build_stdlib(key)
             .unwrap(),
         StageBuilder::new("filter")
@@ -34,6 +36,8 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
             .example(json!({"items": [], "stage_id": "any"}), json!([]))
             .example(json!({"items": [1, 2, 3], "stage_id": "always_true"}), json!([1, 2, 3]))
             .example(json!({"items": [1, 2, 3], "stage_id": "always_false"}), json!([]))
+            .tag("collections").tag("list").tag("functional").tag("pure")
+            .alias("array_filter").alias("list_filter").alias("where").alias("select")
             .build_stdlib(key)
             .unwrap(),
         StageBuilder::new("reduce")
@@ -50,6 +54,8 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
             .example(json!({"items": [], "stage_id": "sum", "initial": 0}), json!(0))
             .example(json!({"items": [5], "stage_id": "sum", "initial": 10}), json!(15))
             .example(json!({"items": [1, 2], "stage_id": "multiply", "initial": 1}), json!(2))
+            .tag("collections").tag("list").tag("functional").tag("pure")
+            .alias("fold").alias("aggregate").alias("foldl")
             .build_stdlib(key)
             .unwrap(),
         StageBuilder::new("sort")
@@ -69,6 +75,8 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
             .example(json!({"items": ["b", "a", "c"], "key": null, "descending": null}), json!(["a", "b", "c"]))
             .example(json!({"items": [], "key": null, "descending": null}), json!([]))
             .example(json!([3, 1, 2]), json!([1, 2, 3]))
+            .tag("collections").tag("list").tag("pure")
+            .alias("order_by").alias("array_sort").alias("list_sort")
             .build_stdlib(key)
             .unwrap(),
         StageBuilder::new("group_by")
@@ -99,6 +107,8 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
                 json!({"items": [{"g": "1", "v": "a"}, {"g": "1", "v": "b"}], "key": "g"}),
                 json!({"1": [{"g": "1", "v": "a"}, {"g": "1", "v": "b"}]}),
             )
+            .tag("collections").tag("list").tag("pure")
+            .alias("groupby").alias("partition").alias("bucket")
             .build_stdlib(key)
             .unwrap(),
         StageBuilder::new("flatten")
@@ -111,6 +121,8 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
             .example(json!([[], [1]]), json!([1]))
             .example(json!([[], []]), json!([]))
             .example(json!([[1]]), json!([1]))
+            .tag("collections").tag("list").tag("pure")
+            .alias("flat").alias("flat_map").alias("concat_lists")
             .build_stdlib(key)
             .unwrap(),
         StageBuilder::new("zip")
@@ -129,6 +141,8 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
             .example(json!({"left": [], "right": []}), json!([]))
             .example(json!({"left": [1], "right": [2]}), json!([{"left": 1, "right": 2}]))
             .example(json!({"left": ["x", "y"], "right": [true, false]}), json!([{"left": "x", "right": true}, {"left": "y", "right": false}]))
+            .tag("collections").tag("list").tag("pure")
+            .alias("zip_lists").alias("pair").alias("combine_lists")
             .build_stdlib(key)
             .unwrap(),
         StageBuilder::new("take")
@@ -144,6 +158,8 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
             .example(json!({"items": [], "count": 3}), json!([]))
             .example(json!({"items": ["a", "b", "c"], "count": 0}), json!([]))
             .example(json!({"items": [1], "count": 1}), json!([1]))
+            .tag("collections").tag("list").tag("pure")
+            .alias("head").alias("limit").alias("first_n").alias("slice")
             .build_stdlib(key)
             .unwrap(),
         // ── Numeric aggregation stages ─────────────────────────────────────────
@@ -157,6 +173,8 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
             .example(json!([]), json!(0.0))
             .example(json!([42.0]), json!(42.0))
             .example(json!([0.1, 0.2, 0.3]), json!(0.6000000000000001))
+            .tag("collections").tag("math").tag("aggregation").tag("pure")
+            .alias("sum").alias("total").alias("add_all")
             .build_stdlib(key)
             .unwrap(),
         StageBuilder::new("num_avg")
@@ -169,6 +187,8 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
             .example(json!([5.0]), json!(5.0))
             .example(json!([0.0, 0.0, 0.0]), json!(0.0))
             .example(json!([-1.0, 1.0]), json!(0.0))
+            .tag("collections").tag("math").tag("aggregation").tag("pure")
+            .alias("mean").alias("average").alias("arithmetic_mean")
             .build_stdlib(key)
             .unwrap(),
         StageBuilder::new("num_min")
@@ -181,6 +201,8 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
             .example(json!([-5.0, 0.0, 5.0]), json!(-5.0))
             .example(json!([1.0, 1.0, 1.0]), json!(1.0))
             .example(json!([100.0, 0.001]), json!(0.001))
+            .tag("collections").tag("math").tag("aggregation").tag("pure")
+            .alias("minimum").alias("min_value")
             .build_stdlib(key)
             .unwrap(),
         StageBuilder::new("num_max")
@@ -193,6 +215,8 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
             .example(json!([-5.0, 0.0, 5.0]), json!(5.0))
             .example(json!([1.0, 1.0, 1.0]), json!(1.0))
             .example(json!([0.001, 100.0]), json!(100.0))
+            .tag("collections").tag("math").tag("aggregation").tag("pure")
+            .alias("maximum").alias("max_value")
             .build_stdlib(key)
             .unwrap(),
         // ── List utility stages ────────────────────────────────────────────────
@@ -206,6 +230,8 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
             .example(json!([1.0, 1.0, 1.0]), json!([1.0]))
             .example(json!([]), json!([]))
             .example(json!([1.0, 2.0, 3.0]), json!([1.0, 2.0, 3.0]))
+            .tag("collections").tag("list").tag("pure")
+            .alias("unique").alias("deduplicate").alias("distinct").alias("uniq")
             .build_stdlib(key)
             .unwrap(),
         StageBuilder::new("list_length")
@@ -218,6 +244,8 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
             .example(json!(["a"]), json!(1.0))
             .example(json!([1.0, 2.0, 3.0, 4.0, 5.0]), json!(5.0))
             .example(json!([null, false, 0.0]), json!(3.0))
+            .tag("collections").tag("list").tag("pure")
+            .alias("count").alias("size").alias("array_length").alias("len")
             .build_stdlib(key)
             .unwrap(),
     ]

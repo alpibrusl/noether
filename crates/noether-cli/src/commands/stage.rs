@@ -291,20 +291,28 @@ fn find_prefix_hint(store: &dyn StageStore, prefix: &str) -> Option<String> {
     }
 }
 
-pub fn cmd_list(store: &dyn StageStore) {
+pub fn cmd_list(store: &dyn StageStore, tag_filter: Option<&str>) {
     let stages = store.list(None);
     let mut sorted: Vec<&Stage> = stages;
     sorted.sort_by(|a, b| a.description.cmp(&b.description));
 
+    if let Some(tag) = tag_filter {
+        sorted.retain(|s| s.tags.iter().any(|t| t == tag));
+    }
+
     let entries: Vec<serde_json::Value> = sorted
         .iter()
         .map(|s| {
-            json!({
+            let mut entry = json!({
                 "id": &s.id.0[..8.min(s.id.0.len())],
                 "description": s.description,
                 "signature": format!("{} → {}", s.signature.input, s.signature.output),
                 "lifecycle": format!("{:?}", s.lifecycle),
-            })
+            });
+            if !s.tags.is_empty() {
+                entry["tags"] = serde_json::json!(s.tags);
+            }
+            entry
         })
         .collect();
 
@@ -314,8 +322,8 @@ pub fn cmd_list(store: &dyn StageStore) {
     );
 }
 
-pub fn cmd_search(store: &dyn StageStore, index: &SemanticIndex, query: &str) {
-    let results = match index.search(query, 20) {
+pub fn cmd_search(store: &dyn StageStore, index: &SemanticIndex, query: &str, tag: Option<&str>) {
+    let results = match index.search_filtered(query, 20, tag) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("{}", acli_error(&format!("search failed: {e}")));
@@ -327,7 +335,7 @@ pub fn cmd_search(store: &dyn StageStore, index: &SemanticIndex, query: &str) {
         .iter()
         .filter_map(|r| {
             let stage = store.get(&r.stage_id).ok()??;
-            Some(json!({
+            let mut entry = json!({
                 "id": &stage.id.0[..8.min(stage.id.0.len())],
                 "description": stage.description,
                 "signature": format!("{} → {}", stage.signature.input, stage.signature.output),
@@ -337,12 +345,17 @@ pub fn cmd_search(store: &dyn StageStore, index: &SemanticIndex, query: &str) {
                     "semantic": format!("{:.3}", r.semantic_score),
                     "example": format!("{:.3}", r.example_score),
                 }
-            }))
+            });
+            if !stage.tags.is_empty() {
+                entry["tags"] = serde_json::json!(stage.tags);
+            }
+            Some(entry)
         })
         .collect();
 
-    println!(
-        "{}",
-        acli_ok(json!({"query": query, "results": entries, "count": entries.len()}))
-    );
+    let mut out = json!({"query": query, "results": entries, "count": entries.len()});
+    if let Some(t) = tag {
+        out["tag_filter"] = serde_json::json!(t);
+    }
+    println!("{}", acli_ok(out));
 }

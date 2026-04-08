@@ -40,6 +40,8 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
                 json!({"key": "flag", "value": true, "namespace": null}),
                 json!("ok"),
             )
+            .tag("kv").tag("storage").tag("state").tag("persistence")
+            .alias("set_key").alias("store_value").alias("put").alias("cache_set")
             .build_stdlib(key)
             .unwrap(),
 
@@ -72,6 +74,8 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
                 json!({"key": "config", "namespace": "app"}),
                 json!({"debug": true}),
             )
+            .tag("kv").tag("storage").tag("state").tag("persistence")
+            .alias("get_key").alias("load_value").alias("fetch_key").alias("cache_get")
             .build_stdlib(key)
             .unwrap(),
 
@@ -104,6 +108,8 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
                 json!({"key": "empty", "namespace": null}),
                 json!(false),
             )
+            .tag("kv").tag("storage").tag("state")
+            .alias("delete_key").alias("remove_key").alias("del").alias("evict")
             .build_stdlib(key)
             .unwrap(),
 
@@ -136,6 +142,8 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
                 json!({"key": "empty", "namespace": null}),
                 json!(false),
             )
+            .tag("kv").tag("storage").tag("state").tag("pure")
+            .alias("has_key").alias("key_exists").alias("contains_key")
             .build_stdlib(key)
             .unwrap(),
 
@@ -168,6 +176,8 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
                 json!({"prefix": "c", "namespace": null}),
                 json!(["cache:users", "config", "counter"]),
             )
+            .tag("kv").tag("storage").tag("state")
+            .alias("list_keys").alias("scan_keys").alias("prefix_scan")
             .build_stdlib(key)
             .unwrap(),
     ]

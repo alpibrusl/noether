@@ -64,6 +64,8 @@ fn full_stage_round_trip() {
         implementation_code: None,
         implementation_language: None,
         ui_style: None,
+        tags: vec![],
+        aliases: vec![],
     };
 
     // 6. Serialize to JSON and back

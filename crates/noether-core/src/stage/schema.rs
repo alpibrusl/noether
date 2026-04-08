@@ -66,6 +66,15 @@ pub struct Stage {
     /// to avoid collisions with other stages' styles.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ui_style: Option<String>,
+    /// Browsable category labels (e.g. `["text", "pure", "string"]`).
+    /// Not part of the content hash — changing tags never changes the StageId.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+    /// Alternative names / vocabulary for this stage that improve search recall
+    /// (e.g. `["strlen", "count_chars"]` for `text_length`).
+    /// Not part of the content hash.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub aliases: Vec<String>,
 }
 
 #[cfg(test)]
@@ -103,6 +112,8 @@ mod tests {
             implementation_code: None,
             implementation_language: None,
             ui_style: None,
+            tags: vec![],
+            aliases: vec![],
         };
         let json = serde_json::to_string_pretty(&stage).unwrap();
         let deserialized: Stage = serde_json::from_str(&json).unwrap();

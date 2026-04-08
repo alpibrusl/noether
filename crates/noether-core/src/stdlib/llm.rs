@@ -77,6 +77,8 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
                 json!({"prompt": "Yes or no?", "model": null, "max_tokens": 10, "temperature": 0.0, "system": null}),
                 json!({"text": "Yes", "tokens_used": 2, "model": "claude-sonnet-4"}),
             )
+            .tag("llm").tag("ai").tag("generation").tag("non-deterministic")
+            .alias("gpt").alias("claude").alias("chat_completion").alias("text_generation").alias("prompt")
             .build_stdlib(key)
             .unwrap(),
         StageBuilder::new("llm_embed")
@@ -99,6 +101,8 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
             .example(json!({"text": "", "model": null}), json!({"embedding": [0.0, 0.0], "dimensions": 2, "model": "text-embedding-3-small"}))
             .example(json!({"text": "long text here", "model": null}), json!({"embedding": [0.3, 0.4, 0.5, 0.6], "dimensions": 4, "model": "text-embedding-3-small"}))
             .example(json!({"text": "another", "model": null}), json!({"embedding": [-0.2, 0.8], "dimensions": 2, "model": "text-embedding-3-small"}))
+            .tag("llm").tag("ai").tag("embeddings").tag("vector")
+            .alias("embed").alias("vectorize").alias("encode_text").alias("semantic_embedding")
             .build_stdlib(key)
             .unwrap(),
         StageBuilder::new("llm_classify")
@@ -122,6 +126,8 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
             .example(json!({"text": "Buy now!", "categories": ["spam", "not_spam"], "model": null}), json!({"category": "spam", "confidence": 0.88, "model": "claude-sonnet-4"}))
             .example(json!({"text": "Hello there", "categories": ["greeting", "farewell", "question"], "model": null}), json!({"category": "greeting", "confidence": 0.97, "model": "claude-sonnet-4"}))
             .example(json!({"text": "What time is it?", "categories": ["question", "statement"], "model": null}), json!({"category": "question", "confidence": 0.99, "model": "claude-sonnet-4"}))
+            .tag("llm").tag("ai").tag("classification").tag("non-deterministic")
+            .alias("categorize").alias("label").alias("text_classify").alias("sentiment")
             .build_stdlib(key)
             .unwrap(),
         StageBuilder::new("llm_extract")
@@ -144,6 +150,8 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
             .example(json!({"text": "The price is $42.99", "schema": {}, "model": null}), json!({"extracted": {"price": 42.99, "currency": "USD"}, "model": "claude-sonnet-4"}))
             .example(json!({"text": "Meeting on 2024-01-15 at 3pm", "schema": {}, "model": null}), json!({"extracted": {"date": "2024-01-15", "time": "15:00"}, "model": "claude-sonnet-4"}))
             .example(json!({"text": "No relevant data here", "schema": {}, "model": null}), json!({"extracted": {}, "model": "claude-sonnet-4"}))
+            .tag("llm").tag("ai").tag("extraction").tag("non-deterministic")
+            .alias("parse_text").alias("ner").alias("named_entity").alias("information_extraction")
             .build_stdlib(key)
             .unwrap(),
     ]

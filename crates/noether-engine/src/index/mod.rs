@@ -8,6 +8,7 @@ use noether_core::stage::{Stage, StageId, StageLifecycle};
 use noether_store::StageStore;
 use search::SubIndex;
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 /// Configuration for search result fusion weights.
 pub struct IndexConfig {
@@ -46,6 +47,8 @@ pub struct SemanticIndex {
     semantic_index: SubIndex,
     example_index: SubIndex,
     config: IndexConfig,
+    /// Exact-match tag → stage IDs lookup for fast `search_filtered` pre-filtering.
+    tag_map: HashMap<String, Vec<StageId>>,
 }
 
 impl SemanticIndex {
@@ -62,6 +65,7 @@ impl SemanticIndex {
             semantic_index: SubIndex::new(),
             example_index: SubIndex::new(),
             config,
+            tag_map: HashMap::new(),
         };
         for stage in &stages {
             if matches!(stage.lifecycle, StageLifecycle::Tombstone) {
@@ -84,6 +88,7 @@ impl SemanticIndex {
             semantic_index: SubIndex::new(),
             example_index: SubIndex::new(),
             config,
+            tag_map: HashMap::new(),
         };
         for stage in store.list(None) {
             if matches!(stage.lifecycle, StageLifecycle::Tombstone) {
@@ -103,6 +108,7 @@ impl SemanticIndex {
         let mut signature_index = SubIndex::new();
         let mut semantic_index = SubIndex::new();
         let mut example_index = SubIndex::new();
+        let mut tag_map: HashMap<String, Vec<StageId>> = HashMap::new();
 
         for stage in store.list(None) {
             if matches!(stage.lifecycle, StageLifecycle::Tombstone) {
@@ -115,6 +121,13 @@ impl SemanticIndex {
             signature_index.add(stage.id.clone(), sig_emb);
             semantic_index.add(stage.id.clone(), desc_emb);
             example_index.add(stage.id.clone(), ex_emb);
+
+            for tag in &stage.tags {
+                tag_map
+                    .entry(tag.clone())
+                    .or_default()
+                    .push(stage.id.clone());
+            }
         }
 
         cached_provider.flush();
@@ -128,6 +141,7 @@ impl SemanticIndex {
             semantic_index,
             example_index,
             config,
+            tag_map,
         })
     }
 
@@ -145,6 +159,13 @@ impl SemanticIndex {
         self.semantic_index.add(stage.id.clone(), desc_emb);
         self.example_index.add(stage.id.clone(), ex_emb);
 
+        for tag in &stage.tags {
+            self.tag_map
+                .entry(tag.clone())
+                .or_default()
+                .push(stage.id.clone());
+        }
+
         Ok(())
     }
 
@@ -153,6 +174,11 @@ impl SemanticIndex {
         self.signature_index.remove(stage_id);
         self.semantic_index.remove(stage_id);
         self.example_index.remove(stage_id);
+
+        for ids in self.tag_map.values_mut() {
+            ids.retain(|id| id != stage_id);
+        }
+        self.tag_map.retain(|_, ids| !ids.is_empty());
     }
 
     /// Number of stages indexed.
@@ -166,12 +192,31 @@ impl SemanticIndex {
 
     /// Search across all three indexes and return ranked results.
     pub fn search(&self, query: &str, top_k: usize) -> Result<Vec<SearchResult>, EmbeddingError> {
+        self.search_filtered(query, top_k, None)
+    }
+
+    /// Like `search`, but restricts candidates to stages carrying `tag` (exact match).
+    /// Passing `tag: None` is equivalent to `search`.
+    pub fn search_filtered(
+        &self,
+        query: &str,
+        top_k: usize,
+        tag: Option<&str>,
+    ) -> Result<Vec<SearchResult>, EmbeddingError> {
         let query_emb = self.provider.embed(query)?;
         let fetch_k = top_k * 2;
 
         let sig_results = self.signature_index.search(&query_emb, fetch_k);
         let sem_results = self.semantic_index.search(&query_emb, fetch_k);
         let ex_results = self.example_index.search(&query_emb, fetch_k);
+
+        // Optional tag allow-list for filtering
+        let allowed: Option<std::collections::BTreeSet<&str>> = tag.map(|t| {
+            self.tag_map
+                .get(t)
+                .map(|ids| ids.iter().map(|id| id.0.as_str()).collect())
+                .unwrap_or_default()
+        });
 
         // Collect scores per stage_id
         let mut scores: BTreeMap<String, (f32, f32, f32)> = BTreeMap::new();
@@ -188,6 +233,12 @@ impl SemanticIndex {
         // Fuse scores
         let mut results: Vec<SearchResult> = scores
             .into_iter()
+            .filter(|(id, _)| {
+                allowed
+                    .as_ref()
+                    .map(|a| a.contains(id.as_str()))
+                    .unwrap_or(true)
+            })
             .map(|(id, (sig, sem, ex))| {
                 let fused = self.config.signature_weight * sig.max(0.0)
                     + self.config.semantic_weight * sem.max(0.0)
@@ -209,6 +260,18 @@ impl SemanticIndex {
         });
         results.truncate(top_k);
         Ok(results)
+    }
+
+    /// Return all stage IDs that carry `tag` (exact match).
+    pub fn search_by_tag(&self, tag: &str) -> Vec<StageId> {
+        self.tag_map.get(tag).cloned().unwrap_or_default()
+    }
+
+    /// Return the set of all known tags across indexed stages.
+    pub fn all_tags(&self) -> Vec<String> {
+        let mut tags: Vec<String> = self.tag_map.keys().cloned().collect();
+        tags.sort();
+        tags
     }
 
     /// Check whether a candidate description is a near-duplicate of an existing stage.
@@ -293,6 +356,8 @@ mod tests {
             implementation_code: None,
             implementation_language: None,
             ui_style: None,
+            tags: vec![],
+            aliases: vec![],
         }
     }
 
@@ -431,5 +496,85 @@ mod tests {
         )
         .unwrap();
         assert_eq!(index.len(), 1);
+    }
+
+    #[test]
+    fn search_by_tag_returns_matching_stages() {
+        let mut s1 = make_stage("s1", "http get request", NType::Text, NType::Text);
+        s1.tags = vec!["network".into(), "io".into()];
+        let mut s2 = make_stage("s2", "text length", NType::Text, NType::Number);
+        s2.tags = vec!["text".into(), "pure".into()];
+
+        let stages = vec![s1, s2];
+        let index = SemanticIndex::from_stages(
+            stages,
+            Box::new(MockEmbeddingProvider::new(32)),
+            IndexConfig::default(),
+        )
+        .unwrap();
+
+        let network_ids = index.search_by_tag("network");
+        assert_eq!(network_ids.len(), 1);
+        assert_eq!(network_ids[0], StageId("s1".into()));
+
+        let pure_ids = index.search_by_tag("pure");
+        assert_eq!(pure_ids.len(), 1);
+        assert_eq!(pure_ids[0], StageId("s2".into()));
+
+        let missing = index.search_by_tag("nonexistent");
+        assert!(missing.is_empty());
+    }
+
+    #[test]
+    fn all_tags_returns_sorted_set() {
+        let mut s1 = make_stage("s1", "a", NType::Text, NType::Text);
+        s1.tags = vec!["zebra".into(), "apple".into()];
+        let index = SemanticIndex::from_stages(
+            vec![s1],
+            Box::new(MockEmbeddingProvider::new(32)),
+            IndexConfig::default(),
+        )
+        .unwrap();
+        let tags = index.all_tags();
+        assert_eq!(tags, vec!["apple", "zebra"]);
+    }
+
+    #[test]
+    fn search_filtered_restricts_to_tag() {
+        let mut s1 = make_stage("s1", "http get request", NType::Text, NType::Text);
+        s1.tags = vec!["network".into()];
+        let s2 = make_stage("s2", "sort list", NType::Text, NType::Text);
+
+        let stages = vec![s1, s2];
+        let index = SemanticIndex::from_stages(
+            stages,
+            Box::new(MockEmbeddingProvider::new(32)),
+            IndexConfig::default(),
+        )
+        .unwrap();
+
+        let filtered = index
+            .search_filtered("anything", 10, Some("network"))
+            .unwrap();
+        assert!(filtered.iter().all(|r| r.stage_id == StageId("s1".into())));
+
+        let all = index.search_filtered("anything", 10, None).unwrap();
+        assert_eq!(all.len(), 2);
+    }
+
+    #[test]
+    fn remove_stage_cleans_tag_map() {
+        let mut s1 = make_stage("s1", "a", NType::Text, NType::Text);
+        s1.tags = vec!["mytag".into()];
+        let mut index = SemanticIndex::from_stages(
+            vec![s1],
+            Box::new(MockEmbeddingProvider::new(32)),
+            IndexConfig::default(),
+        )
+        .unwrap();
+        assert_eq!(index.search_by_tag("mytag").len(), 1);
+        index.remove_stage(&StageId("s1".into()));
+        assert!(index.search_by_tag("mytag").is_empty());
+        assert!(index.all_tags().is_empty());
     }
 }

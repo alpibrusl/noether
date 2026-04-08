@@ -35,6 +35,13 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
                 json!({"condition": true, "if_true": [1, 2], "if_false": []}),
                 json!([1, 2]),
             )
+            .tag("control")
+            .tag("conditional")
+            .tag("pure")
+            .alias("if_else")
+            .alias("ternary")
+            .alias("cond")
+            .alias("conditional")
             .build_stdlib(key)
             .unwrap(),
         StageBuilder::new("retry")
@@ -69,6 +76,12 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
                 json!({"stage_id": "jkl", "input": [1], "max_attempts": 3, "delay_ms": null}),
                 json!([1]),
             )
+            .tag("control")
+            .tag("resilience")
+            .tag("error-handling")
+            .alias("retry_on_failure")
+            .alias("with_retries")
+            .alias("backoff")
             .build_stdlib(key)
             .unwrap(),
         StageBuilder::new("fallback")
@@ -93,6 +106,12 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
                 json!({"stages": ["main", "backup"], "input": [1, 2]}),
                 json!([1, 2]),
             )
+            .tag("control")
+            .tag("resilience")
+            .tag("error-handling")
+            .alias("try_catch")
+            .alias("with_fallback")
+            .alias("or_else")
             .build_stdlib(key)
             .unwrap(),
         StageBuilder::new("timeout")
@@ -124,6 +143,12 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
                 json!({"stage_id": "s3", "input": [1], "timeout_ms": 500}),
                 json!([1]),
             )
+            .tag("control")
+            .tag("resilience")
+            .tag("deadline")
+            .alias("with_timeout")
+            .alias("deadline")
+            .alias("max_duration")
             .build_stdlib(key)
             .unwrap(),
         StageBuilder::new("race")
@@ -145,6 +170,12 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
                 json!("winner"),
             )
             .example(json!({"stages": ["r1", "r2"], "input": [1]}), json!([1]))
+            .tag("control")
+            .tag("concurrent")
+            .tag("parallel")
+            .alias("first_success")
+            .alias("any_of")
+            .alias("fastest")
             .build_stdlib(key)
             .unwrap(),
         StageBuilder::new("parallel")
@@ -169,6 +200,12 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
                 json!({"stages": ["x", "y"], "inputs": [null, null]}),
                 json!([null, null]),
             )
+            .tag("control")
+            .tag("concurrent")
+            .tag("parallel")
+            .alias("concurrent_map")
+            .alias("run_all")
+            .alias("fan_out")
             .build_stdlib(key)
             .unwrap(),
     ]

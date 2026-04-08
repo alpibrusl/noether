@@ -41,6 +41,13 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
                          "routes": { "/a": {"$text":"Home"} } }),
             json!({"$text":"Home"}),
         )
+        .tag("ui")
+        .tag("frontend")
+        .tag("routing")
+        .tag("pure")
+        .alias("route_view")
+        .alias("page_router")
+        .alias("navigate")
         .build_stdlib(key)
         .unwrap()]
 }

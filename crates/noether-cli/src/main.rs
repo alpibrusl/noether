@@ -124,6 +124,9 @@ enum StageCommands {
     Search {
         /// The search query
         query: String,
+        /// Filter results to stages carrying this tag (exact match)
+        #[arg(long, value_name = "TAG")]
+        tag: Option<String>,
     },
     /// Register a new stage from a spec file
     Add {
@@ -131,7 +134,11 @@ enum StageCommands {
         spec: String,
     },
     /// List all stages in the store
-    List,
+    List {
+        /// Filter stages by tag (exact match)
+        #[arg(long, value_name = "TAG")]
+        tag: Option<String>,
+    },
     /// Retrieve a stage by its hash ID
     Get {
         /// The stage hash (or prefix)
@@ -395,16 +402,18 @@ fn main() {
         Commands::Stage { command } => {
             let mut store = build_store(registry);
             match command {
-                StageCommands::Search { query } => {
+                StageCommands::Search { query, tag } => {
                     let index = build_index(store.as_ref());
-                    commands::stage::cmd_search(store.as_ref(), &index, &query);
+                    commands::stage::cmd_search(store.as_ref(), &index, &query, tag.as_deref());
                 }
                 StageCommands::Add { spec } => {
                     let author_key = load_or_create_author_key(&noether_dir());
                     let index = build_index(store.as_ref());
                     commands::stage::cmd_add(store.as_mut(), &spec, &author_key, &index);
                 }
-                StageCommands::List => commands::stage::cmd_list(store.as_ref()),
+                StageCommands::List { tag } => {
+                    commands::stage::cmd_list(store.as_ref(), tag.as_deref())
+                }
                 StageCommands::Get { hash } => commands::stage::cmd_get(store.as_ref(), &hash),
             }
         }

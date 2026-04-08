@@ -25,6 +25,8 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
             .example(json!({"query": "sort list", "limit": 3}), json!([{"id": "ghi789", "description": "Sort a list", "input": "Record", "output": "List", "score": 0.92}]))
             .example(json!({"query": "no matches", "limit": 10}), json!([]))
             .example(json!({"query": "text processing", "limit": null}), json!([{"id": "jkl012", "description": "Split text", "input": "Record", "output": "List", "score": 0.85}]))
+            .tag("internal").tag("meta").tag("search")
+            .alias("search_stages").alias("find_stage").alias("stage_search")
             .build_stdlib(key)
             .unwrap(),
         StageBuilder::new("store_add")
@@ -40,6 +42,8 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
             .example(json!({"spec": {"input": "List", "output": "List"}}), json!({"id": "mno345pqr678", "lifecycle": "draft"}))
             .example(json!({"spec": {"input": "Record", "output": "Bool"}}), json!({"id": "stu901vwx234", "lifecycle": "draft"}))
             .example(json!({"spec": {"input": "Bytes", "output": "Text"}}), json!({"id": "yza567bcd890", "lifecycle": "draft"}))
+            .tag("internal").tag("meta").tag("registry")
+            .alias("add_stage").alias("register_stage").alias("publish_stage")
             .build_stdlib(key)
             .unwrap(),
         StageBuilder::new("composition_verify")
@@ -59,6 +63,8 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
             .example(json!({"stages": ["s1"], "operators": []}), json!({"valid": true, "errors": [], "warnings": []}))
             .example(json!({"stages": ["s1", "s2", "s3"], "operators": ["sequential", "sequential"]}), json!({"valid": true, "errors": [], "warnings": ["s2 is deprecated"]}))
             .example(json!({"stages": [], "operators": []}), json!({"valid": true, "errors": [], "warnings": ["empty composition"]}))
+            .tag("internal").tag("meta").tag("verification").tag("pure")
+            .alias("verify_graph").alias("check_composition").alias("type_check_graph")
             .build_stdlib(key)
             .unwrap(),
         StageBuilder::new("trace_read")
@@ -71,6 +77,8 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
             .example(json!({"composition_id": "comp_ghi789"}), json!({"trace": {"stages": []}}))
             .example(json!({"composition_id": "comp_jkl012"}), json!({"trace": {"stages": [{"id": "s1", "status": "ok", "duration_ms": 5}, {"id": "s2", "status": "ok", "duration_ms": 8}]}}))
             .example(json!({"composition_id": "comp_mno345"}), json!({"trace": {"stages": [{"id": "s1", "status": "ok", "duration_ms": 100}]}}))
+            .tag("internal").tag("meta").tag("debugging")
+            .alias("read_trace").alias("get_trace").alias("execution_log")
             .build_stdlib(key)
             .unwrap(),
         StageBuilder::new("stage_describe")
@@ -90,6 +98,8 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
             .example(json!({"id": "ghi789"}), json!({"id": "ghi789", "description": "Sort list", "input": "Record", "output": "List", "effects": ["Pure"], "lifecycle": "active"}))
             .example(json!({"id": "old123"}), json!({"id": "old123", "description": "Legacy stage", "input": "Text", "output": "Text", "effects": ["Unknown"], "lifecycle": "deprecated"}))
             .example(json!({"id": "new456"}), json!({"id": "new456", "description": "Draft stage", "input": "Number", "output": "Bool", "effects": ["Pure"], "lifecycle": "draft"}))
+            .tag("internal").tag("meta").tag("reflection").tag("pure")
+            .alias("stage_info").alias("describe_stage").alias("get_stage")
             .build_stdlib(key)
             .unwrap(),
         StageBuilder::new("type_check")
@@ -108,6 +118,8 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
             .example(json!({"sub": "Text", "sup": "Any"}), json!({"compatible": true, "reason": null}))
             .example(json!({"sub": "Any", "sup": "Text"}), json!({"compatible": true, "reason": null}))
             .example(json!({"sub": "Number", "sup": "Text|Number"}), json!({"compatible": true, "reason": null}))
+            .tag("internal").tag("meta").tag("types").tag("pure")
+            .alias("is_subtype").alias("type_compatible").alias("structural_subtype")
             .build_stdlib(key)
             .unwrap(),
     ]

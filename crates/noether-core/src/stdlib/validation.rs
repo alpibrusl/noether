@@ -55,6 +55,8 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
                 json!({"id": "valid_id", "signature": {"input": "Bool", "output": "Bool", "effects": ["Pure"], "implementation_hash": "identity_fn"}}),
                 json!({"passed": true, "stage_id": "valid_id", "computed": "valid_id", "error": null}),
             )
+            .tag("validation").tag("security").tag("integrity").tag("pure")
+            .alias("check_hash").alias("verify_id")
             .build_stdlib(key)
             .unwrap(),
 
@@ -84,6 +86,8 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
                 json!({"id": "abc123", "ed25519_signature": "valid_sig", "signer_public_key": "valid_pub"}),
                 json!({"passed": true, "signed": true, "warning": null}),
             )
+            .tag("validation").tag("security").tag("cryptography").tag("pure")
+            .alias("verify_signature").alias("check_sig")
             .build_stdlib(key)
             .unwrap(),
 
@@ -113,6 +117,8 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
                 json!({"description": "A well-described stage that does something useful"}),
                 json!({"passed": true, "error": null}),
             )
+            .tag("validation").tag("quality").tag("pure")
+            .alias("validate_description")
             .build_stdlib(key)
             .unwrap(),
 
@@ -142,6 +148,8 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
                 json!({"examples": [{"input": null, "output": null}, {"input": 42, "output": "42"}, {"input": true, "output": "true"}]}),
                 json!({"passed": true, "count": 3, "warning": null}),
             )
+            .tag("validation").tag("quality").tag("pure")
+            .alias("validate_examples")
             .build_stdlib(key)
             .unwrap(),
 
@@ -171,6 +179,8 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
                 json!({"hash_check": {"passed": false, "error": "mismatch"}, "sig_check": {"passed": false, "signed": true, "warning": "bad sig"}, "desc_check": {"passed": false, "error": "no desc"}, "examples_check": {"passed": true, "count": 0, "warning": "no examples"}}),
                 json!({"passed": false, "errors": ["mismatch", "bad sig", "no desc"], "warnings": ["no examples"]}),
             )
+            .tag("validation").tag("aggregation").tag("pure")
+            .alias("merge_checks").alias("collect_validation")
             .build_stdlib(key)
             .unwrap(),
     ]

@@ -42,12 +42,13 @@ fn search_exact_description_ranks_high() {
     let store = init_store();
     let index = build_index(&store);
 
-    // Search with an exact description from a stdlib stage
-    let results = index
-        .search("Convert any value to its text representation", 5)
-        .unwrap();
+    // Search with the full text that the `to_text` stage embeds (description + aliases + tags).
+    // MockEmbeddingProvider hashes the exact string, so using the same text as the index produces
+    // cosine similarity = 1.0.
+    let full_text = "Convert any value to its text representation\nAliases: stringify, to_string, num_to_str\nTags: scalar, conversion, pure";
+    let results = index.search(full_text, 5).unwrap();
     assert!(!results.is_empty());
-    // The top result should have a high semantic score (exact text match → same hash → cosine = 1.0)
+    // Top result must have a high semantic score
     assert!(
         results[0].semantic_score > 0.8,
         "Expected high semantic score for exact match, got {}",
