@@ -582,6 +582,7 @@ impl StageExecutor for NixExecutor {
 mod tests {
     use super::*;
 
+    #[allow(dead_code)] // only used by the ignored integration tests
     fn make_executor() -> NixExecutor {
         let nix_bin = NixExecutor::find_nix().unwrap_or_else(|| PathBuf::from("/usr/bin/nix"));
         let cache_dir = std::env::temp_dir().join("noether-test-impl-cache");
