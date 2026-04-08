@@ -253,7 +253,7 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0]["name"].as_str().unwrap(), "alice");
         assert!((rows[0]["score"].as_f64().unwrap() - 95.5).abs() < f64::EPSILON);
-        assert_eq!(rows[0]["active"].as_bool().unwrap(), true);
+        assert!(rows[0]["active"].as_bool().unwrap());
         assert_eq!(rows[1]["name"].as_str().unwrap(), "bob");
     }
 

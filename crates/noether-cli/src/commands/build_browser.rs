@@ -591,9 +591,7 @@ fn scope_css(css: &str, prefix: &str) -> String {
             depth += 1;
         } else if ch == '}' {
             out.push('}');
-            if depth > 0 {
-                depth -= 1;
-            }
+            depth = depth.saturating_sub(1);
         } else if depth == 0 {
             current_block.push(ch);
         } else {

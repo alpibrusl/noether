@@ -859,7 +859,7 @@ mod tests {
         // All scores should be in [0, 1]
         for h in hits {
             let score = h["score"].as_f64().unwrap();
-            assert!(score >= 0.0 && score <= 1.0, "score {score} out of range");
+            assert!((0.0..=1.0).contains(&score), "score {score} out of range");
         }
     }
 

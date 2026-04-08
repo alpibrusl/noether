@@ -27,10 +27,8 @@ pub fn router(input: &Value) -> Result<Value, ExecutionError> {
     // Prefix match: find the longest matching prefix
     let mut best: Option<(&str, &Value)> = None;
     for (key, vnode) in routes {
-        if route.starts_with(key.as_str()) {
-            if best.map_or(true, |(bk, _)| key.len() > bk.len()) {
-                best = Some((key, vnode));
-            }
+        if route.starts_with(key.as_str()) && best.is_none_or(|(bk, _)| key.len() > bk.len()) {
+            best = Some((key, vnode));
         }
     }
     if let Some((_, vnode)) = best {

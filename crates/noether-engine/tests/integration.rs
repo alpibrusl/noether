@@ -49,7 +49,7 @@ fn end_to_end_single_stage() {
     assert_eq!(format!("{}", check.resolved.output), "Text");
 
     // Plan
-    let plan = plan_graph(&graph.root, &store);
+    let _plan = plan_graph(&graph.root, &store);
 
     // Execute
     let executor = MockExecutor::from_store(&store);

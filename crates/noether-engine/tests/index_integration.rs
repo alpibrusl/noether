@@ -25,7 +25,7 @@ fn build_index(store: &MemoryStore) -> SemanticIndex {
 fn index_all_stdlib_stages() {
     let store = init_store();
     let index = build_index(&store);
-    assert_eq!(index.len(), 75); // 70 + 5 validation stages
+    assert_eq!(index.len(), 76); // 70 + 5 validation stages + 1 UI (vnode_render)
 }
 
 #[test]

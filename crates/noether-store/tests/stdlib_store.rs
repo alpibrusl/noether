@@ -9,7 +9,7 @@ fn load_all_stdlib_into_store() {
     for stage in stages {
         store.put(stage).unwrap();
     }
-    assert_eq!(store.len(), 75); // 70 + 5 validation stages
+    assert_eq!(store.len(), 76); // 70 + 5 validation stages + 1 UI (vnode_render)
 }
 
 #[test]
@@ -19,7 +19,7 @@ fn all_stdlib_stages_are_active_in_store() {
         store.put(stage).unwrap();
     }
     let active = store.list(Some(&StageLifecycle::Active));
-    assert_eq!(active.len(), 75); // 70 + 5 validation stages
+    assert_eq!(active.len(), 76); // 70 + 5 validation stages + 1 UI (vnode_render)
 }
 
 #[test]
@@ -29,8 +29,8 @@ fn store_stats_after_stdlib_load() {
         store.put(stage).unwrap();
     }
     let stats = store.stats();
-    assert_eq!(stats.total, 75); // 70 + 5 validation stages
-    assert_eq!(stats.by_lifecycle.get("active"), Some(&75));
+    assert_eq!(stats.total, 76); // 70 + 5 validation stages + 1 UI (vnode_render)
+    assert_eq!(stats.by_lifecycle.get("active"), Some(&76));
 }
 
 #[test]

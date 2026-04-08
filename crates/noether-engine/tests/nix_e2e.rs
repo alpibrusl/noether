@@ -29,8 +29,7 @@ def execute(input_value):
         .input(NType::Record(
             [("text".into(), NType::Text)]
                 .into_iter()
-                .collect::<std::collections::BTreeMap<_, _>>()
-                .into(),
+                .collect::<std::collections::BTreeMap<_, _>>(),
         ))
         .output(NType::Any)
         .description("Count words in a text string")
@@ -113,8 +112,7 @@ fn nix_e2e_synthesized_stage_survives_store_roundtrip() {
         .input(NType::Record(
             [("n".into(), NType::Number)]
                 .into_iter()
-                .collect::<std::collections::BTreeMap<_, _>>()
-                .into(),
+                .collect::<std::collections::BTreeMap<_, _>>(),
         ))
         .output(NType::Any)
         .description("Double the input number")
