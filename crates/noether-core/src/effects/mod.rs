@@ -1,3 +1,3 @@
 mod effect;
 
-pub use effect::{Effect, EffectSet};
+pub use effect::{Effect, EffectKind, EffectSet};

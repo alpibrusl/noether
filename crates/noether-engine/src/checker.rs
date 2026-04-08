@@ -1,6 +1,6 @@
 use crate::lagrange::CompositionNode;
 use noether_core::capability::Capability;
-use noether_core::effects::Effect;
+use noether_core::effects::{Effect, EffectKind, EffectSet};
 use noether_core::stage::StageId;
 use noether_core::types::{is_subtype_of, IncompatibilityReason, NType, TypeCompatibility};
 use noether_store::StageStore;
@@ -134,6 +134,223 @@ fn collect_capability_violations(
         }
         CompositionNode::Retry { stage, .. } => {
             collect_capability_violations(stage, store, policy, violations);
+        }
+    }
+}
+
+// ── Effect inference & enforcement ────────────────────────────────────────
+
+/// Policy controlling which effect kinds a composition is allowed to declare.
+///
+/// `allowed` is empty → all effects permitted (default / backward-compatible).
+/// `allowed` is non-empty → only the listed effect kinds are permitted; others
+/// produce an [`EffectViolation`].
+#[derive(Debug, Clone, Default)]
+pub struct EffectPolicy {
+    /// Effect kinds the caller grants. Empty set = allow all.
+    pub allowed: BTreeSet<EffectKind>,
+}
+
+impl EffectPolicy {
+    /// A policy that allows every effect (default).
+    pub fn allow_all() -> Self {
+        Self {
+            allowed: BTreeSet::new(),
+        }
+    }
+
+    /// A policy that permits only the listed effect kinds.
+    pub fn restrict(kinds: impl IntoIterator<Item = EffectKind>) -> Self {
+        Self {
+            allowed: kinds.into_iter().collect(),
+        }
+    }
+
+    pub fn is_allowed(&self, kind: &EffectKind) -> bool {
+        self.allowed.is_empty() || self.allowed.contains(kind)
+    }
+}
+
+/// A single effect violation found during pre-flight checking.
+#[derive(Debug, Clone)]
+pub struct EffectViolation {
+    pub stage_id: StageId,
+    pub effect: Effect,
+    pub message: String,
+}
+
+impl fmt::Display for EffectViolation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+/// Walk the composition graph and return the union of all effects declared by
+/// every stage. `RemoteStage` nodes always contribute `Effect::Network`.
+/// Stages not found in the store contribute `Effect::Unknown`.
+pub fn infer_effects(node: &CompositionNode, store: &(impl StageStore + ?Sized)) -> EffectSet {
+    let mut effects: BTreeSet<Effect> = BTreeSet::new();
+    collect_effects_inner(node, store, &mut effects);
+    EffectSet::new(effects)
+}
+
+fn collect_effects_inner(
+    node: &CompositionNode,
+    store: &(impl StageStore + ?Sized),
+    effects: &mut BTreeSet<Effect>,
+) {
+    match node {
+        CompositionNode::Stage { id } => match store.get(id) {
+            Ok(Some(stage)) => {
+                for e in stage.signature.effects.iter() {
+                    effects.insert(e.clone());
+                }
+            }
+            _ => {
+                effects.insert(Effect::Unknown);
+            }
+        },
+        CompositionNode::RemoteStage { .. } => {
+            effects.insert(Effect::Network);
+            effects.insert(Effect::Fallible);
+        }
+        CompositionNode::Const { .. } => {
+            effects.insert(Effect::Pure);
+        }
+        CompositionNode::Sequential { stages } => {
+            for s in stages {
+                collect_effects_inner(s, store, effects);
+            }
+        }
+        CompositionNode::Parallel { branches } => {
+            for branch in branches.values() {
+                collect_effects_inner(branch, store, effects);
+            }
+        }
+        CompositionNode::Branch {
+            predicate,
+            if_true,
+            if_false,
+        } => {
+            collect_effects_inner(predicate, store, effects);
+            collect_effects_inner(if_true, store, effects);
+            collect_effects_inner(if_false, store, effects);
+        }
+        CompositionNode::Fanout { source, targets } => {
+            collect_effects_inner(source, store, effects);
+            for t in targets {
+                collect_effects_inner(t, store, effects);
+            }
+        }
+        CompositionNode::Merge { sources, target } => {
+            for s in sources {
+                collect_effects_inner(s, store, effects);
+            }
+            collect_effects_inner(target, store, effects);
+        }
+        CompositionNode::Retry { stage, .. } => {
+            collect_effects_inner(stage, store, effects);
+        }
+    }
+}
+
+/// Pre-flight check: walk the graph and verify every stage's declared effects
+/// are within the granted policy. Returns an empty vec when all effects are allowed.
+pub fn check_effects(
+    node: &CompositionNode,
+    store: &(impl StageStore + ?Sized),
+    policy: &EffectPolicy,
+) -> Vec<EffectViolation> {
+    let mut violations = Vec::new();
+    collect_effect_violations(node, store, policy, &mut violations);
+    violations
+}
+
+fn collect_effect_violations(
+    node: &CompositionNode,
+    store: &(impl StageStore + ?Sized),
+    policy: &EffectPolicy,
+    violations: &mut Vec<EffectViolation>,
+) {
+    match node {
+        CompositionNode::Stage { id } => match store.get(id) {
+            Ok(Some(stage)) => {
+                for effect in stage.signature.effects.iter() {
+                    let kind = effect.kind();
+                    if !policy.is_allowed(&kind) {
+                        violations.push(EffectViolation {
+                            stage_id: id.clone(),
+                            effect: effect.clone(),
+                            message: format!(
+                                "stage '{}' declares effect {kind}; grant it with --allow-effects {kind}",
+                                stage.description
+                            ),
+                        });
+                    }
+                }
+            }
+            _ => {
+                let kind = EffectKind::Unknown;
+                if !policy.is_allowed(&kind) {
+                    violations.push(EffectViolation {
+                        stage_id: id.clone(),
+                        effect: Effect::Unknown,
+                        message: format!(
+                            "stage {} has unknown effects (not in store); grant with --allow-effects unknown",
+                            id.0
+                        ),
+                    });
+                }
+            }
+        },
+        CompositionNode::RemoteStage { .. } => {
+            for effect in &[Effect::Network, Effect::Fallible] {
+                let kind = effect.kind();
+                if !policy.is_allowed(&kind) {
+                    violations.push(EffectViolation {
+                        stage_id: StageId("remote".into()),
+                        effect: effect.clone(),
+                        message: format!(
+                            "RemoteStage declares implicit effect {kind}; grant with --allow-effects {kind}"
+                        ),
+                    });
+                }
+            }
+        }
+        CompositionNode::Const { .. } => {}
+        CompositionNode::Sequential { stages } => {
+            for s in stages {
+                collect_effect_violations(s, store, policy, violations);
+            }
+        }
+        CompositionNode::Parallel { branches } => {
+            for branch in branches.values() {
+                collect_effect_violations(branch, store, policy, violations);
+            }
+        }
+        CompositionNode::Branch {
+            predicate,
+            if_true,
+            if_false,
+        } => {
+            collect_effect_violations(predicate, store, policy, violations);
+            collect_effect_violations(if_true, store, policy, violations);
+            collect_effect_violations(if_false, store, policy, violations);
+        }
+        CompositionNode::Fanout { source, targets } => {
+            collect_effect_violations(source, store, policy, violations);
+            for t in targets {
+                collect_effect_violations(t, store, policy, violations);
+            }
+        }
+        CompositionNode::Merge { sources, target } => {
+            for s in sources {
+                collect_effect_violations(s, store, policy, violations);
+            }
+            collect_effect_violations(target, store, policy, violations);
+        }
+        CompositionNode::Retry { stage, .. } => {
+            collect_effect_violations(stage, store, policy, violations);
         }
     }
 }
@@ -1066,5 +1283,130 @@ mod tests {
         assert!(errors
             .iter()
             .any(|e| matches!(e, GraphTypeError::SequentialTypeMismatch { .. })));
+    }
+
+    // ── Effect inference ────────────────────────────────────────────────────
+
+    fn make_stage_with_effects(id: &str, effects: EffectSet) -> Stage {
+        let mut s = make_stage(id, NType::Any, NType::Any);
+        s.signature.effects = effects;
+        s
+    }
+
+    #[test]
+    fn infer_effects_pure_stage() {
+        let mut store = MemoryStore::new();
+        let stage = make_stage_with_effects("pure1", EffectSet::pure());
+        store.put(stage.clone()).unwrap();
+        let node = CompositionNode::Stage {
+            id: StageId("pure1".into()),
+        };
+        let effects = infer_effects(&node, &store);
+        assert!(effects.contains(&Effect::Pure));
+        assert!(!effects.contains(&Effect::Network));
+    }
+
+    #[test]
+    fn infer_effects_union_sequential() {
+        let mut store = MemoryStore::new();
+        store
+            .put(make_stage_with_effects("a", EffectSet::new([Effect::Pure])))
+            .unwrap();
+        store
+            .put(make_stage_with_effects(
+                "b",
+                EffectSet::new([Effect::Network]),
+            ))
+            .unwrap();
+        let node = CompositionNode::Sequential {
+            stages: vec![
+                CompositionNode::Stage {
+                    id: StageId("a".into()),
+                },
+                CompositionNode::Stage {
+                    id: StageId("b".into()),
+                },
+            ],
+        };
+        let effects = infer_effects(&node, &store);
+        assert!(effects.contains(&Effect::Pure));
+        assert!(effects.contains(&Effect::Network));
+    }
+
+    #[test]
+    fn infer_effects_remote_stage_adds_network() {
+        let store = MemoryStore::new();
+        let node = CompositionNode::RemoteStage {
+            url: "http://localhost:8080".into(),
+            input: NType::Any,
+            output: NType::Any,
+        };
+        let effects = infer_effects(&node, &store);
+        assert!(effects.contains(&Effect::Network));
+        assert!(effects.contains(&Effect::Fallible));
+    }
+
+    #[test]
+    fn infer_effects_missing_stage_adds_unknown() {
+        let store = MemoryStore::new();
+        let node = CompositionNode::Stage {
+            id: StageId("missing".into()),
+        };
+        let effects = infer_effects(&node, &store);
+        assert!(effects.contains(&Effect::Unknown));
+    }
+
+    // ── Effect policy ───────────────────────────────────────────────────────
+
+    #[test]
+    fn effect_policy_allow_all_never_violates() {
+        let mut store = MemoryStore::new();
+        store
+            .put(make_stage_with_effects(
+                "net",
+                EffectSet::new([Effect::Network, Effect::Fallible]),
+            ))
+            .unwrap();
+        let node = CompositionNode::Stage {
+            id: StageId("net".into()),
+        };
+        let policy = EffectPolicy::allow_all();
+        assert!(check_effects(&node, &store, &policy).is_empty());
+    }
+
+    #[test]
+    fn effect_policy_restrict_blocks_network() {
+        let mut store = MemoryStore::new();
+        store
+            .put(make_stage_with_effects(
+                "net",
+                EffectSet::new([Effect::Network]),
+            ))
+            .unwrap();
+        let node = CompositionNode::Stage {
+            id: StageId("net".into()),
+        };
+        let policy = EffectPolicy::restrict([EffectKind::Pure]);
+        let violations = check_effects(&node, &store, &policy);
+        assert!(!violations.is_empty());
+        assert!(violations[0].message.contains("network"));
+    }
+
+    #[test]
+    fn effect_policy_restrict_allows_matching_effect() {
+        let mut store = MemoryStore::new();
+        store
+            .put(make_stage_with_effects(
+                "llm",
+                EffectSet::new([Effect::Llm {
+                    model: "gpt-4o".into(),
+                }]),
+            ))
+            .unwrap();
+        let node = CompositionNode::Stage {
+            id: StageId("llm".into()),
+        };
+        let policy = EffectPolicy::restrict([EffectKind::Llm]);
+        assert!(check_effects(&node, &store, &policy).is_empty());
     }
 }

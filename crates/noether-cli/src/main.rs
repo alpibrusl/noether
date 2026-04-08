@@ -4,8 +4,9 @@ mod output;
 use clap::{Parser, Subcommand};
 use ed25519_dalek::SigningKey;
 use noether_core::capability::Capability;
+use noether_core::effects::EffectKind;
 use noether_core::stdlib::load_stdlib;
-use noether_engine::checker::CapabilityPolicy;
+use noether_engine::checker::{CapabilityPolicy, EffectPolicy};
 use noether_engine::index::{IndexConfig, SemanticIndex};
 use noether_engine::providers;
 use noether_engine::registry_client::RemoteStageStore;
@@ -55,6 +56,11 @@ enum Commands {
         /// Default: all capabilities are allowed.
         #[arg(long)]
         allow_capabilities: Option<String>,
+        /// Comma-separated list of effect kinds to allow
+        /// (pure, fallible, llm, network, non-deterministic, cost, unknown).
+        /// Default: all effects are allowed.
+        #[arg(long)]
+        allow_effects: Option<String>,
         /// Reject compositions whose estimated cost exceeds this value (in cents).
         #[arg(long)]
         budget_cents: Option<u64>,
@@ -343,6 +349,30 @@ fn parse_capability_policy(raw: Option<&str>) -> CapabilityPolicy {
     }
 }
 
+/// Parse a comma-separated effect-kind list into an `EffectPolicy`.
+/// `None` (flag not provided) → allow all.
+fn parse_effect_policy(raw: Option<&str>) -> EffectPolicy {
+    match raw {
+        None => EffectPolicy::allow_all(),
+        Some(s) => {
+            let kinds = s.split(',').filter_map(|token| match token.trim() {
+                "pure" => Some(EffectKind::Pure),
+                "fallible" => Some(EffectKind::Fallible),
+                "llm" => Some(EffectKind::Llm),
+                "network" => Some(EffectKind::Network),
+                "non-deterministic" | "nondeterministic" => Some(EffectKind::NonDeterministic),
+                "cost" => Some(EffectKind::Cost),
+                "unknown" => Some(EffectKind::Unknown),
+                other => {
+                    eprintln!("Warning: unknown effect kind '{other}', ignoring");
+                    None
+                }
+            });
+            EffectPolicy::restrict(kinds)
+        }
+    }
+}
+
 fn main() {
     let cli = Cli::parse();
     let registry = cli.registry.as_deref();
@@ -410,6 +440,7 @@ fn main() {
             dry_run,
             input,
             allow_capabilities,
+            allow_effects,
             budget_cents,
         } => {
             let store = build_store(registry);
@@ -419,14 +450,18 @@ fn main() {
                 .map(|s| serde_json::from_str(s).unwrap_or(serde_json::Value::String(s.into())))
                 .unwrap_or(serde_json::Value::Null);
             let policy = parse_capability_policy(allow_capabilities.as_deref());
+            let effect_policy = parse_effect_policy(allow_effects.as_deref());
             commands::run::cmd_run(
                 store.as_ref(),
                 &mut trace_store,
                 &graph,
                 dry_run,
                 &input_value,
-                &policy,
-                budget_cents,
+                commands::run::RunPolicies {
+                    capabilities: &policy,
+                    effects: &effect_policy,
+                    budget_cents,
+                },
             );
         }
         Commands::Trace { composition_id } => {
