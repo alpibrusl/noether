@@ -4,11 +4,17 @@ use std::collections::BTreeSet;
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(tag = "effect")]
 pub enum Effect {
-    Cost { cents: u64 },
+    Cost {
+        cents: u64,
+    },
     Fallible,
-    Llm { model: String },
+    Llm {
+        model: String,
+    },
     Network,
     NonDeterministic,
+    /// Stage spawns, signals, or waits on OS-level processes.
+    Process,
     Pure,
     Unknown,
 }
@@ -25,6 +31,7 @@ pub enum EffectKind {
     Llm,
     Network,
     NonDeterministic,
+    Process,
     Pure,
     Unknown,
 }
@@ -39,6 +46,7 @@ impl Effect {
             Effect::Llm { .. } => EffectKind::Llm,
             Effect::Network => EffectKind::Network,
             Effect::NonDeterministic => EffectKind::NonDeterministic,
+            Effect::Process => EffectKind::Process,
             Effect::Pure => EffectKind::Pure,
             Effect::Unknown => EffectKind::Unknown,
         }
@@ -53,6 +61,7 @@ impl std::fmt::Display for EffectKind {
             EffectKind::Llm => "llm",
             EffectKind::Network => "network",
             EffectKind::NonDeterministic => "non-deterministic",
+            EffectKind::Process => "process",
             EffectKind::Pure => "pure",
             EffectKind::Unknown => "unknown",
         };

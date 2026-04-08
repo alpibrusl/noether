@@ -7,4 +7,6 @@ pub enum Capability {
     FsWrite,
     Gpu,
     Llm,
+    /// Spawn, signal, or wait on OS-level processes.
+    Process,
 }

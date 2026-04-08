@@ -5,6 +5,7 @@ mod internal;
 mod io;
 mod kv;
 mod llm;
+mod process;
 mod scalar;
 mod text;
 mod ui;
@@ -36,6 +37,7 @@ pub fn load_stdlib() -> Vec<Stage> {
     stages.extend(kv::stages(&key));
     stages.extend(validation::stages(&key));
     stages.extend(ui::stages(&key));
+    stages.extend(process::stages(&key));
     stages
 }
 
@@ -46,7 +48,7 @@ mod tests {
     #[test]
     fn load_stdlib_returns_50_stages() {
         let stages = load_stdlib();
-        assert_eq!(stages.len(), 76); // 75 existing + 1 ui (router)
+        assert_eq!(stages.len(), 80); // 76 existing + 4 process stages
     }
 
     #[test]

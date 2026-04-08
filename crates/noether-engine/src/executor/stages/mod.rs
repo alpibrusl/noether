@@ -7,6 +7,8 @@ pub mod data;
 pub mod io;
 #[cfg(feature = "native")]
 pub mod kv;
+#[cfg(feature = "native")]
+pub mod process;
 pub mod scalar;
 pub mod text;
 pub mod ui;
@@ -136,6 +138,24 @@ pub fn find_implementation(description: &str) -> Option<StageFn> {
         "Convert a list of records to Apache Arrow IPC bytes" => Some(arrow::arrow_from_records),
         #[cfg(feature = "native")]
         "Decode Apache Arrow IPC bytes to a list of record maps" => Some(arrow::records_to_arrow),
+
+        // Process management (native only: spawns OS subprocesses)
+        #[cfg(feature = "native")]
+        "Spawn a subprocess; returns its PID and Unix start timestamp" => {
+            Some(process::spawn_process)
+        }
+        #[cfg(feature = "native")]
+        "Poll until a process exits or timeout_ms elapses; default timeout 30 s" => {
+            Some(process::wait_process)
+        }
+        #[cfg(feature = "native")]
+        "Send a Unix signal to a process (TERM by default); returns whether the signal was delivered" => {
+            Some(process::signal_process)
+        }
+        #[cfg(feature = "native")]
+        "Send SIGKILL to a process; returns whether the signal was delivered" => {
+            Some(process::kill_process)
+        }
 
         _ => None,
     }

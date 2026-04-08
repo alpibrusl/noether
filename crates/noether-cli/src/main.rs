@@ -362,6 +362,7 @@ fn parse_effect_policy(raw: Option<&str>) -> EffectPolicy {
                 "network" => Some(EffectKind::Network),
                 "non-deterministic" | "nondeterministic" => Some(EffectKind::NonDeterministic),
                 "cost" => Some(EffectKind::Cost),
+                "process" => Some(EffectKind::Process),
                 "unknown" => Some(EffectKind::Unknown),
                 other => {
                     eprintln!("Warning: unknown effect kind '{other}', ignoring");
