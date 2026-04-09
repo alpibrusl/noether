@@ -279,7 +279,11 @@ fn oauth2_refresh(
     client_secret: &str,
     refresh_token: &str,
 ) -> Result<(String, u64), String> {
-    let client = reqwest::blocking::Client::new();
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .build()
+        .unwrap_or_else(|_| reqwest::blocking::Client::new());
     let resp = client
         .post("https://oauth2.googleapis.com/token")
         .form(&[

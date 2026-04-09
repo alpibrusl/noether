@@ -5,13 +5,11 @@ use noether_engine::checker::{
     check_capabilities, check_graph, collect_effect_warnings, verify_signatures, CapabilityPolicy,
 };
 use noether_engine::composition_cache::CompositionCache;
-use noether_engine::executor::composite::CompositeExecutor;
 use noether_engine::executor::runner::run_composition;
 use noether_engine::index::SemanticIndex;
 use noether_engine::lagrange::{compute_composition_id, serialize_graph, CompositionGraph};
 use noether_engine::llm::{LlmConfig, LlmProvider};
 use noether_engine::planner::plan_graph;
-use noether_engine::providers;
 use noether_store::StageStore;
 use serde_json::json;
 use std::path::Path;
@@ -107,6 +105,7 @@ pub fn cmd_compose(
 }
 
 struct EmitCtx<'a> {
+    #[allow(dead_code)] // Used by cache key; may be read in future executor config
     model: &'a str,
     dry_run: bool,
     input: &'a serde_json::Value,
@@ -230,16 +229,7 @@ fn emit_result(store: &mut dyn StageStore, ctx: EmitCtx<'_>) {
         return;
     }
 
-    let mut executor = CompositeExecutor::from_store(store)
-        .with_llm(
-            providers::build_llm_provider().0,
-            LlmConfig {
-                model: ctx.model.into(),
-                max_tokens: 4096,
-                temperature: 0.2,
-            },
-        )
-        .with_embedding(providers::build_embedding_provider().0);
+    let mut executor = super::executor_builder::build_executor_with_embeddings(store);
     for syn in ctx.synthesized {
         executor.register_synthesized(&syn.stage_id, &syn.implementation, &syn.language);
     }
