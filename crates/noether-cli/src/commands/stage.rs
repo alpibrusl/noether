@@ -2,8 +2,7 @@ use crate::output::{acli_error, acli_error_hint, acli_error_hints, acli_ok};
 use ed25519_dalek::SigningKey;
 use noether_core::effects::{Effect, EffectSet};
 use noether_core::stage::{
-    sign_stage_id, verify_stage_signature, Example, Stage, StageBuilder, StageId,
-    StageLifecycle,
+    sign_stage_id, verify_stage_signature, Example, Stage, StageBuilder, StageId, StageLifecycle,
 };
 use noether_core::types::NType;
 use noether_engine::index::SemanticIndex;
@@ -595,7 +594,8 @@ mod tests {
     #[test]
     fn normalize_map() {
         let input = json!({"Map": ["Text", "Number"]});
-        let expected = json!({"kind": "Map", "value": {"key": {"kind": "Text"}, "value": {"kind": "Number"}}});
+        let expected =
+            json!({"kind": "Map", "value": {"key": {"kind": "Text"}, "value": {"kind": "Number"}}});
         assert_eq!(normalize_type(&input), expected);
     }
 
@@ -726,8 +726,14 @@ mod tests {
         }"#;
 
         let stage = parse_spec(spec).expect("doc example should parse");
-        assert_eq!(stage.description, "Extract all visible text from an HTML string, stripping tags");
-        assert_eq!(stage.signature.input, NType::record([("html", NType::Text)]));
+        assert_eq!(
+            stage.description,
+            "Extract all visible text from an HTML string, stripping tags"
+        );
+        assert_eq!(
+            stage.signature.input,
+            NType::record([("html", NType::Text)])
+        );
         assert_eq!(stage.signature.output, NType::Text);
         assert_eq!(stage.examples.len(), 5);
         assert_eq!(stage.tags, vec!["web", "html", "text"]);

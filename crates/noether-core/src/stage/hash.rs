@@ -1,5 +1,5 @@
-use crate::stage::schema::{CanonicalId, StageId, StageSignature};
 use crate::effects::EffectSet;
+use crate::stage::schema::{CanonicalId, StageId, StageSignature};
 use crate::types::NType;
 use sha2::{Digest, Sha256};
 
