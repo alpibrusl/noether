@@ -453,7 +453,7 @@ fn find_prefix_hint(store: &dyn StageStore, prefix: &str) -> Option<String> {
 }
 
 pub fn cmd_list(store: &dyn StageStore, tag_filter: Option<&str>) {
-    let stages = store.list(None);
+    let stages = store.list(Some(&StageLifecycle::Active));
     let mut sorted: Vec<&Stage> = stages;
     sorted.sort_by(|a, b| a.description.cmp(&b.description));
 
