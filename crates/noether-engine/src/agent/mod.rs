@@ -315,7 +315,10 @@ impl<'a> CompositionAgent<'a> {
                             messages.push(Message::assistant(&response));
                             messages.push(Message::user(format!(
                                 "The composition graph has type errors:\n{last_errors}\n\n\
-                                 Please fix the graph and try again."
+                                 If the error is about a bare value (List, Text, Number) not matching \
+                                 a Record input, DO NOT try to fix it with Parallel+Const wiring. \
+                                 Instead, SYNTHESIZE a single stage that performs the entire operation. \
+                                 Otherwise, fix the graph and try again."
                             )));
                         }
                     }

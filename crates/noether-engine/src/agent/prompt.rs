@@ -50,10 +50,11 @@ pub fn build_system_prompt(candidates: &[(&SearchResult, &Stage)]) -> String {
     prompt.push_str("## CRITICAL RULES\n\n");
     prompt.push_str("1. ONLY use stage IDs from the AVAILABLE STAGES list. Never invent IDs.\n");
     prompt.push_str("2. Types MUST match: the output type of one stage must be a subtype of the next stage's input type.\n");
-    prompt.push_str("3. Most stages take Record inputs with SPECIFIC FIELD NAMES. Check the examples carefully.\n");
+    prompt.push_str("3. Most stages take Record inputs with SPECIFIC FIELD NAMES. If a stage needs Record{items,key,...} but your pipeline produces a bare List, DO NOT try Parallel+Const wiring — SYNTHESIZE a stage instead.\n");
     prompt.push_str("4. Output ONLY a JSON code block — no explanation before or after.\n");
     prompt.push_str("5. EVERY node in the graph (including nested ones) MUST have an `\"op\"` field. There are NO exceptions.\n");
-    prompt.push_str("   Valid values: `\"Stage\"`, `\"Const\"`, `\"Sequential\"`, `\"Parallel\"`, `\"Branch\"`, `\"Fanout\"`, `\"Retry\"`.\n\n");
+    prompt.push_str("   Valid values: `\"Stage\"`, `\"Const\"`, `\"Sequential\"`, `\"Parallel\"`, `\"Branch\"`, `\"Fanout\"`, `\"Retry\"`.\n");
+    prompt.push_str("6. NEVER use a Stage branch in Parallel to \"pass through\" the input. Parallel branches receive the input but Stage branches transform it. Use Const for literal values only.\n\n");
 
     // --- Type system primer ---
     prompt.push_str("## Type System\n\n");
@@ -164,6 +165,7 @@ pub fn build_system_prompt(candidates: &[(&SearchResult, &Stage)]) -> String {
     );
     prompt.push_str("- \"filter a list keeping items that match a pattern\" → synthesize `filter_by_pattern` (Record { items, pattern } → List)\n");
     prompt.push_str("- \"sort a list by a field\" → synthesize `sort_by_field` (Record { items, field } → List)\n");
+    prompt.push_str("- \"sort a list and take the top N\" → synthesize `sort_and_take` (Record { items, n } → List)\n");
     prompt.push_str("- \"search npm packages and return results\" → synthesize `npm_search` (Record { query, limit } → List) — NEVER try to compose with http_get\n");
     prompt.push_str("- \"search GitHub repos\" → synthesize `github_search` — NEVER try to compose with http_get\n");
     prompt.push_str("- ANY call to a named external API (GitHub, npm, Hacker News, Spotify, etc.) → synthesize\n\n");
@@ -256,6 +258,24 @@ pub fn build_system_prompt(candidates: &[(&SearchResult, &Stage)]) -> String {
     prompt.push_str("  }\n");
     prompt.push_str("}\n");
     prompt.push_str("```\n\n");
+
+    // --- When to use synthesis vs complex wiring ---
+    prompt.push_str("## EXAMPLE 4: When to synthesize instead of complex wiring\n\n");
+    prompt.push_str("Problem: \"Sort a list and take the first 3\"\n\n");
+    prompt.push_str(
+        "The `list_sort` stage needs `Record{items, key, descending}` — NOT a bare List.\n",
+    );
+    prompt.push_str("The `list_take` stage needs `Record{items, count}` — NOT a bare List.\n\n");
+    prompt.push_str(
+        "**WRONG approach**: trying to wire Parallel+Const to wrap a bare List into a Record.\n",
+    );
+    prompt.push_str(
+        "This fails because Const produces literal values, not pipeline passthrough.\n\n",
+    );
+    prompt.push_str("**RIGHT approach**: If the user's input already IS the Record (with `items`, `key`, etc. fields), just chain directly.\n");
+    prompt.push_str("If the input is a bare List and you need to wrap it, **synthesize a single stage** that does the sort+take in one step.\n\n");
+    prompt.push_str("**Rule of thumb**: if you need to reshape data between stages (wrap, unwrap, rename fields), synthesize instead of composing.\n");
+    prompt.push_str("Synthesis produces a clean, tested, reusable stage. Complex wiring produces fragile graphs.\n\n");
 
     // --- Available stages with examples, ordered by relevance score ---
     prompt.push_str("## Available Stages\n\n");
