@@ -70,6 +70,14 @@ noether stage get 8f3a1b…
 
 Returns the full stage spec for a given `StageId`.
 
+### `stage activate <hash>`
+
+```bash
+noether stage activate 8f3a1b…
+```
+
+Promote a Draft stage to Active lifecycle. Supports ID prefix matching.
+
 ### `stage search <query>`
 
 ```bash
@@ -117,7 +125,23 @@ noether compose --model gemini-2.0-flash "problem"
 
 LLM-powered composition. Searches the semantic index for candidate stages, builds a graph, type-checks it, and optionally executes it.
 
-Requires `VERTEX_AI_PROJECT`, `VERTEX_AI_LOCATION`, `VERTEX_AI_TOKEN` env vars. Falls back to mock LLM if unset.
+### Provider environment variables
+
+| Variable | Description |
+|---|---|
+| `NOETHER_LLM_PROVIDER` | LLM provider to use: `mistral`, `openai`, `anthropic`, `vertex`, `mock` |
+| `NOETHER_EMBEDDING_PROVIDER` | Embedding provider to use: `mistral`, `openai`, `anthropic`, `vertex`, `mock` |
+| `VERTEX_AI_PROJECT` | GCP project ID (Vertex AI) |
+| `VERTEX_AI_LOCATION` | GCP region (Vertex AI) |
+| `VERTEX_AI_TOKEN` | Auth token (Vertex AI) |
+| `VERTEX_AI_MODEL` | Model name (Vertex AI) |
+| `OPENAI_API_KEY` | API key (OpenAI / Ollama) |
+| `OPENAI_MODEL` | Model name (OpenAI / Ollama) |
+| `OPENAI_API_BASE` | Base URL (OpenAI-compatible endpoint, e.g. Ollama) |
+| `ANTHROPIC_API_KEY` | API key (Anthropic) |
+| `ANTHROPIC_MODEL` | Model name (Anthropic) |
+
+Falls back to mock LLM if no provider env vars are set.
 
 ## `noether build`
 

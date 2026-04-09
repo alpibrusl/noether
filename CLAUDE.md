@@ -26,11 +26,12 @@ cargo test -p noether-core reflexivity
 cargo run --bin noether -- version
 cargo run --bin noether -- introspect
 cargo run --bin noether -- stage search "query"  # semantic search across all stages
-cargo run --bin noether -- stage list       # list all 80 stdlib stages
+cargo run --bin noether -- stage list       # list all stdlib stages
 cargo run --bin noether -- stage get <hash> # get stage by ID
 cargo run --bin noether -- store stats      # store statistics
 cargo run --bin noether -- run graph.json            # execute composition graph
 cargo run --bin noether -- run --dry-run graph.json  # type-check and plan only
+cargo run --bin noether -- stage activate <hash>     # promote Draft → Active
 cargo run --bin noether -- trace <composition_id>    # retrieve past trace
 cargo run --bin noether -- compose "problem description"      # LLM-powered composition
 cargo run --bin noether -- compose --dry-run "problem"        # graph only, no execution
@@ -65,10 +66,10 @@ crates/
 - `stage::StageSignature` — identity-determining fields (input, output, effects, implementation_hash)
 - `stage::StageBuilder` — fluent API for constructing stages with `build_stdlib()` and `build_unsigned()`
 - `stage::validation` — `infer_type()` / `infer_type_with_hint()` for JSON→NType inference, `validate_stage()` for example validation
-- `stdlib::load_stdlib()` — loads all 80 stdlib stages (deterministic IDs, Ed25519-signed)
+- `stdlib::load_stdlib()` — loads all stdlib stages (deterministic IDs, Ed25519-signed)
 
-### stdlib categories (80 stages)
-Scalar (5), Collections (14), Control (6), I/O (10), LLM primitives (4), Data (7), Noether internal (6), Text processing (13), Process (4), [additional stages across categories]
+### stdlib categories
+Scalar, Collections, Control, I/O, LLM primitives, Data, Noether internal, Text processing, Process
 
 ### noether-store modules
 - `StageStore` trait — put/get/contains/list/update_lifecycle/stats
@@ -91,7 +92,9 @@ Scalar (5), Collections (14), Control (6), I/O (10), LLM primitives (4), Data (7
   - `LlmProvider` trait + `MockLlmProvider` for testing
   - `VertexAiLlmProvider` — calls Vertex AI REST API (Gemini, Claude, Mistral)
   - `VertexAiEmbeddingProvider` — real embeddings via Vertex AI
-  - Config via env vars: `VERTEX_AI_PROJECT`, `VERTEX_AI_LOCATION`, `VERTEX_AI_TOKEN`, `VERTEX_AI_MODEL`
+  - `OpenAiProvider` — calls OpenAI-compatible API (also works with Ollama)
+  - `AnthropicProvider` — calls Anthropic messages API
+  - Config via env vars: `VERTEX_AI_PROJECT`, `VERTEX_AI_LOCATION`, `VERTEX_AI_TOKEN`, `VERTEX_AI_MODEL`, `OPENAI_API_KEY`, `OPENAI_MODEL`, `OPENAI_API_BASE`, `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`
 - `agent::CompositionAgent` — translates problem descriptions into composition graphs
   - Searches semantic index for top-20 candidate stages
   - Builds dynamic prompt with candidates + type system + operators
@@ -126,7 +129,7 @@ Caloron decides **what** to do (sprint planning, task decomposition). Noether de
 | 2 | Composition Engine — DAG executor, trace output | **Done** |
 | 3 | Agent Interface — Composition Agent, semantic index | **Done** |
 | 4 | Hardening — deduplication, store health, CI, docs site | **Done** |
-| 5 | noether-cloud foundation — registry API, scheduler, library API | **In progress** |
+| 5 | noether-cloud foundation — registry API, scheduler, library API | **Done** |
 | 6 | Effects enforcement — Nix sandbox resource limits, effect mismatch errors | Planned |
 | 7 | Public cloud registry — multi-tenant, billing, dashboard | Planned |
 

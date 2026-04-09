@@ -1,6 +1,6 @@
 # Stdlib Overview
 
-The Noether stdlib is a curated set of **76 stages** that ship with every installation. They are:
+The Noether stdlib is a curated set of **80+ stages** that ship with every installation. They are:
 
 - **Deterministically identified** — the same `StageId` on every machine.
 - **Ed25519-signed** — cryptographically verified by the Noether maintainer key.

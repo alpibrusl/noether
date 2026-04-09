@@ -149,6 +149,26 @@ into a graph.
 
 ## Type system quick reference
 
+> **Simplified syntax (v0.6.0+):** Stage spec files accept both the canonical
+> format (`{"kind":"Text"}`) and a simplified shorthand. In the shorthand,
+> primitive types are plain strings (`"Text"`, `"Number"`, `"Bool"`) and records
+> use a compact tuple-list notation. The `normalize_type` function converts
+> either format to the canonical `NType` representation.
+>
+> ```json
+> // Simplified (accepted in stage spec JSON files)
+> {
+>   "input": {"Record": [["celsius", "Number"]]},
+>   "output": {"Record": [["fahrenheit", "Number"]]}
+> }
+>
+> // Canonical (always accepted)
+> {
+>   "input": {"Record": {"celsius": {"kind": "Number"}}},
+>   "output": {"Record": {"fahrenheit": {"kind": "Number"}}}
+> }
+> ```
+
 ```
 NType::Text                          — UTF-8 string
 NType::Number                        — IEEE 754 f64

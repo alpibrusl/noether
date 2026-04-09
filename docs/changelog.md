@@ -14,6 +14,30 @@ Noether uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.6.0] — 2026-04-09
+
+### Added
+- **Canonical stage identity** (`canonical_id`): SHA-256 of name + input + output + effects. Enables automatic versioning — `noether stage add` auto-deprecates the previous version when a stage with the same canonical_id is re-registered.
+- **`noether stage activate` command**: Promotes Draft stages to Active lifecycle. Supports ID prefix matching.
+- **OpenAI LLM + embedding provider**: Set `OPENAI_API_KEY` to use GPT models. Also works with Ollama via `OPENAI_API_BASE`.
+- **Anthropic LLM provider**: Set `ANTHROPIC_API_KEY` to use Claude models.
+- **Simplified type syntax** (`normalize_type`): Stage spec files now accept `"Text"` instead of `{"kind":"Text"}`, and `{"Record":[["field","Text"]]}` instead of the verbose canonical format.
+- **Stage spec tags and aliases**: `noether stage add` now reads `tags` and `aliases` from simple spec format.
+- **Deprecated stage resolution**: `noether run` transparently follows Deprecated → successor_id chains. Graphs referencing deprecated stages no longer fail.
+- **370 stage specs** across 50 open-source libraries (in noether-cloud/stages/).
+- **Capability benchmark** with 4 scenarios: type safety, parallel execution, reusability, token analysis.
+
+### Changed
+- `noether store dedup --apply` now uses `Deprecated{successor_id}` instead of `Tombstone`, preserving forward pointers for existing graphs.
+- `noether stage list` now defaults to Active lifecycle filter (was showing all including tombstoned).
+- Provider auto-detection priority: Mistral → OpenAI → Anthropic → Vertex AI → Mock.
+
+### Fixed
+- Stage spec `tags` and `aliases` were silently ignored in simple format — now parsed correctly.
+- `.cli/schemas/stage-spec.json` updated to document both simple and full spec formats.
+
+---
+
 ## [0.5.0] — 2026-04-08
 
 ### Added

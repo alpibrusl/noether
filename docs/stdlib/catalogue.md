@@ -1,6 +1,6 @@
 # Stdlib Stage Catalogue
 
-Noether ships with 76 deterministically-identified, Ed25519-signed stdlib stages.
+Noether ships with 80+ deterministically-identified, Ed25519-signed stdlib stages.
 
 ## Scalar (5)
 

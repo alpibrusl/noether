@@ -161,7 +161,7 @@ NOETHER_STORE_PATH=./data/registry.json noether-registry
 DATABASE_URL=postgres://user:pass@host/dbname noether-registry
 ```
 
-The registry seeds the full stdlib (76 stages including the validation pipeline)
+The registry seeds the full stdlib (80+ stages including the validation pipeline)
 on first startup. No migrations need to be run manually — the registry applies
 them automatically on connect.
 

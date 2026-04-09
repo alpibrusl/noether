@@ -106,6 +106,10 @@
           "type": "string",
           "description": "SHA-256 content hash of the stage signature (64 hex chars)"
         },
+        "canonical_id": {
+          "type": ["string", "null"],
+          "description": "SHA-256 of (name + input + output + effects). Identifies the concept regardless of implementation. Auto-computed by the builder; used for versioning and dedup."
+        },
         "signature": {
           "type": "object",
           "required": ["input", "output", "effects", "implementation_hash"],
