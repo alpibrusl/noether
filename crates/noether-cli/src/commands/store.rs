@@ -382,7 +382,7 @@ pub fn cmd_dedup(store: &mut dyn StageStore, index: &SemanticIndex, threshold: f
                 "action": "dry-run",
                 "pairs": pair_details,
                 "message": format!(
-                    "Found {} near-duplicate pair(s). Run with --apply to tombstone the redundant stages.",
+                    "Found {} near-duplicate pair(s). Run with --apply to deprecate the redundant stages (with successor_id pointing to the kept stage).",
                     pair_details.len()
                 ),
             }))
@@ -401,10 +401,10 @@ pub fn cmd_dedup(store: &mut dyn StageStore, index: &SemanticIndex, threshold: f
             stage_a.as_ref().map(|s| s.examples.len()).unwrap_or(0),
             stage_b.as_ref().map(|s| s.examples.len()).unwrap_or(0),
         );
-        let remove_id = if ex_a >= ex_b && (ex_a != ex_b || a.0 <= b.0) {
-            b
+        let (keep_id, remove_id) = if ex_a >= ex_b && (ex_a != ex_b || a.0 <= b.0) {
+            (a, b)
         } else {
-            a
+            (b, a)
         };
 
         let lifecycle = store
@@ -414,12 +414,15 @@ pub fn cmd_dedup(store: &mut dyn StageStore, index: &SemanticIndex, threshold: f
             .map(|s| s.lifecycle.clone());
         match lifecycle {
             Some(noether_core::stage::StageLifecycle::Active) => {
-                match store
-                    .update_lifecycle(remove_id, noether_core::stage::StageLifecycle::Tombstone)
-                {
+                // Deprecate (not tombstone) so graphs referencing the old ID
+                // get a clear error pointing to the replacement stage.
+                let new_lc = noether_core::stage::StageLifecycle::Deprecated {
+                    successor_id: keep_id.clone(),
+                };
+                match store.update_lifecycle(remove_id, new_lc) {
                     Ok(_) => tombstoned += 1,
                     Err(e) => {
-                        errors.push(format!("could not tombstone {}: {e}", &remove_id.0[..8]))
+                        errors.push(format!("could not deprecate {}: {e}", &remove_id.0[..8]))
                     }
                 }
             }
@@ -436,7 +439,7 @@ pub fn cmd_dedup(store: &mut dyn StageStore, index: &SemanticIndex, threshold: f
             "skipped": skipped,
             "errors": errors,
             "action": "applied",
-            "message": format!("Tombstoned {} duplicate stage(s), skipped {} (already inactive).", tombstoned, skipped),
+            "message": format!("Deprecated {} duplicate stage(s) (with successor_id), skipped {} (already inactive).", tombstoned, skipped),
         }))
     );
 }

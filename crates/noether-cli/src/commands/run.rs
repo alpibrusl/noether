@@ -1,4 +1,5 @@
 use crate::output::{acli_error, acli_error_hints, acli_ok};
+use noether_core::stage::{StageId, StageLifecycle};
 use noether_engine::checker::{
     check_capabilities, check_effects, check_graph, collect_effect_warnings, infer_effects,
     verify_signatures, CapabilityPolicy, EffectPolicy,
@@ -46,6 +47,20 @@ pub fn cmd_run(
             std::process::exit(1);
         }
     };
+
+    // 1b. Resolve deprecated stages — rewrite any stage IDs that point to
+    //     deprecated stages, following the successor_id chain.
+    let mut graph = graph;
+    let rewrites = resolve_deprecated_stages(&mut graph.root, store);
+    if !rewrites.is_empty() {
+        for (old, new) in &rewrites {
+            eprintln!(
+                "Warning: stage {} is deprecated → resolved to successor {}",
+                &old.0[..8.min(old.0.len())],
+                &new.0[..8.min(new.0.len())]
+            );
+        }
+    }
 
     let composition_id = compute_composition_id(&graph).unwrap_or_else(|_| "unknown".into());
 
@@ -218,4 +233,75 @@ pub fn cmd_run(
             std::process::exit(3);
         }
     }
+}
+
+/// Walk the composition graph and replace any deprecated stage IDs with their
+/// successor, following the chain (up to 10 hops to prevent cycles).
+fn resolve_deprecated_stages(
+    node: &mut noether_engine::lagrange::CompositionNode,
+    store: &dyn StageStore,
+) -> Vec<(StageId, StageId)> {
+    use noether_engine::lagrange::CompositionNode;
+
+    let mut rewrites = Vec::new();
+
+    match node {
+        CompositionNode::Stage { id } => {
+            let mut current = id.clone();
+            for _ in 0..10 {
+                match store.get(&current) {
+                    Ok(Some(stage)) => {
+                        if let StageLifecycle::Deprecated { successor_id } = &stage.lifecycle {
+                            let old = current.clone();
+                            current = successor_id.clone();
+                            rewrites.push((old, current.clone()));
+                        } else {
+                            break;
+                        }
+                    }
+                    _ => break,
+                }
+            }
+            if current != *id {
+                *id = current;
+            }
+        }
+        CompositionNode::Sequential { stages } => {
+            for s in stages {
+                rewrites.extend(resolve_deprecated_stages(s, store));
+            }
+        }
+        CompositionNode::Parallel { branches } => {
+            for (_, branch) in branches.iter_mut() {
+                rewrites.extend(resolve_deprecated_stages(branch, store));
+            }
+        }
+        CompositionNode::Branch {
+            predicate,
+            if_true,
+            if_false,
+        } => {
+            rewrites.extend(resolve_deprecated_stages(predicate, store));
+            rewrites.extend(resolve_deprecated_stages(if_true, store));
+            rewrites.extend(resolve_deprecated_stages(if_false, store));
+        }
+        CompositionNode::Retry { stage, .. } => {
+            rewrites.extend(resolve_deprecated_stages(stage, store));
+        }
+        CompositionNode::Fanout { source, targets } => {
+            rewrites.extend(resolve_deprecated_stages(source, store));
+            for t in targets {
+                rewrites.extend(resolve_deprecated_stages(t, store));
+            }
+        }
+        CompositionNode::Merge { sources, target } => {
+            for s in sources {
+                rewrites.extend(resolve_deprecated_stages(s, store));
+            }
+            rewrites.extend(resolve_deprecated_stages(target, store));
+        }
+        CompositionNode::Const { .. } | CompositionNode::RemoteStage { .. } => {}
+    }
+
+    rewrites
 }
