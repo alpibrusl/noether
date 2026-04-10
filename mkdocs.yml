@@ -66,6 +66,7 @@ markdown_extensions:
 
 nav:
   - Home: index.md
+  - Demo: demo.md
   - Getting Started:
     - Installation: getting-started/installation.md
     - Quickstart: getting-started/quickstart.md
@@ -90,6 +91,7 @@ nav:
     - LLM-Powered Compose: guides/llm-compose.md
     - Semantic Search: guides/semantic-search.md
     - Remote Registry (noether-cloud): guides/remote-registry.md
+    - Stage Store Build: guides/stage-store-build.md
   - Case Studies:
     - Four Search Engines: case-studies/search-engines.md
     - Benchmark: case-studies/benchmark.md
