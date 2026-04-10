@@ -71,8 +71,8 @@ Noether is **not** a workflow orchestrator, AI agent framework, or pipeline runn
 - Nix (optional, required for Python/JS stage execution)
 
 ```bash
-git clone https://github.com/alpibrusl/noether solv-noether
-cd solv-noether
+git clone https://github.com/alpibrusl/noether
+cd noether
 cargo build --release -p noether-cli
 export PATH="$PWD/target/release:$PATH"
 noether version

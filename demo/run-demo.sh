@@ -29,7 +29,7 @@ if [ -f "../target/release/noether" ]; then
   export PATH="../target/release:$PATH"
 elif ! command -v noether &>/dev/null; then
   echo "Building noether from source..."
-  (cd ../solv-noether && cargo build --release -p noether-cli 2>&1 | tail -2)
+  (cd .. && cargo build --release -p noether-cli 2>&1 | tail -2)
   export PATH="../target/release:$PATH"
 fi
 

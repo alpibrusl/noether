@@ -157,8 +157,21 @@ pub fn build_system_prompt(candidates: &[(&SearchResult, &Stage)]) -> String {
     prompt.push_str("  }\n");
     prompt.push_str("}\n");
     prompt.push_str("```\n\n");
-    prompt.push_str("NType JSON format: `{\"kind\":\"Text\"}`, `{\"kind\":\"Number\"}`, `{\"kind\":\"Bool\"}`, `{\"kind\":\"Any\"}`, `{\"kind\":\"Null\"}`, ");
-    prompt.push_str("`{\"kind\":\"List\",\"value\":<T>}`, `{\"kind\":\"Record\",\"value\":{\"field\":<T>,...}}`, `{\"kind\":\"Union\",\"value\":[<T>,...]}` \n\n");
+    prompt.push_str("NType JSON format:\n");
+    prompt.push_str("- Primitives: `{\"kind\":\"Text\"}`, `{\"kind\":\"Number\"}`, `{\"kind\":\"Bool\"}`, `{\"kind\":\"Any\"}`, `{\"kind\":\"Null\"}`\n");
+    prompt.push_str("- List: `{\"kind\":\"List\",\"value\":<T>}`\n");
+    prompt.push_str("- Map: `{\"kind\":\"Map\",\"value\":{\"key\":{\"kind\":\"Text\"},\"value\":<T>}}` ← note: Map.value is an object with `key` and `value` fields\n");
+    prompt.push_str("- Record: `{\"kind\":\"Record\",\"value\":{\"field_name\":<T>,...}}`\n");
+    prompt.push_str("- Union: `{\"kind\":\"Union\",\"value\":[<T>,...]}`\n\n");
+    prompt.push_str("**Keep synthesis types SIMPLE:**\n");
+    prompt.push_str(
+        "- Use `Any` for complex or heterogeneous output (lists of dicts, nested structures).\n",
+    );
+    prompt.push_str("- Use `Text` for input when it's raw data (CSV text, JSON string).\n");
+    prompt.push_str("- Do NOT use `Map<Text, Any>` — use `Any` instead.\n");
+    prompt.push_str(
+        "- Prefer flat types: `Text → Any`, `Record{text: Text} → Any`, `Any → Text`.\n\n",
+    );
     prompt.push_str("**Examples that SHOULD use synthesis:**\n");
     prompt.push_str(
         "- \"check if a number is even or odd\" → synthesize `is_even_or_odd` (Number → Text)\n",

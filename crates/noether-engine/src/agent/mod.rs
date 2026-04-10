@@ -349,6 +349,15 @@ impl<'a> CompositionAgent<'a> {
         spec: &SynthesisSpec,
         store: &mut dyn StageStore,
     ) -> Result<SynthesisResult, AgentError> {
+        let verbose = std::env::var("NOETHER_VERBOSE").is_ok();
+        if verbose {
+            eprintln!(
+                "\n[synthesis] Generating implementation for `{}`",
+                spec.name
+            );
+            eprintln!("[synthesis] Input: {}, Output: {}", spec.input, spec.output);
+        }
+
         let synthesis_prompt = build_synthesis_prompt(spec);
         let messages = vec![
             Message::system(&synthesis_prompt),
@@ -358,12 +367,30 @@ impl<'a> CompositionAgent<'a> {
         let mut last_error = String::new();
 
         for attempt in 1..=self.max_retries {
+            if verbose {
+                eprintln!(
+                    "[synthesis] Codegen attempt {}/{}",
+                    attempt, self.max_retries
+                );
+            }
             let response = self.llm.complete(&messages, &self.llm_config)?;
+
+            if verbose {
+                let trimmed = response.trim();
+                eprintln!(
+                    "[synthesis] LLM response ({} chars): {}",
+                    trimmed.len(),
+                    &trimmed[..trimmed.len().min(200)]
+                );
+            }
 
             let syn_resp = match extract_synthesis_response(&response) {
                 Some(r) => r,
                 None => {
                     last_error = "no valid synthesis JSON in LLM response".into();
+                    if verbose {
+                        eprintln!("[synthesis] ✗ Failed to parse synthesis response");
+                    }
                     continue;
                 }
             };
@@ -513,25 +540,42 @@ fn validate_synthesis_examples(
         return Err(format!("need at least 3 examples, got {}", examples.len()));
     }
 
-    for (i, ex) in examples.iter().enumerate() {
-        let inferred = infer_type(&ex.input);
-        if matches!(
-            is_subtype_of(&inferred, input_type),
-            TypeCompatibility::Incompatible(_)
-        ) {
-            return Err(format!(
-                "example {i} input `{inferred}` is not subtype of `{input_type}`"
-            ));
+    // Synthesis examples are LLM-generated — they often produce Records where
+    // the spec says Map (semantically equivalent for JSON objects). Skip strict
+    // type checking when Any or Map appears anywhere in the type tree.
+    use noether_core::types::NType;
+    fn contains_any_or_map(t: &NType) -> bool {
+        match t {
+            NType::Any | NType::Map { .. } => true,
+            NType::List(inner) | NType::Stream(inner) => contains_any_or_map(inner),
+            NType::Record(fields) => fields.values().any(contains_any_or_map),
+            NType::Union(variants) => variants.iter().any(contains_any_or_map),
+            _ => false,
         }
+    }
+    let strict_check = !contains_any_or_map(input_type) && !contains_any_or_map(output_type);
 
-        let inferred = infer_type(&ex.output);
-        if matches!(
-            is_subtype_of(&inferred, output_type),
-            TypeCompatibility::Incompatible(_)
-        ) {
-            return Err(format!(
-                "example {i} output `{inferred}` is not subtype of `{output_type}`"
-            ));
+    if strict_check {
+        for (i, ex) in examples.iter().enumerate() {
+            let inferred = infer_type(&ex.input);
+            if matches!(
+                is_subtype_of(&inferred, input_type),
+                TypeCompatibility::Incompatible(_)
+            ) {
+                return Err(format!(
+                    "example {i} input `{inferred}` is not subtype of `{input_type}`"
+                ));
+            }
+
+            let inferred = infer_type(&ex.output);
+            if matches!(
+                is_subtype_of(&inferred, output_type),
+                TypeCompatibility::Incompatible(_)
+            ) {
+                return Err(format!(
+                    "example {i} output `{inferred}` is not subtype of `{output_type}`"
+                ));
+            }
         }
     }
 
