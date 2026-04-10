@@ -321,25 +321,30 @@ $ noether run pipeline-c.json --input '...'    # → "6.0" unique rows
 
 ## Demo 5: An AI assistant using Noether
 
-This is a real interaction. The user asks Claude Code to analyze some data. Instead of writing Python, the assistant uses `noether compose`:
+This is a real interaction. The user asks their coding assistant to sort data. Instead of writing Python, the assistant uses `noether compose`:
 
-> **User:** I have a CSV file with student grades. Count how many students there are.
+> **User:** Sort these students by score and show me the top 3.
 
 **What the assistant does:**
 
 ```bash
-# Step 1: The assistant calls noether compose
-$ noether compose "parse CSV data and count the number of rows" \
-    --input '{"text":"name,score,grade\nAlice,95,A\nBob,72,B\nCarol,88,A\nDave,61,C\nEve,79,B","has_header":true,"delimiter":null}'
+$ noether compose "sort a list of items by score descending and take the top 3" \
+    --input '[{"name":"Alice","score":95},{"name":"Bob","score":72},
+              {"name":"Carol","score":88},{"name":"Dave","score":61},
+              {"name":"Eve","score":79}]'
 ```
 
 **What Noether does internally:**
 
-1. **Searches** the stage store for "parse CSV" and "count rows" → finds `csv_parse` (score: 0.70) and `list_length` (score: 0.66)
-2. **Sends** the top 20 candidates to the LLM (Gemini / Claude / GPT)
-3. **LLM returns** a composition graph: `csv_parse → list_length`
-4. **Type checker** validates: `Record{text,...} → List<Map> → Number` ✓
-5. **Executor** runs it: output = `5.0`
+1. **Searches** the stage store → finds `list_sort` (score: 0.79) and `list_take` (score: 0.75)
+2. **Sends** top 20 candidates + the config pattern to the LLM
+3. **LLM returns** a graph with config parameters:
+   ```json
+   list_sort(config: {"key": "score", "descending": true})
+   → list_take(config: {"count": 3})
+   ```
+4. **Type checker** validates on first attempt ✓
+5. **Executor** merges config with pipeline data and runs it
 
 **What the assistant gets back:**
 
@@ -347,41 +352,43 @@ $ noether compose "parse CSV data and count the number of rows" \
 {
   "ok": true,
   "data": {
-    "output": 5.0,
+    "output": [
+      {"name": "Alice", "score": 95},
+      {"name": "Carol", "score": 88},
+      {"name": "Eve", "score": 79}
+    ],
     "attempts": 1,
     "from_cache": false,
-    "trace": {
-      "duration_ms": 0,
-      "stages": [
-        { "stage_id": "72cdbe88...", "status": "Ok" },
-        { "stage_id": "bb1b2e4d...", "status": "Ok" }
-      ]
-    }
+    "trace": { "duration_ms": 0, "stages": 2 }
   }
 }
 ```
 
-> **Assistant:** There are 5 students in the CSV file.
+> **Assistant:** The top 3 students by score are Alice (95), Carol (88), and Eve (79).
 
-The assistant didn't write any code. It called one command, got a structured JSON response, and reported the answer. The pipeline is cached — if the user asks a follow-up question about the same CSV structure, Noether responds instantly with 0 LLM tokens.
+The LLM generated a graph with `config` parameters — `{"key": "score", "descending": true}` and `{"count": 3}` — on the first attempt. No code written. The pipeline is cached for future use.
 
 **The `--verbose` flag shows the full reasoning:**
 
 ```bash
-$ noether compose --verbose "parse CSV data and count rows"
+$ noether compose --verbose "sort a list by score and take top 3"
 
 [compose] Semantic search: "parse CSV data and count rows"
 [compose] Found 20 candidates:
-   1. 0.710  72cdbe88  Parse CSV text into a list of row maps
-   2. 0.697  bb1b2e4d  Return the number of elements in a list
-   3. 0.575  ...       Read a sheet from an Excel file
+   1. 0.790  6aae3697  Sort a list; optionally by a field name
+   2. 0.745  e127d8f1  Take the first N elements from a list
+   3. 0.718  40f4aa91  Group list items by the value of a named field
    ...
 
-[compose] System prompt: 18901 chars, 20 candidate stages
+[compose] System prompt: 21146 chars, 20 candidate stages
 [compose] LLM call (attempt 1/3, model: gemini-2.5-flash)
-[compose] LLM response: { "op": "Sequential", "stages": [csv_parse, list_length] }
+[compose] LLM response:
+  list_sort(config: {key: "score", descending: true})
+  → list_take(config: {count: 3})
 [compose] ✓ Type check passed on attempt 1
 ```
+
+[![Demo 5: Agent Compose with Config](https://asciinema.org/a/GKwWIK0ax5uw9yif.svg)](https://asciinema.org/a/GKwWIK0ax5uw9yif)
 
 ---
 
