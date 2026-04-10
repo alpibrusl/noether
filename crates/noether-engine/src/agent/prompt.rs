@@ -69,7 +69,7 @@ pub fn build_system_prompt(candidates: &[(&SearchResult, &Stage)]) -> String {
 
     // --- Operators ---
     prompt.push_str("## Operators\n\n");
-    prompt.push_str("- **Stage**: `{\"op\": \"Stage\", \"id\": \"<hash>\"}`\n");
+    prompt.push_str("- **Stage**: `{\"op\": \"Stage\", \"id\": \"<hash>\"}` — optionally add `\"config\": {\"key\": \"value\"}` to provide static parameters\n");
     prompt.push_str("- **Const**: `{\"op\": \"Const\", \"value\": <any JSON value>}` — emits a literal constant, ignores its input entirely\n");
     prompt.push_str("- **Sequential**: `{\"op\": \"Sequential\", \"stages\": [A, B, C]}` — output of A feeds B, then C\n");
     prompt.push_str("- **Parallel**: `{\"op\": \"Parallel\", \"branches\": {\"key1\": A, \"key2\": B}}` — ALL branches receive the SAME full input (or the field matching the branch name if the input is a Record); outputs are merged into a Record `{\"key1\": <out_A>, \"key2\": <out_B>}`\n");
@@ -77,34 +77,41 @@ pub fn build_system_prompt(candidates: &[(&SearchResult, &Stage)]) -> String {
     prompt.push_str("- **Fanout**: `{\"op\": \"Fanout\", \"source\": A, \"targets\": [B, C]}`\n");
     prompt.push_str("- **Retry**: `{\"op\": \"Retry\", \"stage\": A, \"max_attempts\": 3, \"delay_ms\": 500}`\n\n");
 
-    // --- Record construction guidance ---
-    prompt.push_str("## Record Construction — VERY IMPORTANT\n\n");
-    prompt.push_str("Many stages require `Record { field1: T1, field2: T2, ... }` as input.\n");
-    prompt.push_str("**The canonical pattern: `Parallel` + `Const`** assembles a Record from live stage outputs and literal values.\n\n");
-    prompt.push_str("How Parallel works:\n");
-    prompt
-        .push_str("- Each branch receives the FULL pipeline input (not null, not a sub-field).\n");
-    prompt.push_str("- `Const` branches ignore the input and emit the literal value.\n");
-    prompt.push_str("- `Stage` branches receive the full input and emit their output.\n");
-    prompt.push_str("- The merged output is `{\"branch_name\": <branch_output>, ...}`.\n\n");
-    prompt.push_str("**Example: input is `Record{query,limit}`, next stage needs `Record{topic,results,summary}`**\n");
+    // --- Stage config: the key pattern for parameterized stages ---
+    prompt.push_str("## Stage Config — VERY IMPORTANT\n\n");
+    prompt.push_str(
+        "Many stages need `Record { items: List, key: Text, descending: Bool }` as input.\n",
+    );
+    prompt.push_str("The pipeline only provides the DATA (e.g., a `List`). The PARAMETERS (`key`, `descending`) are static.\n\n");
+    prompt.push_str("**Use `config` to supply static parameters.** The executor merges config fields with the pipeline input:\n\n");
     prompt.push_str("```json\n");
     prompt.push_str("{\n");
-    prompt.push_str("  \"op\": \"Parallel\",\n");
-    prompt.push_str("  \"branches\": {\n");
-    prompt.push_str("    \"results\": {\"op\": \"Stage\", \"id\": \"<search_stage_id>\"},\n");
-    prompt.push_str("    \"topic\":   {\"op\": \"Const\", \"value\": \"async runtime\"},\n");
-    prompt.push_str(
-        "    \"summary\": {\"op\": \"Const\", \"value\": \"Top results for async runtime\"}\n",
-    );
-    prompt.push_str("  }\n");
+    prompt.push_str("  \"op\": \"Stage\",\n");
+    prompt.push_str("  \"id\": \"<list_sort_id>\",\n");
+    prompt.push_str("  \"config\": {\"key\": \"score\", \"descending\": true}\n");
     prompt.push_str("}\n");
-    prompt.push_str("```\n");
-    prompt.push_str("This produces `{results: [...], topic: \"async runtime\", summary: \"...\"}` — exactly what the next stage needs.\n\n");
+    prompt.push_str("```\n\n");
+    prompt.push_str("The pipeline flows `List<Any>` → the executor produces `{items: <the list>, key: \"score\", descending: true}` → `list_sort` receives exactly what it needs.\n\n");
+    prompt.push_str("**Rules for config:**\n");
+    prompt.push_str("- Use config for PARAMETER fields (key, count, delimiter, pattern, etc.)\n");
+    prompt.push_str("- The pipeline provides the DATA field (items, text, data, records, etc.)\n");
+    prompt.push_str("- Config keys must match the stage's Record field names exactly\n");
+    prompt.push_str("- Config values are JSON literals (strings, numbers, booleans, null)\n\n");
+    prompt.push_str("**Example: CSV parse → sort by revenue → take top 3 → serialize**\n");
+    prompt.push_str("```json\n");
+    prompt.push_str("{\n");
+    prompt.push_str("  \"op\": \"Sequential\",\n");
+    prompt.push_str("  \"stages\": [\n");
+    prompt.push_str("    {\"op\": \"Stage\", \"id\": \"<csv_parse_id>\"},\n");
+    prompt.push_str("    {\"op\": \"Stage\", \"id\": \"<list_sort_id>\", \"config\": {\"key\": \"revenue\", \"descending\": true}},\n");
     prompt.push_str(
-        "**COMMON MISTAKE**: Feeding a bare `Bool` or `Number` to a stage that expects a Record.\n",
+        "    {\"op\": \"Stage\", \"id\": \"<list_take_id>\", \"config\": {\"count\": 3}},\n",
     );
-    prompt.push_str("ALWAYS check that your Sequential chain's types match at each step.\n\n");
+    prompt.push_str("    {\"op\": \"Stage\", \"id\": \"<json_serialize_id>\"}\n");
+    prompt.push_str("  ]\n");
+    prompt.push_str("}\n");
+    prompt.push_str("```\n\n");
+    prompt.push_str("**Parallel** is still used for running branches concurrently on the same input — NOT for assembling Record parameters.\n\n");
 
     // --- Branch operator guidance ---
     prompt.push_str("## Branch Operator — How It Works\n\n");
@@ -272,23 +279,37 @@ pub fn build_system_prompt(candidates: &[(&SearchResult, &Stage)]) -> String {
     prompt.push_str("}\n");
     prompt.push_str("```\n\n");
 
-    // --- When to use synthesis vs complex wiring ---
-    prompt.push_str("## EXAMPLE 4: When to synthesize instead of complex wiring\n\n");
-    prompt.push_str("Problem: \"Sort a list and take the first 3\"\n\n");
-    prompt.push_str(
-        "The `list_sort` stage needs `Record{items, key, descending}` — NOT a bare List.\n",
-    );
-    prompt.push_str("The `list_take` stage needs `Record{items, count}` — NOT a bare List.\n\n");
-    prompt.push_str(
-        "**WRONG approach**: trying to wire Parallel+Const to wrap a bare List into a Record.\n",
-    );
-    prompt.push_str(
-        "This fails because Const produces literal values, not pipeline passthrough.\n\n",
-    );
-    prompt.push_str("**RIGHT approach**: If the user's input already IS the Record (with `items`, `key`, etc. fields), just chain directly.\n");
-    prompt.push_str("If the input is a bare List and you need to wrap it, **synthesize a single stage** that does the sort+take in one step.\n\n");
-    prompt.push_str("**Rule of thumb**: if you need to reshape data between stages (wrap, unwrap, rename fields), synthesize instead of composing.\n");
-    prompt.push_str("Synthesis produces a clean, tested, reusable stage. Complex wiring produces fragile graphs.\n\n");
+    // --- Example 4: config-based composition ---
+    let sort_id = find_candidate_id(candidates, "Sort a list");
+    let take_id = find_candidate_id(candidates, "Take the first N elements");
+    let json_ser_id = find_candidate_id(candidates, "Serialize any value to a JSON");
+
+    prompt.push_str("## EXAMPLE 4: Using config for parameterized stages\n\n");
+    prompt.push_str("Problem: \"Sort a list by score descending and take the top 3\"\n\n");
+    prompt.push_str("The `list_sort` stage needs `Record{items, key, descending}` but the pipeline provides a bare `List`.\n");
+    prompt.push_str("**Use config** to supply the parameter fields:\n\n");
+    prompt.push_str("```json\n");
+    prompt.push_str("{\n");
+    prompt.push_str("  \"description\": \"Sort by score and take top 3\",\n");
+    prompt.push_str("  \"version\": \"0.1.0\",\n");
+    prompt.push_str("  \"root\": {\n");
+    prompt.push_str("    \"op\": \"Sequential\",\n");
+    prompt.push_str("    \"stages\": [\n");
+    prompt.push_str(&format!(
+        "      {{\"op\": \"Stage\", \"id\": \"{sort_id}\", \"config\": {{\"key\": \"score\", \"descending\": true}}}},\n"
+    ));
+    prompt.push_str(&format!(
+        "      {{\"op\": \"Stage\", \"id\": \"{take_id}\", \"config\": {{\"count\": 3}}}},\n"
+    ));
+    prompt.push_str(&format!(
+        "      {{\"op\": \"Stage\", \"id\": \"{json_ser_id}\"}}\n"
+    ));
+    prompt.push_str("    ]\n");
+    prompt.push_str("  }\n");
+    prompt.push_str("}\n");
+    prompt.push_str("```\n\n");
+    prompt.push_str("The executor merges config with pipeline data automatically. No Parallel+Const needed.\n\n");
+    prompt.push_str("**When to synthesize instead:** when the operation has complex custom logic (API calls, data transformations that no existing stage covers).\n\n");
 
     // --- Available stages with examples, ordered by relevance score ---
     prompt.push_str("## Available Stages\n\n");
@@ -784,16 +805,16 @@ mod tests {
             "prompt should clarify that if_true/if_false receive original input"
         );
         assert!(
-            prompt.contains("Record Construction"),
-            "prompt should have Record construction section"
+            prompt.contains("Stage Config"),
+            "prompt should have Stage Config section"
         );
         assert!(
             prompt.contains("\"Const\""),
             "prompt should list Const as a valid op"
         );
         assert!(
-            prompt.contains("Const` + `Parallel") || prompt.contains("Parallel` + `Const"),
-            "prompt should explain Const+Parallel pattern"
+            prompt.contains("config") && prompt.contains("key"),
+            "prompt should explain config pattern for parameterized stages"
         );
     }
 
