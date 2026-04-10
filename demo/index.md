@@ -183,7 +183,7 @@ $ noether run pipeline.json \
 
 3 students, counted in 0ms. Every stage traced. Reproducible — same graph + same input = same output, always.
 
-[![Demo 1: CSV Revenue from File](https://asciinema.org/a/LcOqXNriDrSd76em.svg)](https://asciinema.org/a/LcOqXNriDrSd76em)
+[![Demo 1: CSV Revenue from File](https://asciinema.org/a/lgc5K2pGmnetQEAN.svg)](https://asciinema.org/a/lgc5K2pGmnetQEAN)
 
 ---
 
@@ -221,7 +221,7 @@ $ noether run --dry-run broken.json
 
 In traditional code generation, this bug only surfaces at runtime — after the agent writes the code, runs it, reads the traceback, and tries to fix it.
 
-[![Demo 2: Type Safety](https://asciinema.org/a/HjQdzEmlq5Q5txSm.svg)](https://asciinema.org/a/HjQdzEmlq5Q5txSm)
+[![Demo 2: Type Safety](https://asciinema.org/a/aqK5lselb18XLyRs.svg)](https://asciinema.org/a/aqK5lselb18XLyRs)
 
 ---
 
@@ -276,7 +276,7 @@ $ noether run parallel.json --input '"Noether composes typed pipelines for AI ag
 
 4 results from 1 input. No data loss. The executor ran them concurrently.
 
-[![Demo 3: Parallel Processing](https://asciinema.org/a/dmY3A2Hwcdooy9RJ.svg)](https://asciinema.org/a/dmY3A2Hwcdooy9RJ)
+[![Demo 3: Parallel Processing](https://asciinema.org/a/o8oKnFBKChD61Mrz.svg)](https://asciinema.org/a/o8oKnFBKChD61Mrz)
 
 ---
 
@@ -315,7 +315,7 @@ $ noether run pipeline-c.json --input '...'    # → "6.0" unique rows
 
 5 unique stages. 9 total usages. **Zero lines of code written.**
 
-[![Demo 4: Stage Reuse](https://asciinema.org/a/4fTIFSH9l2YhmPla.svg)](https://asciinema.org/a/4fTIFSH9l2YhmPla)
+[![Demo 4: Stage Reuse](https://asciinema.org/a/PFcDwD5izpyGhOnF.svg)](https://asciinema.org/a/PFcDwD5izpyGhOnF)
 
 ---
 
