@@ -8,7 +8,45 @@ Noether is different. Instead of generating code, it **composes pre-built, typed
 
 ## Demo 1: What a composition graph looks like
 
-A Noether pipeline is a JSON file called a **composition graph**. Here's a real one that parses CSV and counts the rows:
+A Noether pipeline is a JSON file called a **composition graph**. Here's one that parses sales CSV data, groups by region, sums revenue, and serializes the result:
+
+```json
+{
+  "description": "Sales revenue by region",
+  "version": "0.1.0",
+  "root": {
+    "op": "Sequential",
+    "stages": [
+      {
+        "op": "Stage",
+        "id": "a274d6de...",
+        "_comment": "csv_group_revenue: Record{text} → Any (parse + group + sum)"
+      },
+      {
+        "op": "Stage",
+        "id": "b96bc6ef...",
+        "_comment": "json_serialize: Any → Text"
+      }
+    ]
+  }
+}
+```
+
+```bash
+$ noether run revenue-by-region.json \
+    --input '{"text": "name,revenue,region\nAcme,450000,US\nGlobalTech,280000,EU\nDataFlow,520000,US\nNordStar,190000,EU\nPacific,340000,APAC"}'
+
+{
+  "ok": true,
+  "data": {
+    "output": "{\"APAC\":340000,\"EU\":470000,\"US\":970000}"
+  }
+}
+```
+
+US: $970K. EU: $470K. APAC: $340K. Type-checked and executed in milliseconds.
+
+Here's a simpler example — counting CSV rows:
 
 ```json
 {
