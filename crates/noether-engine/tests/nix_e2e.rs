@@ -147,6 +147,7 @@ fn nix_e2e_synthesized_stage_survives_store_roundtrip() {
         "double a number",
         CompositionNode::Stage {
             id: stage_id.clone(),
+            config: None,
         },
     );
 

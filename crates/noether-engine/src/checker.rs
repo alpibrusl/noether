@@ -83,7 +83,7 @@ fn collect_capability_violations(
     violations: &mut Vec<CapabilityViolation>,
 ) {
     match node {
-        CompositionNode::Stage { id } => {
+        CompositionNode::Stage { id, .. } => {
             if let Ok(Some(stage)) = store.get(id) {
                 for cap in &stage.capabilities {
                     if !policy.is_allowed(cap) {
@@ -200,7 +200,7 @@ fn collect_effects_inner(
     effects: &mut BTreeSet<Effect>,
 ) {
     match node {
-        CompositionNode::Stage { id } => match store.get(id) {
+        CompositionNode::Stage { id, .. } => match store.get(id) {
             Ok(Some(stage)) => {
                 for e in stage.signature.effects.iter() {
                     effects.insert(e.clone());
@@ -273,7 +273,7 @@ fn collect_effect_violations(
     violations: &mut Vec<EffectViolation>,
 ) {
     match node {
-        CompositionNode::Stage { id } => match store.get(id) {
+        CompositionNode::Stage { id, .. } => match store.get(id) {
             Ok(Some(stage)) => {
                 for effect in stage.signature.effects.iter() {
                     let kind = effect.kind();
@@ -408,7 +408,7 @@ fn collect_signature_violations(
     violations: &mut Vec<SignatureViolation>,
 ) {
     match node {
-        CompositionNode::Stage { id } => {
+        CompositionNode::Stage { id, .. } => {
             if let Ok(Some(stage)) = store.get(id) {
                 match (&stage.ed25519_signature, &stage.signer_public_key) {
                     (None, _) | (_, None) => {
@@ -668,7 +668,7 @@ fn collect_warnings_inner(
     _parent_is_retry: bool,
 ) {
     match node {
-        CompositionNode::Stage { id } => {
+        CompositionNode::Stage { id, .. } => {
             if let Ok(Some(stage)) = store.get(id) {
                 // Accumulate cost
                 for effect in stage.signature.effects.iter() {
@@ -686,7 +686,7 @@ fn collect_warnings_inner(
                 collect_warnings_inner(s, store, warnings, total_cost, false);
 
                 // Rule: Fallible stage not wrapped in Retry
-                if let CompositionNode::Stage { id } = s {
+                if let CompositionNode::Stage { id, .. } = s {
                     if let Ok(Some(stage)) = store.get(id) {
                         if stage.signature.effects.contains(&Effect::Fallible) {
                             warnings.push(EffectWarning::FallibleWithoutRetry {
@@ -699,8 +699,8 @@ fn collect_warnings_inner(
                 // Rule: NonDeterministic output → Pure input
                 if i + 1 < stages.len() {
                     if let (
-                        CompositionNode::Stage { id: from_id },
-                        CompositionNode::Stage { id: to_id },
+                        CompositionNode::Stage { id: from_id, .. },
+                        CompositionNode::Stage { id: to_id, .. },
                     ) = (s, &stages[i + 1])
                     {
                         let from_nd = store
@@ -756,7 +756,7 @@ fn collect_warnings_inner(
             // Retry wraps Fallible — suppress FallibleWithoutRetry for direct child
             collect_warnings_inner(stage, store, warnings, total_cost, true);
             // Remove any FallibleWithoutRetry that was just added for the immediate child
-            if let CompositionNode::Stage { id } = stage.as_ref() {
+            if let CompositionNode::Stage { id, .. } = stage.as_ref() {
                 warnings.retain(|w| !matches!(w, EffectWarning::FallibleWithoutRetry { stage_id } if stage_id == id));
             }
         }
@@ -769,7 +769,31 @@ fn check_node(
     errors: &mut Vec<GraphTypeError>,
 ) -> Option<ResolvedType> {
     match node {
-        CompositionNode::Stage { id } => check_stage(id, store, errors),
+        CompositionNode::Stage { id, config } => {
+            let resolved = check_stage(id, store, errors)?;
+            // When config provides fields, reduce the effective input type
+            if let Some(cfg) = config {
+                if !cfg.is_empty() {
+                    if let NType::Record(fields) = &resolved.input {
+                        let remaining: std::collections::BTreeMap<String, NType> = fields
+                            .iter()
+                            .filter(|(name, _)| !cfg.contains_key(*name))
+                            .map(|(name, ty)| (name.clone(), ty.clone()))
+                            .collect();
+                        let effective = if remaining.is_empty() || remaining.len() == 1 {
+                            NType::Any
+                        } else {
+                            NType::Record(remaining)
+                        };
+                        return Some(ResolvedType {
+                            input: effective,
+                            output: resolved.output,
+                        });
+                    }
+                }
+            }
+            Some(resolved)
+        }
         // RemoteStage: types are declared inline — no store lookup needed.
         // The type checker trusts the declared input/output types.
         CompositionNode::RemoteStage { input, output, .. } => Some(ResolvedType {
@@ -1093,6 +1117,7 @@ mod tests {
     fn stage(id: &str) -> CompositionNode {
         CompositionNode::Stage {
             id: StageId(id.into()),
+            config: None,
         }
     }
 
@@ -1256,6 +1281,7 @@ mod tests {
                 },
                 CompositionNode::Stage {
                     id: StageId("num_render".into()),
+                    config: None,
                 },
             ],
         };
@@ -1277,6 +1303,7 @@ mod tests {
                 },
                 CompositionNode::Stage {
                     id: StageId("text_to_num".into()),
+                    config: None,
                 },
             ],
         };
@@ -1303,6 +1330,7 @@ mod tests {
         store.put(stage.clone()).unwrap();
         let node = CompositionNode::Stage {
             id: StageId("pure1".into()),
+            config: None,
         };
         let effects = infer_effects(&node, &store);
         assert!(effects.contains(&Effect::Pure));
@@ -1325,9 +1353,11 @@ mod tests {
             stages: vec![
                 CompositionNode::Stage {
                     id: StageId("a".into()),
+                    config: None,
                 },
                 CompositionNode::Stage {
                     id: StageId("b".into()),
+                    config: None,
                 },
             ],
         };
@@ -1354,6 +1384,7 @@ mod tests {
         let store = MemoryStore::new();
         let node = CompositionNode::Stage {
             id: StageId("missing".into()),
+            config: None,
         };
         let effects = infer_effects(&node, &store);
         assert!(effects.contains(&Effect::Unknown));
@@ -1372,6 +1403,7 @@ mod tests {
             .unwrap();
         let node = CompositionNode::Stage {
             id: StageId("net".into()),
+            config: None,
         };
         let policy = EffectPolicy::allow_all();
         assert!(check_effects(&node, &store, &policy).is_empty());
@@ -1388,6 +1420,7 @@ mod tests {
             .unwrap();
         let node = CompositionNode::Stage {
             id: StageId("net".into()),
+            config: None,
         };
         let policy = EffectPolicy::restrict([EffectKind::Pure]);
         let violations = check_effects(&node, &store, &policy);
@@ -1408,6 +1441,7 @@ mod tests {
             .unwrap();
         let node = CompositionNode::Stage {
             id: StageId("llm".into()),
+            config: None,
         };
         let policy = EffectPolicy::restrict([EffectKind::Llm]);
         assert!(check_effects(&node, &store, &policy).is_empty());

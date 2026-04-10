@@ -33,6 +33,7 @@ fn find_stage_id(store: &MemoryStore, description_contains: &str) -> String {
 fn stage(id: &str) -> CompositionNode {
     CompositionNode::Stage {
         id: noether_core::stage::StageId(id.into()),
+        config: None,
     }
 }
 

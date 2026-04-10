@@ -246,7 +246,7 @@ fn resolve_deprecated_stages(
     let mut rewrites = Vec::new();
 
     match node {
-        CompositionNode::Stage { id } => {
+        CompositionNode::Stage { id, .. } => {
             let mut current = id.clone();
             for _ in 0..10 {
                 match store.get(&current) {

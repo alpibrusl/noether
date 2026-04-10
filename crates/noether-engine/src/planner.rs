@@ -57,7 +57,7 @@ fn flatten_node(
     depends_on: &[usize],
 ) -> Vec<usize> {
     match node {
-        CompositionNode::Stage { id } => {
+        CompositionNode::Stage { id, .. } => {
             let idx = steps.len();
             steps.push(ExecutionStep {
                 step_index: idx,
@@ -89,7 +89,7 @@ fn flatten_node(
             // After flattening, check whether ALL direct children are Stage nodes
             // and all are Pure. If so, add them as a parallel group hint.
             let all_direct_pure_stages = stages.iter().all(|s| {
-                if let CompositionNode::Stage { id } = s {
+                if let CompositionNode::Stage { id, .. } = s {
                     store
                         .get(id)
                         .ok()
@@ -222,6 +222,7 @@ mod tests {
     fn stage(id: &str) -> CompositionNode {
         CompositionNode::Stage {
             id: StageId(id.into()),
+            config: None,
         }
     }
 

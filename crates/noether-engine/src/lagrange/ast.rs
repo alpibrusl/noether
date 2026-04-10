@@ -8,7 +8,15 @@ use std::collections::BTreeMap;
 #[serde(tag = "op")]
 pub enum CompositionNode {
     /// Leaf node: reference to a stage by its content hash.
-    Stage { id: StageId },
+    ///
+    /// The optional `config` provides static parameter values merged with
+    /// the pipeline input before the stage executes. This separates data
+    /// flow (from the pipeline) from configuration (from the graph).
+    Stage {
+        id: StageId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        config: Option<BTreeMap<String, serde_json::Value>>,
+    },
 
     /// Call a remote Noether API endpoint over HTTP.
     ///
@@ -94,7 +102,7 @@ pub fn collect_stage_ids(node: &CompositionNode) -> Vec<&StageId> {
 
 fn collect_ids_recursive<'a>(node: &'a CompositionNode, ids: &mut Vec<&'a StageId>) {
     match node {
-        CompositionNode::Stage { id } => ids.push(id),
+        CompositionNode::Stage { id, .. } => ids.push(id),
         CompositionNode::RemoteStage { .. } => {} // no local stage ID; URL is resolved at runtime
         CompositionNode::Const { .. } => {}       // no stage IDs in a constant
         CompositionNode::Sequential { stages } => {
@@ -142,6 +150,7 @@ mod tests {
     fn stage(id: &str) -> CompositionNode {
         CompositionNode::Stage {
             id: StageId(id.into()),
+            config: None,
         }
     }
 

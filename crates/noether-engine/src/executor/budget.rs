@@ -63,7 +63,7 @@ fn collect_costs(
 ) {
     use crate::lagrange::CompositionNode::*;
     match node {
-        Stage { id } => {
+        Stage { id, .. } => {
             if let Ok(Some(stage)) = store.get(id) {
                 let total: u64 = stage
                     .signature
@@ -309,9 +309,11 @@ mod tests {
             stages: vec![
                 CompositionNode::Stage {
                     id: StageId("s1".into()),
+                    config: None,
                 },
                 CompositionNode::Stage {
                     id: StageId("s2".into()),
+                    config: None,
                 },
             ],
         };
@@ -355,6 +357,7 @@ mod tests {
 
         let node = CompositionNode::Stage {
             id: StageId("free".into()),
+            config: None,
         };
         let map = build_cost_map(&node, &store);
         assert!(map.is_empty(), "free stage should not appear in cost map");

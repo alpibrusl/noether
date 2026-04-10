@@ -33,6 +33,7 @@ mod tests {
             "test",
             CompositionNode::Stage {
                 id: StageId("abc".into()),
+                config: None,
             },
         );
         let json = serialize_graph(&graph).unwrap();
@@ -46,6 +47,7 @@ mod tests {
             "test",
             CompositionNode::Stage {
                 id: StageId("abc".into()),
+                config: None,
             },
         );
         let id1 = compute_composition_id(&graph).unwrap();

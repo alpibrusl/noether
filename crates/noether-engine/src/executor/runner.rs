@@ -98,8 +98,28 @@ fn execute_node<E: StageExecutor + Sync>(
     cache: &mut Option<&mut PureStageCache>,
 ) -> Result<Value, ExecutionError> {
     match node {
-        CompositionNode::Stage { id } => {
-            execute_stage(id, input, executor, traces, step_counter, cache)
+        CompositionNode::Stage { id, config } => {
+            let merged = if let Some(cfg) = config {
+                let mut obj = match input {
+                    Value::Object(map) => map.clone(),
+                    other => {
+                        let mut m = serde_json::Map::new();
+                        let data_key = ["items", "text", "data", "input", "records"]
+                            .iter()
+                            .find(|k| !cfg.contains_key(**k))
+                            .unwrap_or(&"items");
+                        m.insert(data_key.to_string(), other.clone());
+                        m
+                    }
+                };
+                for (k, v) in cfg {
+                    obj.insert(k.clone(), v.clone());
+                }
+                Value::Object(obj)
+            } else {
+                input.clone()
+            };
+            execute_stage(id, &merged, executor, traces, step_counter, cache)
         }
         CompositionNode::Const { value } => Ok(value.clone()),
         CompositionNode::Sequential { stages } => {
@@ -372,6 +392,7 @@ mod tests {
     fn stage(id: &str) -> CompositionNode {
         CompositionNode::Stage {
             id: StageId(id.into()),
+            config: None,
         }
     }
 
