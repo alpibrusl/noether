@@ -392,6 +392,44 @@ $ noether compose --verbose "sort a list by score and take top 3"
 
 ---
 
+## Demo 6: ML Pipeline — Train, Predict, Evaluate
+
+Noether composes scikit-learn pipelines the same way it composes data pipelines. Each ML operation is a typed stage with `config` for parameters:
+
+```json
+{"stages": [
+  {"op": "Stage", "id": "json_read"},
+  {"op": "Stage", "id": "sklearn_train", "config": {
+    "target": "species",
+    "model": "RandomForestClassifier",
+    "params": {"n_estimators": 10},
+    "save_path": "/tmp/iris_rf.pkl"
+  }},
+  {"op": "Stage", "id": "sklearn_predict", "config": {
+    "model_path": "/tmp/iris_rf.pkl"
+  }},
+  {"op": "Stage", "id": "sklearn_evaluate", "config": {
+    "target": "species",
+    "predicted": "prediction"
+  }}
+]}
+```
+
+```bash
+$ noether run train.json --input '{"path": "/tmp/iris_train.json"}'
+  → RandomForestClassifier trained on 15 samples
+    Features: [petal_l, petal_w, sepal_l, sepal_w]
+
+$ noether run evaluate.json --input '{"path": "/tmp/iris_train.json"}'
+  → Accuracy: 1.0, F1: 1.0, Precision: 1.0, Recall: 1.0
+```
+
+Model artifacts are file paths — `sklearn_train` saves via joblib, `sklearn_predict` loads from the same path. Pip packages (`scikit-learn`) are auto-installed in a cached venv on first run.
+
+[![Demo 6: ML Pipeline](https://asciinema.org/a/zE95xpcwntzOSaJi.svg)](https://asciinema.org/a/zE95xpcwntzOSaJi)
+
+---
+
 ## How to set this up for your coding assistant
 
 Add a `CLAUDE.md` (or equivalent instructions file) to your project:
