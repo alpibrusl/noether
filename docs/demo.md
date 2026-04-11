@@ -4,7 +4,9 @@ When your AI coding assistant needs to build a data pipeline, it writes Python f
 
 Noether is different. Instead of generating code, it **composes pre-built, typed stages** into pipelines. The type checker validates every connection before anything executes. Stages are reusable — the same `csv_parse` stage works in every pipeline that needs CSV parsing.
 
-> **About these demos**: Noether core ships with 80+ stdlib stages (text, collections, JSON, CSV, control flow). The analytics, ML, cloud, and visualization stages shown in these demos are available as **optional packages** in [noether-cloud](https://github.com/alpibrusl/noether-cloud) — a stage registry with 390+ Python stages across 50 libraries (sklearn, PyTorch, boto3, BeautifulSoup, Pillow, and more). Install what you need; the core stays lean.
+> **About these demos**: Noether core ships with 80+ stdlib stages (text, collections, JSON, CSV, control flow). The analytics, ML, cloud, and visualization stages shown in these demos are available as **optional packages** from the **Noether Stage Registry** — 390+ Python stages across 50 libraries (sklearn, PyTorch, boto3, BeautifulSoup, Pillow, and more). Install what you need; the core stays lean.
+>
+> **The Stage Registry (`noether-registry`) will be published as open source soon.** It includes the full stage catalogue, a hosted HTTP API for remote stage discovery, and a scheduler for recurring pipelines.
 
 ---
 
@@ -560,14 +562,16 @@ noether run --dry-run demo/benchmark/scenarios/01-type-safety/valid-graph.json
 
 **To use analytics, ML, or cloud stages** (shown in demos 6-7):
 
+The **Noether Stage Registry** (`noether-registry`) will be published as open source soon. Once available:
+
 ```bash
 # Clone the stage registry
-git clone https://github.com/alpibrusl/noether-cloud
+git clone https://github.com/alpibrusl/noether-registry
 
 # Register the stages you need
-noether stage add noether-cloud/stages/data/sklearn_train.json
-noether stage add noether-cloud/stages/data/html_dashboard.json
+noether stage add noether-registry/stages/data/sklearn_train.json
+noether stage add noether-registry/stages/data/html_dashboard.json
 
 # Or register all 390+ stages at once
-cd noether-cloud && ./stages/register_all.sh --activate
+cd noether-registry && ./stages/register_all.sh --activate
 ```
