@@ -104,10 +104,13 @@ fn execute_node<E: StageExecutor + Sync>(
                     Value::Object(map) => map.clone(),
                     other => {
                         let mut m = serde_json::Map::new();
-                        let data_key = ["items", "text", "data", "input", "records"]
-                            .iter()
-                            .find(|k| !cfg.contains_key(**k))
-                            .unwrap_or(&"items");
+                        let data_key = [
+                            "items", "text", "data", "input", "records", "train", "document",
+                            "html", "csv", "json_str",
+                        ]
+                        .iter()
+                        .find(|k| !cfg.contains_key(**k))
+                        .unwrap_or(&"items");
                         m.insert(data_key.to_string(), other.clone());
                         m
                     }

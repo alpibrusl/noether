@@ -279,20 +279,30 @@ impl NixExecutor {
             .map(|i| i.code.as_str())
             .unwrap_or("");
 
-        let (nix_subcommand, args) = Self::build_nix_command(language, script, code);
+        let (nix_subcommand, args) = self.build_nix_command(language, script, code);
 
-        let mut child = Command::new(&self.nix_bin)
-            .arg(nix_subcommand)
-            .args(["--no-write-lock-file", "--quiet"])
-            .args(&args)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| ExecutionError::StageFailed {
-                stage_id: stage_id.clone(),
-                message: format!("failed to spawn nix: {e}"),
-            })?;
+        // __direct__ means run the binary directly (venv Python), not via nix
+        let mut child = if nix_subcommand == "__direct__" {
+            Command::new(&args[0])
+                .args(&args[1..])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+        } else {
+            Command::new(&self.nix_bin)
+                .arg(&nix_subcommand)
+                .args(["--no-write-lock-file", "--quiet"])
+                .args(&args)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+        }
+        .map_err(|e| ExecutionError::StageFailed {
+            stage_id: stage_id.clone(),
+            message: format!("failed to spawn process: {e}"),
+        })?;
 
         // Write stdin in a background thread so we don't deadlock when the
         // child's stdin pipe fills before we start reading stdout.
@@ -406,37 +416,91 @@ impl NixExecutor {
     /// - Python with no third-party imports: `nix run nixpkgs#python3 -- script.py`
     /// - Python with third-party imports:    `nix shell nixpkgs#python3Packages.X ... --command python3 script.py`
     /// - JS/Bash: `nix run nixpkgs#<runtime> -- script`
-    fn build_nix_command(language: &str, script: &Path, code: &str) -> (&'static str, Vec<String>) {
+    fn build_nix_command(
+        &self,
+        language: &str,
+        script: &Path,
+        code: &str,
+    ) -> (String, Vec<String>) {
         let script_path = script.to_str().unwrap_or("/dev/null").to_string();
 
         match language {
             "python" | "python3" | "" => {
+                // If the code has `# requires:` with pip packages, use a venv
+                // with system Python instead of Nix (Nix's python3Packages
+                // don't reliably work with `nix shell`).
+                if let Some(reqs) = Self::extract_pip_requirements(code) {
+                    let venv_hash = {
+                        use sha2::{Digest, Sha256};
+                        let h = Sha256::digest(reqs.as_bytes());
+                        hex::encode(&h[..8])
+                    };
+                    let venv_dir = self.cache_dir.join(format!("venv-{venv_hash}"));
+                    let venv_str = venv_dir.to_string_lossy().to_string();
+                    let python = venv_dir.join("bin").join("python3");
+                    let python_str = python.to_string_lossy().to_string();
+
+                    // Create venv + install deps if not cached
+                    if !python.exists() {
+                        let setup = std::process::Command::new("python3")
+                            .args(["-m", "venv", &venv_str])
+                            .output();
+                        if let Ok(out) = setup {
+                            if out.status.success() {
+                                let pip = venv_dir.join("bin").join("pip");
+                                let pkgs: Vec<&str> = reqs.split(", ").collect();
+                                let mut pip_args =
+                                    vec!["install", "--quiet", "--disable-pip-version-check"];
+                                pip_args.extend(pkgs);
+                                let _ = std::process::Command::new(pip.to_string_lossy().as_ref())
+                                    .args(&pip_args)
+                                    .output();
+                            }
+                        }
+                    }
+
+                    // Run with the venv Python directly (no nix)
+                    return ("__direct__".to_string(), vec![python_str, script_path]);
+                }
+
                 let extra_pkgs = Self::detect_python_packages(code);
                 if extra_pkgs.is_empty() {
                     (
-                        "run",
+                        "run".to_string(),
                         vec!["nixpkgs#python3".into(), "--".into(), script_path],
                     )
                 } else {
-                    // Use `nix shell` with only the third-party packages.
-                    // Do NOT also include nixpkgs#python3 — each python3Packages.*
-                    // already depends on python3, and mixing both into the same
-                    // shell creates a conflicting Python environment where the
-                    // packages are invisible to the bare python3 binary.
                     let mut args: Vec<String> = extra_pkgs
                         .iter()
                         .map(|pkg| format!("nixpkgs#python3Packages.{pkg}"))
                         .collect();
                     args.extend_from_slice(&["--command".into(), "python3".into(), script_path]);
-                    ("shell", args)
+                    ("shell".to_string(), args)
                 }
             }
             "javascript" | "js" => (
-                "run",
+                "run".to_string(),
                 vec!["nixpkgs#nodejs".into(), "--".into(), script_path],
             ),
-            _ => ("run", vec!["nixpkgs#bash".into(), "--".into(), script_path]),
+            _ => (
+                "run".to_string(),
+                vec!["nixpkgs#bash".into(), "--".into(), script_path],
+            ),
         }
+    }
+
+    /// Extract pip requirements from `# requires: pkg1==ver, pkg2==ver` comments.
+    fn extract_pip_requirements(code: &str) -> Option<String> {
+        for line in code.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("# requires:") {
+                let reqs = trimmed.strip_prefix("# requires:").unwrap().trim();
+                if !reqs.is_empty() {
+                    return Some(reqs.to_string());
+                }
+            }
+        }
+        None
     }
 
     /// Scan Python source for `import X` / `from X import` statements and return
@@ -470,6 +534,11 @@ impl NixExecutor {
             ("jwt", "pyjwt"),
             ("paramiko", "paramiko"),
             ("dotenv", "python-dotenv"),
+            ("joblib", "joblib"),
+            ("torch", "pytorch"),
+            ("transformers", "transformers"),
+            ("datasets", "datasets"),
+            ("pyarrow", "pyarrow"),
         ];
 
         let mut found: Vec<&'static str> = Vec::new();
@@ -490,9 +559,14 @@ impl NixExecutor {
     // ── Language wrappers ────────────────────────────────────────────────────
 
     fn wrap_python(user_code: &str) -> String {
+        // Skip pip install — dependencies are handled by the venv executor
+        // (build_nix_command creates a venv with pip packages pre-installed)
+        // or by Nix packages (for known imports like numpy, pandas, etc.).
+        let pip_install = String::new();
+
         format!(
             r#"import sys, json as _json
-
+{pip_install}
 # ---- user implementation ----
 {user_code}
 # ---- end implementation ----
