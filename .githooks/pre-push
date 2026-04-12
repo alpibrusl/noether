@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Local mirror of the CI test gate. Runs before each push.
+# Enable once per clone with: git config core.hooksPath .githooks
+set -e
+
+echo "→ cargo test --workspace --lib --bins"
+cargo test --workspace --lib --bins
+
+echo "✓ pre-push OK"

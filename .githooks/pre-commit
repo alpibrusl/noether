@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Local mirror of the CI rustfmt + clippy gates.
+# Enable once per clone with: git config core.hooksPath .githooks
+set -e
+
+if ! git diff --cached --name-only --diff-filter=ACM | grep -qE '\.(rs|toml)$'; then
+  exit 0  # no Rust changes — skip
+fi
+
+echo "→ cargo fmt --check"
+cargo fmt --all -- --check
+
+echo "→ cargo clippy --all-targets --all-features -- -D warnings"
+cargo clippy --all-targets --all-features -- -D warnings
+
+echo "✓ pre-commit OK"

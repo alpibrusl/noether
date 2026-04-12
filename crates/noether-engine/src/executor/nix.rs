@@ -698,10 +698,19 @@ mod tests {
         assert!(pkgs.contains(&"beautifulsoup4"));
     }
 
+    fn test_executor() -> NixExecutor {
+        NixExecutor {
+            nix_bin: PathBuf::from("/usr/bin/nix"),
+            cache_dir: PathBuf::from("/tmp/noether-test-cache"),
+            config: NixConfig::default(),
+            implementations: HashMap::new(),
+        }
+    }
+
     #[test]
     fn build_nix_command_no_packages() {
-        let (sub, args) =
-            NixExecutor::build_nix_command("python", Path::new("/tmp/x.py"), "import json");
+        let exec = test_executor();
+        let (sub, args) = exec.build_nix_command("python", Path::new("/tmp/x.py"), "import json");
         assert_eq!(sub, "run");
         assert!(args.iter().any(|a| a.contains("python3")));
         assert!(!args.iter().any(|a| a.contains("shell")));
@@ -709,8 +718,9 @@ mod tests {
 
     #[test]
     fn build_nix_command_with_requests() {
+        let exec = test_executor();
         let (sub, args) =
-            NixExecutor::build_nix_command("python", Path::new("/tmp/x.py"), "import requests");
+            exec.build_nix_command("python", Path::new("/tmp/x.py"), "import requests");
         assert_eq!(sub, "shell");
         assert!(args.iter().any(|a| a.contains("python3Packages.requests")));
         assert!(args.iter().any(|a| a == "--command"));
