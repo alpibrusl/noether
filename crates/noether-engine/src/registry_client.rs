@@ -70,9 +70,19 @@ impl RemoteStageStore {
     /// `api_key` is sent as `X-API-Key` header; pass `None` if the registry
     /// runs without auth (local dev with `NOETHER_API_KEY=""`).
     pub fn connect(base_url: &str, api_key: Option<&str>) -> Result<Self, StoreError> {
+        // Send the client version as both a User-Agent (standard) and an
+        // explicit X-Noether-Client-Version header (easier for the server
+        // to surface in logs / metrics / rate-limit decisions without
+        // string-parsing UA).
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            "X-Noether-Client-Version",
+            reqwest::header::HeaderValue::from_static(env!("CARGO_PKG_VERSION")),
+        );
         let client = reqwest::blocking::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .user_agent(concat!("noether-cli/", env!("CARGO_PKG_VERSION")))
+            .default_headers(headers)
             .build()
             .map_err(|e| StoreError::IoError {
                 message: e.to_string(),

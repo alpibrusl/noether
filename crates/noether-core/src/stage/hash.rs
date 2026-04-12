@@ -5,18 +5,26 @@ use sha2::{Digest, Sha256};
 
 /// Produce the canonical JSON bytes for a StageSignature.
 ///
-/// Determinism is guaranteed by:
-/// - `BTreeMap` for Record fields (sorted keys)
-/// - `BTreeSet` for EffectSet (sorted elements)
-/// - `serde_json::to_vec` (compact, no whitespace)
+/// Uses RFC 8785 (JSON Canonicalization Scheme, JCS) so the byte
+/// sequence is independent of the language or struct layout that
+/// produced it. Two implementations following RFC 8785 will always
+/// produce identical bytes for the same logical value:
+///
+/// - Object keys sorted lexicographically by code point
+/// - No insignificant whitespace
+/// - Numbers in I-JSON canonical form
+/// - UTF-8 strings with the minimal escape set
+///
+/// This means a Python or JS client serialising a StageSignature with
+/// any RFC 8785 implementation produces the same hash as Rust here.
 pub fn canonical_json(sig: &StageSignature) -> Result<Vec<u8>, serde_json::Error> {
-    serde_json::to_vec(sig)
+    serde_jcs::to_vec(sig)
 }
 
 /// Compute the content-addressed StageId from a StageSignature.
 ///
-/// The identity is the hex-encoded SHA-256 of the canonical JSON
-/// serialization of the signature.
+/// The identity is the hex-encoded SHA-256 of the JCS-canonicalised
+/// JSON of the signature.
 pub fn compute_stage_id(sig: &StageSignature) -> Result<StageId, serde_json::Error> {
     let bytes = canonical_json(sig)?;
     let hash = Sha256::digest(&bytes);
@@ -40,7 +48,7 @@ pub fn compute_canonical_id(
         "output": output,
         "effects": effects,
     });
-    let bytes = serde_json::to_vec(&canonical)?;
+    let bytes = serde_jcs::to_vec(&canonical)?;
     let hash = Sha256::digest(&bytes);
     Ok(CanonicalId(hex::encode(hash)))
 }
@@ -92,6 +100,72 @@ mod tests {
         let deserialized: StageSignature = serde_json::from_slice(&json).unwrap();
         let json2 = canonical_json(&deserialized).unwrap();
         assert_eq!(json, json2);
+    }
+
+    /// JCS guarantees identical bytes regardless of input field order.
+    /// This is the property that prevents the "client-and-server-disagree-
+    /// on-canonical-form" class of bugs cross-language.
+    #[test]
+    fn jcs_emits_keys_in_lexicographic_order() {
+        let sig = sample_sig();
+        let bytes = canonical_json(&sig).unwrap();
+        let s = std::str::from_utf8(&bytes).unwrap();
+        // Object keys must appear in alphabetical order regardless of
+        // struct field order or BTreeMap iteration order.
+        let effects_idx = s.find("\"effects\"").unwrap();
+        let impl_idx = s.find("\"implementation_hash\"").unwrap();
+        let input_idx = s.find("\"input\"").unwrap();
+        let output_idx = s.find("\"output\"").unwrap();
+        assert!(effects_idx < impl_idx);
+        assert!(impl_idx < input_idx);
+        assert!(input_idx < output_idx);
+    }
+
+    /// Golden test vectors. If these IDs change, every previously-stored
+    /// stage in every running registry will be invalidated. Bumping requires
+    /// a coordinated migration — never edit these without that plan.
+    #[test]
+    fn golden_vectors_are_stable() {
+        let cases = [
+            (
+                StageSignature {
+                    input: NType::Text,
+                    output: NType::Number,
+                    effects: EffectSet::pure(),
+                    implementation_hash: "abc123".into(),
+                },
+                "v1:text->number/pure/abc123",
+            ),
+            (
+                StageSignature {
+                    input: NType::Bool,
+                    output: NType::Bool,
+                    effects: EffectSet::pure(),
+                    implementation_hash: "identity".into(),
+                },
+                "v1:bool->bool/pure/identity",
+            ),
+        ];
+        for (sig, label) in cases {
+            let id = compute_stage_id(&sig).unwrap();
+            // Print so a regression shows the new value next to the old in
+            // CI output, making the diff trivial to triage.
+            eprintln!("golden {}: {}", label, id.0);
+            // Stable across the lifetime of the JCS-based v1 hash format.
+            // To regenerate after intentional change: run `cargo test -p
+            // noether-core hash::tests::golden_vectors_are_stable -- --nocapture`
+            // and paste the new digests below.
+            let expected = match label {
+                "v1:text->number/pure/abc123" => {
+                    "9f66c7c68e0d37b6ec162e1b833b0c9577e463cbf337833076df4be3a5daa3e0"
+                }
+                "v1:bool->bool/pure/identity" => {
+                    "ed852c94fa4b2b0935fd11f715cb5608a8f75780c73bb60ffd52f8ad8301819d"
+                }
+                _ => unreachable!(),
+            };
+            assert_eq!(id.0, expected, "golden vector drift for {label}");
+        }
     }
 
     #[test]

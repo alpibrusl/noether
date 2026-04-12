@@ -187,8 +187,12 @@ mod tests {
     /// The two byte sequences differ — and used to produce different IDs.
     #[test]
     fn content_hash_check_is_field_order_independent() {
+        // JCS-canonicalised id for the signature below. Under RFC 8785 the
+        // bytes are identical regardless of the order keys appear in the
+        // source JSON, so this id stays valid whether the client emitted
+        // {input,output,effects,impl_hash} or alphabetical (as here).
         let raw = serde_json::json!({
-            "id": "a61021f82b8c939efe608b99b04d3aba015abad0423eb832e61d4e82ebff128d",
+            "id": "279804424b7e12b55ec2ed135d9f0c62b1af95b9b1a937895fe69da0f5a42c38",
             "signature": {
                 "effects": {"effects": [{"effect": "Fallible"}]},
                 "implementation_hash": "1eb75086add21d5ea28d2cf6c79a5c08a40e322517958ad328f19ce4f9d46658",
