@@ -6,9 +6,8 @@
 //! `Parallel + Sequential` graph without any special casing in the registry.
 
 use super::super::ExecutionError;
-use noether_core::stage::StageId;
+use noether_core::stage::{compute_stage_id, StageId, StageSignature};
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
@@ -26,14 +25,29 @@ fn err(name: &str, message: impl Into<String>) -> ExecutionError {
 pub fn verify_stage_content_hash(input: &Value) -> Result<Value, ExecutionError> {
     let stage_id = input["id"].as_str().unwrap_or("");
 
-    let sig_json = serde_json::to_string(&input["signature"]).map_err(|e| {
+    // Re-hashing must go through the StageSignature struct, NOT through the
+    // raw JSON Value. serde_json::to_string on a Value emits map keys in
+    // alphabetical order, while serde_json::to_vec on a struct emits them in
+    // struct field-declaration order (input, output, effects,
+    // implementation_hash). The two serialisations produce different bytes
+    // and therefore different SHA-256 digests — which is precisely the
+    // "content hash mismatch" bug clients hit when the JSON they POST has
+    // any field order other than the struct's own.
+    let sig: StageSignature = serde_json::from_value(input["signature"].clone()).map_err(|e| {
         err(
             "verify_stage_content_hash",
-            format!("cannot serialise signature: {e}"),
+            format!("cannot parse signature as StageSignature: {e}"),
         )
     })?;
 
-    let computed = hex::encode(Sha256::digest(sig_json.as_bytes()));
+    let computed = compute_stage_id(&sig)
+        .map_err(|e| {
+            err(
+                "verify_stage_content_hash",
+                format!("cannot canonicalise signature: {e}"),
+            )
+        })?
+        .0;
 
     if stage_id == computed {
         Ok(json!({
@@ -159,4 +173,34 @@ pub fn merge_validation_checks(input: &Value) -> Result<Value, ExecutionError> {
         "errors": errors,
         "warnings": warnings
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression: a stage submitted with signature fields in alphabetical
+    /// order (effects, implementation_hash, input, output) must validate.
+    /// The earlier implementation re-serialised the raw JSON Value, which
+    /// emitted alphabetically sorted keys, while clients hash the
+    /// StageSignature struct (input, output, effects, implementation_hash).
+    /// The two byte sequences differ — and used to produce different IDs.
+    #[test]
+    fn content_hash_check_is_field_order_independent() {
+        let raw = serde_json::json!({
+            "id": "a61021f82b8c939efe608b99b04d3aba015abad0423eb832e61d4e82ebff128d",
+            "signature": {
+                "effects": {"effects": [{"effect": "Fallible"}]},
+                "implementation_hash": "1eb75086add21d5ea28d2cf6c79a5c08a40e322517958ad328f19ce4f9d46658",
+                "input":  {"kind": "Record", "value": {"manifest": {"kind": "Record", "value": {"apiVersion": {"kind": "Text"}, "name": {"kind": "Text"}}}}},
+                "output": {"kind": "Record", "value": {"errors": {"kind": "List", "value": {"kind": "Text"}}, "hash": {"kind": "Text"}, "name": {"kind": "Text"}, "valid": {"kind": "Bool"}, "version": {"kind": "Text"}}}
+            }
+        });
+        let result = verify_stage_content_hash(&raw).unwrap();
+        assert_eq!(
+            result["passed"],
+            serde_json::Value::Bool(true),
+            "alphabetically ordered signature should validate; got {result:?}"
+        );
+    }
 }
