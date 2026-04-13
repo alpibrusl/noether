@@ -31,8 +31,8 @@
 //! | `OPENAI_EMBEDDING_MODEL` | OpenAI embedding model | `text-embedding-3-small` |
 //! | `ANTHROPIC_API_KEY` | Anthropic API key | — |
 //! | `ANTHROPIC_MODEL` | Anthropic model name | `claude-sonnet-4-20250514` |
-//! | `VERTEX_AI_PROJECT` | GCP project ID | `a2p-common` |
-//! | `VERTEX_AI_LOCATION` | GCP region | `europe-west4` |
+//! | `VERTEX_AI_PROJECT` | GCP project ID | required (or `GOOGLE_CLOUD_PROJECT`) |
+//! | `VERTEX_AI_LOCATION` | GCP region | `europe-west1` (or `GOOGLE_CLOUD_LOCATION`) |
 //! | `VERTEX_AI_TOKEN` | Static GCP auth token | auto-detect |
 //! | `VERTEX_AI_MODEL` | Vertex model name | `mistral-small-2503` |
 //! | `NOETHER_LLM_PROVIDER` | Force: `mistral` \| `openai` \| `anthropic` \| `vertex` \| `mock` | auto |

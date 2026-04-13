@@ -122,9 +122,16 @@ impl VertexAiConfig {
     ///   4. GCE/Cloud Run metadata server (http://metadata.google.internal/...)
     ///   5. `gcloud auth print-access-token` subprocess
     pub fn from_env() -> Result<Self, String> {
-        let project = std::env::var("VERTEX_AI_PROJECT").unwrap_or_else(|_| "a2p-common".into());
-        let location =
-            std::env::var("VERTEX_AI_LOCATION").unwrap_or_else(|_| "europe-west4".into());
+        let project = std::env::var("VERTEX_AI_PROJECT")
+            .or_else(|_| std::env::var("GOOGLE_CLOUD_PROJECT"))
+            .map_err(|_| {
+                "Vertex AI project not configured. Set VERTEX_AI_PROJECT \
+                 (or GOOGLE_CLOUD_PROJECT) to your GCP project ID."
+                    .to_string()
+            })?;
+        let location = std::env::var("VERTEX_AI_LOCATION")
+            .or_else(|_| std::env::var("GOOGLE_CLOUD_LOCATION"))
+            .unwrap_or_else(|_| "europe-west1".into());
 
         let token_source = resolve_token_source()?;
         Ok(Self {
