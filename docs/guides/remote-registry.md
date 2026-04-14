@@ -1,188 +1,150 @@
-# Using a Remote Registry
+# Remote Registry
 
-By default, `noether` stores stages in a local JSON file (`~/.noether/store.json`).
-This is great for development but has two limitations: stages don't survive a machine
-wipe and they can't be shared with other agents or team members.
+A remote registry is a persistent, content-addressed HTTP store that any
+`noether` CLI — or AI agent — can read from and write to. It solves two
+limitations of the default local JSON store: stages don't survive a machine
+wipe, and they can't be shared between developers or CI runners.
 
-A **noether-cloud** registry solves both problems. It is a persistent, content-addressed
-HTTP store that any `noether` CLI (or AI agent) can read from and write to.
+Noether ships with an implementation (`noether-registry`, in the
+`noether-cloud` repo) and a public instance at `registry.alpibru.com`
+you can use out-of-the-box.
 
 ---
 
-## Quick start
+## Using the public registry
 
-### 1. Point the CLI at the registry
+Read access is open — no credentials needed, modeled on Docker Hub / npm /
+crates.io. Authenticated writes are available on request.
 
 ```bash
-export NOETHER_REGISTRY=https://registry.example.com
-export NOETHER_API_KEY=your-key   # required for writes / deletes
+export NOETHER_REGISTRY=https://registry.alpibru.com
+
+noether stage list                       # browse stdlib + curated stages
+noether stage search "parse CSV"         # semantic search
+noether stage get <prefix>               # lookup by 8-char prefix
 ```
 
-That is the only required change. Every `noether` command now uses the remote
-registry as its stage store:
+The CLI merges the remote set with your local store. Custom stages you've
+run `noether stage add` against live in `~/.noether/store.json` and shadow
+remote stages on ID collision.
+
+Check the registry itself:
 
 ```bash
-# List active stages from the registry
-noether stage list
+curl https://registry.alpibru.com/health
+# { "ok": true, "result": { "status": "ok", "store": { "total_stages": 486, ... } } }
 
-# Semantic search against registry stages
-noether stage search "parse JSON and extract a field"
-
-# LLM-compose a graph using registry stages, then execute it
-noether compose "download a URL, parse the JSON body, and extract the 'name' field"
+curl https://registry.alpibru.com/docs
 ```
 
-You can also pass it per-command without setting the env var:
+## Publishing stages
+
+Writes require an API key. Set `NOETHER_API_KEY` and every mutating command
+(`stage add`, `stage sync`, `stage activate`) targets the remote:
 
 ```bash
-noether --registry https://registry.example.com stage list
+export NOETHER_REGISTRY=https://registry.alpibru.com
+export NOETHER_API_KEY=<your-key>
+
+noether stage add my-stage.json          # one spec
+noether stage sync ./stages/             # bulk-import a directory, idempotent
 ```
 
-### 2. Publish a custom stage
+The registry validates the content hash, verifies any Ed25519 signature on
+the spec, and auto-deprecates prior versions sharing the same canonical
+identity (name + types + effects).
 
-Build and sign a stage, then push it to the registry:
+You can also post directly with `curl`:
 
 ```bash
-# Submit a stage spec (ACLI JSON)
-noether stage submit stage.json
-
-# Or use the API directly
-curl -X POST https://registry.example.com/stages \
+curl -X POST https://registry.alpibru.com/stages \
+  -H "X-API-Key: $NOETHER_API_KEY" \
   -H "Content-Type: application/json" \
-  -H "X-API-Key: your-key" \
-  -d @stage.json
+  -d @my-stage.json
 ```
 
-The registry validates the submission:
+## API surface
 
-- SHA-256 content hash must match the declared `id`
-- Ed25519 signature is verified if present (unsigned stages receive a warning)
-- Description must be non-empty
-- Near-duplicate detection against the semantic index
+All routes return ACLI envelopes (`{"ok": true/false, ...}`).
 
-These checks run as a **Noether composition** — the registry validates stages using
-stages (the `verify_stage_content_hash`, `verify_stage_ed25519`,
-`check_stage_description`, `check_stage_examples`, and `merge_validation_checks`
-stdlib stages wired into a `Parallel + Sequential` graph).
+| Method | Path | Auth | Purpose |
+|---|---|---|---|
+| `GET` | `/stages` | public | paginated list (default 50, max 200) |
+| `GET` | `/stages/{id}` | public | single stage by full ID |
+| `GET` | `/stages/search?q=...` | public | semantic search (3-index fusion) |
+| `GET` | `/health` | public | store stats + index size |
+| `GET` | `/docs` | public | HTML API reference |
+| `POST` | `/stages` | write | submit + validate |
+| `DELETE` | `/stages/{id}` | write | remove |
+| `PATCH` | `/stages/{id}/lifecycle` | write | promote, deprecate, tombstone |
+| `POST` | `/compositions/run` | write | execute a graph, returns output + trace |
 
-### 3. Delete a stage
+Pagination: `GET /stages?limit=200&offset=400`.
+
+## Self-hosting
+
+The registry binary is open source. One-shot local run:
 
 ```bash
-curl -X DELETE https://registry.example.com/stages/<stage-id> \
-  -H "X-API-Key: your-key"
+# from the noether-cloud repo
+cargo run --release --bin noether-registry
+# → listening on 0.0.0.0:3000
 ```
 
-Deletion requires the API key. A `404` response (stage already absent) is treated as
-success. The CLI's local cache is also updated when `RemoteStageStore::remove` is called.
+Environment knobs:
 
-### 4. Running noether-cloud locally (Docker Compose)
+| Env | Default | Purpose |
+|---|---|---|
+| `NOETHER_BIND` | `0.0.0.0:3000` | bind address |
+| `DATABASE_URL` | — | if set, uses PostgreSQL; otherwise JSON file |
+| `NOETHER_STORE_PATH` | `.noether/registry.json` | JSON file path |
+| `NOETHER_STAGES_DIR` | — | load every `*.json` spec under this dir at boot |
+| `NOETHER_EMBEDDING_PROVIDER` | auto-detect | `mistral` \| `openai` \| `vertex` \| `mock` |
+| `NOETHER_EMBEDDING_CACHE` | `.noether/embeddings.json` | file-backed embedding cache |
+| `NOETHER_EMBEDDING_BATCH` | `32` | batch size for embedding calls |
+| `NOETHER_EMBEDDING_DELAY_MS` | `1100` | inter-batch sleep (set `100` on paid tiers) |
+| `NOETHER_API_KEY` | — | required for writes; empty string disables auth |
 
-For local development or self-hosting:
+Production deployment: see [`noether-cloud/infra/`](https://github.com/alpibrusl/noether-cloud/tree/main/infra)
+for a reference `docker-compose.prod.yml` + Kubernetes manifests.
 
-```bash
-# From the noether-cloud repo
-cd noether-cloud/infra
-docker compose up -d
+## Scheduled compositions
 
-# Postgres + registry will be at:
-#   postgres://postgres:noether@localhost:5432/noether
-#   http://localhost:8080
-```
+`noether-scheduler` runs Lagrange graphs on cron and fires a webhook with
+the result. Config:
 
-Then:
-
-```bash
-export NOETHER_REGISTRY=http://localhost:8080
-noether stage list   # reads from local registry
-```
-
----
-
-## How the remote store works
-
-```
-noether CLI
-    │
-    ├── startup: paginated GET /stages?lifecycle=active&limit=200&offset=0,200,…
-    │           → populates local MemoryStore cache (handles stores of any size)
-    │
-    ├── reads (stage list/get/search/compose/run)
-    │           → served from in-memory cache (no network latency)
-    │
-    ├── get_live (explicit on-demand fetch)
-    │           → GET /stages/:id → updates local cache
-    │
-    └── writes (stage submit / delete / lifecycle update)
-                → POST /stages, DELETE /stages/:id, or PATCH /stages/:id/lifecycle
-                → also updates local cache
-```
-
-Bulk refresh uses offset-based pagination (`limit=200&offset=N`) so the store
-scales to any number of stages without a single oversized response.
-
-Reads are instant (in-memory cosine similarity, no round-trips).
-Writes go to the remote first, then update the cache — so a successful write
-is immediately visible to subsequent reads in the same session.
-
----
-
-## Using the registry with noether-scheduler
-
-The `noether-scheduler` (in `noether-cloud/scheduler`) can use a remote registry
-instead of a local JSON file. Configure it via the `SchedulerConfig`:
-
-```json
+```json title="scheduler.json"
 {
-  "registry_url": "https://registry.example.com",
-  "registry_api_key": "your-key",
-  "jobs": [...]
+  "store_path": ".noether/registry.json",
+  "jobs": [
+    {
+      "name": "hourly-health",
+      "cron": "0 * * * *",
+      "graph": "graphs/health-check.json",
+      "webhook": "https://hooks.example.com/noether-health"
+    }
+  ]
 }
 ```
 
-If `registry_url` is set, the scheduler builds a `RemoteStageStore` for each job
-run. If only `store_path` is set (or neither), it falls back to `JsonFileStore`.
-
----
-
-## Self-hosting noether-cloud
-
-The registry is a standard Rust/Axum binary. It supports two backends:
-
-| Backend | When to use |
-|---|---|
-| JSON file (`NOETHER_STORE_PATH`) | Single instance, development, <10k stages |
-| PostgreSQL (`DATABASE_URL`) | Production, multiple replicas, >10k stages |
-
 ```bash
-# JSON file backend (default)
-NOETHER_STORE_PATH=./data/registry.json noether-registry
-
-# PostgreSQL backend
-DATABASE_URL=postgres://user:pass@host/dbname noether-registry
+noether-scheduler scheduler.json
 ```
 
-The registry seeds the full stdlib (80+ stages including the validation pipeline)
-on first startup. No migrations need to be run manually — the registry applies
-them automatically on connect.
+## Troubleshooting
 
----
+**`401 invalid or missing X-API-Key`** — either auth is enabled (you need
+`NOETHER_API_KEY`), or your key is wrong. Read routes never return 401.
 
-## Authentication
+**`429 Too Many Requests`** from embedding provider on boot — bump
+`NOETHER_EMBEDDING_DELAY_MS` (1100 ms for free tiers, 100 ms for paid
+Mistral). Progressive caching ensures partial work survives crashes.
 
-Write and delete operations require the `X-API-Key` header when `NOETHER_API_KEY`
-is set on the server. Read operations (`GET /stages`, `GET /stages/:id`, `GET /health`)
-are always unauthenticated.
+**New curated stage added to disk but not showing up** — the registry loads
+`NOETHER_STAGES_DIR` only at boot. Restart the container, or `POST /stages`
+directly. Spec changes without a corresponding `stage sync` will be
+ignored.
 
-Stage *identity* is always enforced cryptographically (SHA-256 + optional Ed25519),
-regardless of authentication.
-
----
-
-## Environment variables reference
-
-| Variable | Description | Default |
-|---|---|---|
-| `NOETHER_REGISTRY` | Remote registry base URL | *(local file store)* |
-| `NOETHER_API_KEY` | API key for write/delete operations | *(none — open)* |
-| `DATABASE_URL` | PostgreSQL connection string (server-side) | *(JSON file store)* |
-| `NOETHER_STORE_PATH` | Path to local JSON store (server-side) | `~/.noether/store.json` |
+**CLI talks to the wrong endpoint** — `NOETHER_REGISTRY` wins over the
+per-command `--registry` flag. Unset the env var when testing a different
+registry.

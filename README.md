@@ -1,331 +1,212 @@
 # Noether
 
-**Verified composition platform for AI agents.**
+**Agent-native verified composition platform.**
 
-Named after Emmy Noether: type signature symmetry guarantees composition correctness.
+Typed, content-addressed stages · structural subtyping · hermetic execution · reproducible pipelines by design.
+
+[![Crates.io](https://img.shields.io/crates/v/noether-cli.svg)](https://crates.io/crates/noether-cli)
+[![Docs](https://img.shields.io/badge/docs-noether.alpibru.com-blue.svg)](https://alpibrusl.github.io/noether/)
+[![Registry](https://img.shields.io/badge/registry-registry.alpibru.com-green.svg)](https://registry.alpibru.com/docs)
+[![License](https://img.shields.io/badge/license-EUPL--1.2-orange.svg)](./LICENSE)
 
 ```bash
-cargo build --release -p noether-cli
-export PATH="$PWD/target/release:$PATH"
+cargo install noether-cli            # binaries also on GitHub Releases
 
-noether compose "parse CSV data and count the number of rows"
+# Point at the public registry — no credentials needed for read access.
+export NOETHER_REGISTRY=https://registry.alpibru.com
+
+noether compose "parse CSV data and count the rows"
 # → { "ok": true, "data": { "output": 3.0 } }
 ```
 
-> **[See the demos →](./demo/index.md)** — type safety, parallel execution, stage reuse, and the full agent flow.
-
 ---
 
-## What is Noether?
+## What it is
 
-Noether is a platform where AI agents decompose problems into **typed, composable stages** and execute them with reproducibility guarantees.
-
-A **stage** is an immutable, content-addressed unit of computation:
+Noether is infrastructure for agents that need to **compose and verify** computation. A **stage** is an immutable, content-addressed unit with a structural type signature:
 
 ```
 stage: { input: T } → { output: U }
 identity: SHA-256(signature)   ← not a name, not a version, a hash
 ```
 
-Two stages with the same hash are provably the same computation — forever, across machines, across repos.
+Two stages with the same hash are provably the same computation — across machines, across repos, forever. The **composition engine** type-checks every edge of a graph before executing it, using structural subtyping (`Record { a, b, c }` is a subtype of `Record { a, b }`).
 
-The **composition engine** type-checks stage graphs before executing them. If `stage_a` outputs `Record { url: Text, score: Number }` and `stage_b` expects `Record { url: Text }`, the checker verifies compatibility using structural subtyping — no runtime surprises.
-
-Noether is **not** a workflow orchestrator, AI agent framework, or pipeline runner. It is infrastructure for agents that need to compose and verify computation.
+Noether is **not** a workflow orchestrator, AI agent framework, or pipeline runner. Agents use Noether; they are not written in it.
 
 ---
 
-## Architecture
+## Install
 
-```
-┌─────────────────────────────────────────────────────────┐
-│  L4 — Agent Interface                                    │
-│  ACLI-compliant CLI · Composition Agent · Semantic Index │
-├─────────────────────────────────────────────────────────┤
-│  L3 — Composition Engine                                 │
-│  Type checker · DAG planner · Executor · Trace store     │
-├─────────────────────────────────────────────────────────┤
-│  L2 — Stage Store                                        │
-│  Immutable SHA-256 registry · Lifecycle · 80+ stdlib     │
-├─────────────────────────────────────────────────────────┤
-│  L1 — Execution Layer                                    │
-│  Nix hermetic sandboxing · Python/JS/Bash runtimes       │
-└─────────────────────────────────────────────────────────┘
-```
-
-### Crate structure
-
-| Crate | Purpose |
+| | |
 |---|---|
-| `noether-core` | Type system (`NType`), effects, stage schema, stdlib (80+ stages), Ed25519 signing |
-| `noether-store` | `StageStore` trait, `MemoryStore`, `JsonFileStore`, lifecycle validation |
-| `noether-engine` | Lagrange graph format, type checker, planner, executor, semantic index, LLM agent |
-| `noether-cli` | ACLI-compliant CLI — `stage`, `store`, `run`, `build`, `compose`, `trace` |
+| **crates.io** | `cargo install noether-cli` |
+| **GitHub Releases** | [Download prebuilt binary](https://github.com/alpibrusl/noether/releases/latest) — Linux / macOS / Windows |
+| **Source** | `cargo build --release -p noether-cli` |
+
+Nix is optional; it's required only to execute Python / JavaScript / Bash stages in a hermetic sandbox. Rust-native stdlib stages run without it.
 
 ---
 
 ## Quickstart
 
-### Prerequisites
-- Rust 1.75+
-- Nix (optional, required for Python/JS stage execution)
-
 ```bash
-git clone https://github.com/alpibrusl/noether
-cd noether
-cargo build --release -p noether-cli
-export PATH="$PWD/target/release:$PATH"
-noether version
-```
+# Browse the hosted registry — 486 curated stages, no auth needed.
+export NOETHER_REGISTRY=https://registry.alpibru.com
 
-### Run a composition
+noether stage list                            # browse
+noether stage search "parse CSV"              # semantic search
+noether stage get <prefix>                    # 8-char prefix OK
 
-```bash
-# List all stdlib stages
-noether stage list
-
-# Search by capability
-noether stage search "format HTML report"
-
-# Dry-run a composition graph (type-check only)
-noether run --dry-run graph.json
-
-# Execute with input
-noether run graph.json --input '{"query": "rust async", "limit": 10}'
-
-# Build a standalone binary
-noether build graph.json --output ./my-app
-
-# Run as HTTP microservice
-./my-app --serve :8080
-```
-
-### LLM-powered composition
-
-```bash
-# Set one LLM provider:
-export VERTEX_AI_PROJECT=your-project VERTEX_AI_MODEL=gemini-2.5-flash
-# or: export OPENAI_API_KEY=sk-...
-# or: export ANTHROPIC_API_KEY=sk-ant-...
-
-noether compose "parse CSV data and count the number of rows"
-noether compose --dry-run "convert text to uppercase and get its length"
-noether compose --verbose "sort a list and take the top 3"  # show reasoning
-```
-
----
-
-## Stage format
-
-Stages are defined as JSON and added to the store:
-
-```json
+# Write a graph that uses them.
+cat > graph.json <<EOF
 {
-  "name": "my_transform",
-  "description": "Transforms a search query into structured results",
-  "input":  { "kind": "Record", "value": { "query": {"kind": "Text"}, "limit": {"kind": "Number"} } },
-  "output": { "kind": "List",   "value": { "kind": "Record", "value": { "title": {"kind": "Text"}, "url": {"kind": "Text"} } } },
-  "language": "python",
-  "examples": [
-    { "input": {"query": "rust async", "limit": 5}, "output": [] }
-  ],
-  "implementation": "def execute(input_value):\n    ..."
-}
-```
-
-```bash
-noether stage add my-stage.json
-# → { "id": "a4f9bc3e..." }   ← SHA-256 of the signature
-```
-
-The ID never changes unless the type signature or implementation changes.
-
----
-
-## Composition graph (Lagrange format)
-
-> **Why "Lagrange"?** The project is named after Emmy Noether, whose theorem
-> connects symmetries to conservation laws via the *Lagrangian* (named after
-> Joseph-Louis Lagrange). A Lagrange graph is what you write down to describe
-> a computation; Noether's type system guarantees its correctness — the same
-> relationship as Lagrangian ↔ conservation law.
-
-```json
-{
-  "description": "Research digest pipeline",
+  "description": "count rows",
   "version": "0.1.0",
   "root": {
     "op": "Sequential",
     "stages": [
-      {
-        "op": "Parallel",
-        "branches": {
-          "results": { "op": "Stage", "id": "a4f9bc3e..." },
-          "topic":   { "op": "Const", "value": "rust async" }
-        }
-      },
-      { "op": "Stage", "id": "b7d2e1a4..." }
+      { "op": "Stage", "id": "<csv-parse-prefix>" },
+      { "op": "Stage", "id": "<list-length-prefix>" }
     ]
   }
 }
+EOF
+
+noether run --dry-run graph.json              # type-check only
+echo '{"csv": "a,b\n1,2\n3,4"}' | noether run graph.json
 ```
 
-**Operators:** `Stage` · `Sequential` · `Parallel` · `Branch` · `Fanout` · `Merge` · `Retry` · `Const`
-
-The type checker validates every edge before execution.
-
----
-
-## Built binaries
-
-`noether build` compiles a composition graph into a self-contained binary with all custom stages bundled:
+For the LLM-powered path, set one provider and let the agent find and wire stages for you:
 
 ```bash
-noether build graph.json --output ./fleet-briefing
-
-# CLI mode
-./fleet-briefing --input '{"fleet_name": "Nordic GmbH", "routes": [...]}'
-
-# HTTP microservice (browser dashboard included)
-./fleet-briefing --serve :8080
-# GET  /        → browser dashboard (auto-populated with example input)
-# POST /        → execute graph, returns HTML or JSON
-# GET  /health  → liveness check
+export MISTRAL_API_KEY=...   # or VERTEX_AI_PROJECT, OPENAI_API_KEY, ANTHROPIC_API_KEY
+noether compose "convert text to uppercase and get its length"
 ```
 
 ---
 
-## Type system
+## Writing a custom stage
 
-Noether uses **structural subtyping** — no class hierarchy, no nominal types:
+Python stages must define a top-level `execute(input)`. The runtime handles stdin / stdout for you — do not read from `sys.stdin` or `print` the result.
 
-```
-NType := Text | Number | Bool | Bytes | Null
-       | List<T>
-       | Record { field: T, ... }    -- width subtyping
-       | Union<T1 | T2 | ...>        -- normalized, deduplicated
-       | Stream<T>
-       | Any                         -- bidirectional escape hatch
-```
-
-`Record { name: Text, score: Number, url: Text }` is a subtype of `Record { name: Text }` — width subtyping means a stage that needs a subset of fields always accepts a richer record.
-
----
-
-## Store & lifecycle
-
-Stages follow a lifecycle: `Draft → Active → Deprecated → Tombstone`
-
-```bash
-noether store stats        # store statistics
-noether store health       # audit: signatures, missing examples, orphans
-noether store dedup        # find near-duplicate stages (cosine similarity)
-noether store dedup --apply  # deprecate confirmed duplicates (with successor pointer)
-noether stage add my-stage.json    # adds AND auto-promotes to Active
-noether stage add my-stage.json --draft   # opt out of auto-activation
-noether stage activate <id>        # only needed for stages added with --draft
-```
-
----
-
-## Semantic search
-
-Every stage is indexed across three vectors (signature, description, examples). Search uses cosine similarity with weighted fusion:
-
-```bash
-noether stage search "convert temperature units"
-noether stage search "parse and validate JSON schema"
-```
-
-The same index powers `noether compose` — the LLM agent receives the top-20 candidates and constructs a composition graph.
-
----
-
-## Persistent state (KV store)
-
-Stages that need to persist state across runs use the built-in KV store (SQLite, `~/.noether/kv.db`):
-
-```python
-def execute(input_value):
-    import sqlite3, pathlib
-    db = sqlite3.connect(str(pathlib.Path.home() / '.noether' / 'kv.db'))
-    db.execute('CREATE TABLE IF NOT EXISTS kv (namespace TEXT, key TEXT, value TEXT, PRIMARY KEY(namespace,key))')
-    # read/write state across invocations
-```
-
-Or via the stdlib stages: `kv_get`, `kv_set`, `kv_delete`, `kv_exists`, `kv_list`.
-
----
-
-## Stdlib (80+ stages)
-
-| Category | Stages |
-|---|---|
-| Scalar | `parse_number`, `parse_bool`, `to_string`, `parse_json`, `to_json` |
-| Collections | `list_map`, `list_filter`, `list_reduce`, `list_sort`, `list_take`, `list_flatten`, `zip`, `group_by` |
-| Control | `identity`, `const`, `branch_if`, `retry`, `validate_schema`, `coerce_type` |
-| I/O | `http_get`, `http_post`, `read_file`, `write_file`, `kv_get`, `kv_set`, `kv_delete`, `kv_exists` |
-| LLM | `llm_complete`, `llm_classify`, `llm_extract`, `llm_embed` |
-| Data | `json_merge`, `json_path`, `csv_parse`, `csv_format`, `json_schema_validate`, `diff_objects`, `template_render` |
-| Text | `regex_match`, `regex_replace`, `text_split`, `text_join`, `text_trim`, `text_contains` |
-| Noether | `stage_get`, `stage_search`, `compose_graph`, `kv_list`, `list_length`, `format_trace` |
-
----
-
-## Relationship with AI agents
-
-Noether is designed to be called **by** agents, not to contain them:
-
-```bash
-# An AI agent calls Noether to execute a sub-problem
-noether compose "extract key entities from these documents" --input '...'
-
-# The agent receives structured ACLI output and continues
+```json
 {
-  "ok": true,
-  "command": "noether",
-  "data": { "output": [...] },
-  "meta": { "version": "0.1.0" }
+  "name": "celsius_to_fahrenheit",
+  "description": "Convert a Celsius temperature to Fahrenheit",
+  "input":  { "Record": [["celsius", "Number"]] },
+  "output": { "Record": [["fahrenheit", "Number"]] },
+  "effects": ["Pure"],
+  "language": "python",
+  "implementation": "def execute(input):\n    return {'fahrenheit': input['celsius'] * 9 / 5 + 32}",
+  "examples": [
+    { "input": {"celsius": 0},   "output": {"fahrenheit": 32} },
+    { "input": {"celsius": 100}, "output": {"fahrenheit": 212} }
+  ]
 }
 ```
 
-**Token efficiency:** the composition graph travels as compact JSON (not prompt text). Only the final LLM stages consume tokens. Benchmarks show 60-80% token reduction vs. naïve chaining.
+```bash
+noether stage add my-stage.json             # adds + auto-activates
+noether stage add my-stage.json --draft     # opt out of activation
+noether stage sync ./stages/                # bulk-import a directory
+```
+
+`stage add` validates the `def execute` contract and auto-deprecates any previous version with the same canonical identity (name + types + effects). Full details: **[Building Custom Stages →](./docs/guides/custom-stages.md)**
 
 ---
 
-## Roadmap
+## Composition graph (Lagrange)
 
-| Phase | Status |
+> **Why "Lagrange"?** Noether's theorem connects symmetries to conservation laws via the *Lagrangian*. A Lagrange graph describes a computation; Noether's type system guarantees its correctness — the same relationship as Lagrangian ↔ conservation law.
+
+Nine operators: `Stage` · `Sequential` · `Parallel` · `Branch` · `Fanout` · `Merge` · `Retry` · `Const` · `Let`.
+
+```json
+{
+  "op": "Let",
+  "bindings": {
+    "scan": { "op": "Stage", "id": "scan-prefix" },
+    "hash": { "op": "Sequential", "stages": [
+      { "op": "Stage", "id": "scan-prefix" },
+      { "op": "Stage", "id": "hash-prefix" }
+    ]}
+  },
+  "body": { "op": "Stage", "id": "diff-prefix" }
+}
+```
+
+`Let` solves the canonical scan → hash → diff problem: `diff` needs `state_path` from the original input, which `hash` would otherwise erase. Bindings run concurrently; `body` receives `{...outer fields, binding-name: binding-output}`.
+
+Full operator reference: **[Composition Graphs →](./docs/guides/composition-graphs.md)**
+
+---
+
+## What's new in v0.2
+
+- **`Let` operator** — carry original-input fields through `Sequential` pipelines.
+- **`def execute(input)` validated** at `stage add` — clear error instead of cryptic runtime failure.
+- **Stage ID prefix resolution in graphs** — the 8-char IDs `stage list` prints work everywhere.
+- **Hosted registry** at `registry.alpibru.com` — public read, authed write (Docker Hub model).
+- **`stage sync <dir>`** for bulk import.
+- **`stage list --signed-by | --lifecycle | --full-ids`**.
+- **stdin piping** to `noether run` now works.
+
+Details: **[CHANGELOG →](./docs/changelog.md)**
+
+---
+
+## The hosted registry
+
+`registry.alpibru.com` hosts the Noether stdlib plus ~400 curated community stages. Read access is open; writes require an API key.
+
+```bash
+curl https://registry.alpibru.com/health
+curl "https://registry.alpibru.com/stages/search?q=validate+schema"
+
+# Point the CLI at it — merges with your local store, local wins on collision.
+export NOETHER_REGISTRY=https://registry.alpibru.com
+```
+
+Guide: **[Remote Registry →](./docs/guides/remote-registry.md)** — publishing, scheduling, self-hosting.
+
+---
+
+## Architecture (short form)
+
+```
+L4 — Agent Interface      ACLI CLI · Composition Agent · Semantic Index
+L3 — Composition Engine   Type checker · Planner · Executor · Traces
+L2 — Stage Store          Content-addressed registry · Lifecycle · Stdlib
+L1 — Execution Layer      Nix hermetic sandbox · Python/JS/Bash runtimes
+```
+
+| Crate | Purpose |
 |---|---|
-| 0 — Foundation (type system, hashing, stage schema) | ✅ Done |
-| 1 — Store + Stdlib (80+ stages, test harness) | ✅ Done |
-| 2 — Composition Engine (DAG executor, traces) | ✅ Done |
-| 3 — Agent Interface (Composition Agent, semantic index) | ✅ Done |
-| 4 — Hardening (signatures, dedup, store health) | ✅ Done |
-| 5 — Effects v2 (inference & enforcement, `--allow-effects`) | ✅ Done |
-| 6 — NixExecutor hardening (timeout, error classification, warmup) | ✅ Done |
-| 7 — Cloud Registry hardening (DELETE, paginated refresh, scheduler) | ✅ Done |
-| 8 — Runtime budget enforcement (`--budget-cents`, `BudgetedExecutor`) | ✅ Done |
+| `noether-core` | Type system, effects, stage schema, Ed25519 signing, stdlib |
+| `noether-store` | `StageStore` trait + in-memory / JSON-file implementations |
+| `noether-engine` | Lagrange AST, type checker, planner, executor, semantic index, LLM agent |
+| `noether-cli` | ACLI-compliant CLI — `stage`, `store`, `run`, `build`, `compose`, `trace` |
 
-See [roadmap.md](./docs/roadmap.md) for near-term improvements and future directions.
+Full walk-through: **[Architecture Overview →](./docs/architecture/overview.md)**
 
 ---
 
-## Contributing
+## Relationship with agents
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md).
+Noether is designed to be called *by* agents, not to contain them. The composition graph travels as compact JSON — only the final LLM stages consume tokens. In our benchmarks this is a 60–80% token reduction vs. naïve LLM chaining.
 
-Areas where contributions are especially welcome:
-- New stdlib stages (any domain)
-- Language runtimes beyond Python (JS, Ruby, Go)
-- LLM provider integrations (OpenAI, Anthropic, Mistral, Vertex AI supported; Ollama via OpenAI-compatible API)
-- Type system extensions (generic types, row polymorphism)
+```bash
+# An agent calls Noether and gets structured ACLI output.
+noether compose "extract entities from these documents" --input '...'
+# { "ok": true, "command": "compose", "data": {...}, "meta": {"version": "0.2.1"} }
+```
 
 ---
 
-## License
+## Docs · Contributing · License
 
-European Union Public Licence v1.2 (EUPL-1.2) — see [LICENSE](./LICENSE).
-
-The EUPL is a copyleft licence compatible with GPL, LGPL, AGPL, MPL, EUPL, and others.
-It was designed specifically for public sector and open-source software within the EU.
+- **Docs**: <https://alpibrusl.github.io/noether/>
+- **Issues & PRs**: [github.com/alpibrusl/noether](https://github.com/alpibrusl/noether)
+- **Contributing**: [CONTRIBUTING.md](./CONTRIBUTING.md) — stdlib stages, language runtimes, LLM providers, type-system extensions all welcome
+- **License**: [EUPL-1.2](./LICENSE) (copyleft, GPL/LGPL/AGPL/MPL compatible)

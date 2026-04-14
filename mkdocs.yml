@@ -66,43 +66,37 @@ markdown_extensions:
 
 nav:
   - Home: index.md
-  - Demo: demo.md
-  - "Tutorial: citecheck as stages": tutorial/index.md
-  - Getting Started:
-    - Installation: getting-started/installation.md
-    - Quickstart: getting-started/quickstart.md
-    - First Composition: getting-started/first-composition.md
-  - Architecture:
-    - Overview: architecture/overview.md
-    - Type System: architecture/type-system.md
-    - Stage Identity: architecture/stage-identity.md
-    - Composition Engine: architecture/composition-engine.md
-    - Nix Execution: architecture/nix-execution.md
-  - CLI Reference:
-    - Commands: cli/commands.md
-    - Output Format (ACLI): cli/acli.md
-  - Stdlib:
-    - Overview: stdlib/overview.md
-    - Stage Catalogue: stdlib/catalogue.md
-  - Examples:
-    - Overview: examples/index.md
+  - Getting Started: getting-started/index.md
   - Guides:
     - Building Custom Stages: guides/custom-stages.md
     - Composition Graphs: guides/composition-graphs.md
     - LLM-Powered Compose: guides/llm-compose.md
     - Semantic Search: guides/semantic-search.md
-    - Remote Registry (noether-cloud): guides/remote-registry.md
-    - Stage Store Build: guides/stage-store-build.md
-  - Case Studies:
-    - Four Search Engines: case-studies/search-engines.md
+    - Remote Registry: guides/remote-registry.md
+  - Concepts:
+    - Architecture Overview: architecture/overview.md
+    - Type System: architecture/type-system.md
+    - Stage Identity: architecture/stage-identity.md
+    - Composition Engine: architecture/composition-engine.md
+    - Nix Execution: architecture/nix-execution.md
+  - Reference:
+    - CLI Commands: cli/commands.md
+    - ACLI Output Format: cli/acli.md
+    - Stdlib Catalogue: stdlib/catalogue.md
+  - Tutorial: tutorial/index.md
+  - Examples:
+    - Demo Gallery: demo.md
+    - Example Index: examples/index.md
+    - Case Study — Four Search Engines: case-studies/search-engines.md
     - Benchmark: case-studies/benchmark.md
-  - Roadmap: roadmap.md
-  - Research:
-    - NoetherReact: research/noether-react.md
-    - WASM Target: research/wasm-target.md
-    - Cloud Registry: research/cloud-registry.md
-  - Contributing: contributing.md
-  - Changelog: changelog.md
+  - Project:
+    - Roadmap: roadmap.md
+    - Changelog: changelog.md
+    - Contributing: contributing.md
+    - Research Notes:
+      - NoetherReact: research/noether-react.md
+      - WASM Target: research/wasm-target.md
+      - Cloud Registry: research/cloud-registry.md
 
 extra:
   social:

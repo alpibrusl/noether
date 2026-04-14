@@ -1,46 +1,68 @@
 # Noether
 
-**Verified composition platform for AI agents.**
+**Agent-native verified composition platform.**
 
-Content-addressed stages · Structural typing · Nix execution · LLM-powered compose
+Typed, content-addressed stages · structural subtyping · hermetic execution · reproducible pipelines by design.
+
+```bash
+cargo install noether-cli
+export NOETHER_REGISTRY=https://registry.alpibru.com
+
+noether compose "parse CSV data and count the rows"
+# → { "ok": true, "data": { "output": 3.0 } }
+```
+
+[Get started →](getting-started/index.md){ .md-button .md-button--primary }
+[Browse the registry →](https://registry.alpibru.com/docs){ .md-button }
 
 ---
 
 <div class="grid cards" markdown>
 
--   :material-lightning-bolt: **Fast to compose**
+-   :material-lightning-bolt: **Compose, don't synthesise**
 
-    From a plain-English problem description to a type-checked, executable graph in seconds.
+    From a plain-English problem to a type-checked executable graph in
+    seconds. The LLM picks stages; the type checker guarantees they fit.
 
-    [:octicons-arrow-right-24: Try `noether compose`](getting-started/quickstart.md)
+    [→ `noether compose`](guides/llm-compose.md)
 
--   :material-lock: **Reproducible by design**
+-   :material-lock: **Reproducible by construction**
 
-    Every stage has a SHA-256 content hash. The same hash always runs the same code.
+    Every stage has a SHA-256 content hash. Same hash, same computation,
+    on any machine, forever.
 
-    [:octicons-arrow-right-24: Stage identity](architecture/stage-identity.md)
+    [→ Stage identity](architecture/stage-identity.md)
 
 -   :material-graph: **Structural typing**
 
-    `Record { a, b, c }` is a subtype of `Record { a, b }`. Composition correctness is a theorem, not a test.
+    `Record { a, b, c }` is a subtype of `Record { a, b }`. Composition
+    correctness is a theorem, not a test.
 
-    [:octicons-arrow-right-24: Type system](architecture/type-system.md)
+    [→ Type system](architecture/type-system.md)
 
 -   :material-magnify: **Semantic search**
 
-    Agents discover stages by meaning, not by name. Three-index fusion across signature, description, and examples.
+    Agents discover stages by meaning, not by name. Three-index fusion
+    across signature, description, examples.
 
-    [:octicons-arrow-right-24: Semantic search guide](guides/semantic-search.md)
+    [→ Semantic search](guides/semantic-search.md)
 
 </div>
 
 ---
 
-## What Noether is
+## What it is
 
-Noether is a **composition store** for AI agents. Instead of synthesising code from scratch every session, agents decompose problems into typed, composable **stages** — small units of computation with permanent content-addressed identities — and execute them with reproducibility guarantees.
+A **stage** is an immutable, content-addressed unit of computation:
 
-Named after Emmy Noether's theorem: symmetry implies conservation. In Noether, type signature symmetry *guarantees* composition correctness.
+```
+stage: { input: T } → { output: U }
+identity: SHA-256(signature)   ← not a name, not a version, a hash
+```
+
+Two stages with the same hash are provably the same computation — across
+machines, across repos, forever. The **composition engine** type-checks
+every edge of a graph before executing it, using structural subtyping.
 
 ```bash
 # Ask the LLM to compose a solution, type-check it, and run it
@@ -61,16 +83,15 @@ noether compose "find the top 10 trending Rust crates this week"
 }
 ```
 
-## What Noether is NOT
+## What it is not
 
 | Noether is | Noether is not |
 |---|---|
-| A stage composition store | A workflow orchestrator (Airflow, Prefect) |
-| A type-checked executor | An AI agent framework (LangChain, AutoGen) |
+| A typed stage composition store | A workflow orchestrator (Airflow, Prefect) |
 | A content-addressed registry | A package manager (npm, pip, cargo) |
-| An ACLI-compliant tool | A frontend framework |
+| An ACLI-compliant tool called *by* agents | An AI agent framework (LangChain, AutoGen) |
 
-## Architecture at a glance
+## Architecture
 
 ```mermaid
 graph TD
@@ -78,32 +99,26 @@ graph TD
     B --> C[Composition Agent]
     B --> D[Composition Engine]
     C -->|semantic search| E[Stage Index]
-    C -->|LLM call| F[Gemini / Claude]
+    C -->|LLM call| F[LLM provider]
     D -->|type check| G[Type Checker]
     D -->|execute| H[Nix Executor]
     E --> I[(Stage Store)]
     H --> I
 ```
 
-## Status
+Four layers — agent interface, composition engine, stage store, execution.
+Details: **[Architecture overview →](architecture/overview.md)**
 
-| Phase | Focus | Status |
-|---|---|---|
-| 0 | Foundation — type system, hashing, stage schema | ✅ Done |
-| 1 | Store + Stdlib — 76 stdlib stages | ✅ Done |
-| 2 | Composition Engine — DAG executor, trace output | ✅ Done |
-| 3 | Agent Interface — Composition Agent, semantic index | ✅ Done |
-| 4 | Hardening — signatures, deduplication, store health | ✅ Done |
-| 5 | Effects v2 — effect inference & enforcement | ✅ Done |
-| 6 | NixExecutor hardening — timeout, error classification, warmup | ✅ Done |
-| 7 | Cloud Registry hardening — DELETE, paginated refresh, scheduler | ✅ Done |
-| 8 | Runtime budget enforcement — `--budget-cents`, `BudgetedExecutor` | ✅ Done |
+## What's new in v0.2
 
-## Quick install
+- **`Let` operator** — carry original-input fields through `Sequential`
+  pipelines (solves the canonical scan → hash → diff pattern).
+- **`def execute(input)` validated** at `stage add` — no more cryptic
+  `NoneType` errors at run time.
+- **Stage ID prefix resolution in graphs** — 8-char IDs work everywhere.
+- **Hosted public registry** at `registry.alpibru.com` — stdlib + ~400
+  curated stages, anonymous read.
+- **`stage sync <dir>`** for bulk import · **`stage list --signed-by`** /
+  `--lifecycle` / `--full-ids` filters · **stdin piping** to `noether run`.
 
-```bash
-cargo install noether-cli
-noether version
-```
-
-[:octicons-arrow-right-24: Full installation guide](getting-started/installation.md)
+Full list: **[Changelog →](changelog.md)**.
