@@ -73,6 +73,7 @@ nav:
     - LLM-Powered Compose: guides/llm-compose.md
     - Semantic Search: guides/semantic-search.md
     - Remote Registry: guides/remote-registry.md
+    - Scheduler: guides/scheduler.md
   - Concepts:
     - Architecture Overview: architecture/overview.md
     - Type System: architecture/type-system.md
