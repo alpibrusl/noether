@@ -86,10 +86,21 @@ pub fn build_llm_provider() -> (Box<dyn LlmProvider>, &'static str) {
                 return (Box::new(MockLlmProvider::new("{}")), "mock");
             }
         },
+        "claude-cli" => {
+            // Explicit opt-in: shell out to the local `claude` binary.
+            // No API key required — the CLI carries the seat's auth.
+            let provider = crate::llm::claude_cli::ClaudeCliProvider::new();
+            if provider.available() {
+                return (Box::new(provider), "claude-cli");
+            }
+            eprintln!(
+                "Warning: NOETHER_LLM_PROVIDER=claude-cli but `claude` binary not found on PATH."
+            );
+        }
         _ => {} // auto-detect below
     }
 
-    // Auto-detect: Mistral native → OpenAI → Anthropic → Vertex → mock.
+    // Auto-detect: Mistral native → OpenAI → Anthropic → Vertex → Claude CLI → mock.
     if let Ok(p) = build_mistral_native_llm() {
         return (p, "mistral-native");
     }
@@ -101,6 +112,15 @@ pub fn build_llm_provider() -> (Box<dyn LlmProvider>, &'static str) {
     }
     if let Ok((p, name)) = build_vertex_or_mistral_llm() {
         return (p, name);
+    }
+    // Claude CLI probe last — we only want to use the ambient seat
+    // when no API key beats it to the draw. This matches the user
+    // expectation that an explicit key wins over an implicit login.
+    {
+        let provider = crate::llm::claude_cli::ClaudeCliProvider::new();
+        if provider.available() {
+            return (Box::new(provider), "claude-cli");
+        }
     }
     eprintln!("Warning: No LLM provider configured. Using mock.");
     eprintln!("  Set MISTRAL_API_KEY for the native Mistral API (recommended),");

@@ -210,12 +210,87 @@ fn discover_capabilities() -> Vec<LlmCapability> {
         });
     }
 
+    // CLI-based seats — probed, not env-gated. Each probe is a light
+    // subprocess + filesystem check; a missing tool isn't an error, it
+    // just means no capability for that provider.
+    caps.extend(probe_claude_cli());
+
     if caps.is_empty() {
         tracing::warn!(
-            "no LLM credentials detected in env — worker will advertise zero capabilities"
+            "no LLM credentials detected in env or on PATH — worker will advertise zero capabilities"
         );
     }
     caps
+}
+
+/// Detect a logged-in Claude Desktop / Claude CLI installation on the
+/// host and advertise it as a pooled capability.
+///
+/// What we check, in order:
+///
+/// 1. **Binary on PATH.** `claude --version` exits 0. Fast, cheap; if
+///    no binary, we bail without touching the filesystem.
+/// 2. **Auth state on disk.** `~/.config/anthropic/` (Linux/Wayland),
+///    `~/.claude/` (older layout), or `~/Library/Application Support/`
+///    entries (macOS). Presence of any non-trivial file = probably
+///    logged in. This is a heuristic, not an auth verification — if
+///    the token is expired we'll find out at dispatch time.
+///
+/// Returns at most one capability; Claude Desktop / Claude CLI surface
+/// a single seat per machine.
+fn probe_claude_cli() -> Vec<LlmCapability> {
+    // Gate 1: binary on PATH. Using `which` via `Command` instead of
+    // `env::split_paths` — fewer moving parts, and `which` is POSIX.
+    let has_binary = std::process::Command::new("claude")
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !has_binary {
+        return Vec::new();
+    }
+
+    // Gate 2: auth-state heuristic. We check a handful of plausible
+    // config paths. Any one existing with non-empty content counts.
+    let home = std::env::var("HOME").unwrap_or_default();
+    let candidates = [
+        format!("{home}/.config/anthropic"),
+        format!("{home}/.claude"),
+        format!("{home}/Library/Application Support/Claude"),
+    ];
+    let looks_authed = candidates
+        .iter()
+        .any(|p| std::fs::metadata(p).map(|m| m.is_dir()).unwrap_or(false));
+    if !looks_authed {
+        tracing::info!(
+            "claude binary found but no auth config directory — skipping Claude CLI advertisement"
+        );
+        return Vec::new();
+    }
+
+    // Budget declaration: Claude Pro / Team plans don't expose a
+    // remaining-quota endpoint for individual users, so we ask the
+    // operator to declare it. Default is $20 — typical Claude Pro
+    // monthly — but most real deployments should set this from
+    // NOETHER_GRID_CLAUDE_CLI_BUDGET_CENTS based on the seat's actual
+    // plan.
+    let budget = parse_budget("NOETHER_GRID_CLAUDE_CLI_BUDGET_CENTS");
+    let budget = if budget == 0 { 2000 } else { budget };
+
+    tracing::info!(
+        "advertising Claude CLI capability (model claude-desktop, budget ${})",
+        budget / 100
+    );
+    vec![LlmCapability {
+        provider: "anthropic-cli".into(),
+        model: "claude-desktop".into(),
+        auth_via: AuthVia::Cli,
+        budget_monthly_cents: budget,
+        budget_remaining_cents: budget,
+        rate_limit_rpm: None,
+    }]
 }
 
 fn parse_budget(var: &str) -> u64 {

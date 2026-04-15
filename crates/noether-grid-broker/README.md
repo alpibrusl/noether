@@ -51,6 +51,154 @@ Most companies have two LLM problems at once:
 
 ---
 
+## Deploying across your company — roles and minimum install
+
+The grid has three roles. Each role runs exactly one binary and needs
+only the things listed below — nothing else.
+
+```
+          ┌─────────────────────────────────────────────────┐
+          │ Broker node                                      │
+          │ one per company, reachable from every worker     │
+          │                                                  │
+          │ binary:   noether-grid-broker  (~15 MB, Rust)    │
+          │ deps:     none at runtime                        │
+          │ inbound:  :8088  from workers + agent submitters │
+          │ outbound: none  (workers call back with results) │
+          │ state:    in-memory (default) / postgres (opt)   │
+          │ host:     any always-on Linux/macOS box          │
+          └─────────────────────────────────────────────────┘
+
+          ┌─────────────────────────────────────────────────┐
+          │ Worker node                                      │
+          │ one per machine whose LLM seat you want pooled   │
+          │                                                  │
+          │ binary:   noether-grid-worker  (~15 MB, Rust)    │
+          │ deps:     whatever LLM tooling already lives on  │
+          │           the machine (Claude CLI, API key in    │
+          │           env, Cursor install, etc.)             │
+          │ inbound:  :8089  from broker only                │
+          │ outbound: to the broker + to LLM providers       │
+          │ state:    none (stateless subprocess wrapper)    │
+          │ host:     any machine with an LLM login —        │
+          │           dev laptop, shared GPU box, CI runner  │
+          └─────────────────────────────────────────────────┘
+
+          ┌─────────────────────────────────────────────────┐
+          │ Agent submitter                                  │
+          │ anywhere an agent calls noether                  │
+          │                                                  │
+          │ binary:   noether CLI  or  noether-scheduler     │
+          │ deps:     none                                   │
+          │ config:   NOETHER_GRID_BROKER=http://... or      │
+          │           `grid_broker:` in scheduler.json       │
+          └─────────────────────────────────────────────────┘
+```
+
+### Broker node — one per company
+
+Whoever your "DevOps" is (even if that's you on a free-tier VM) runs one
+broker, typically on a stable server reachable from every worker.
+
+```bash
+# On the broker host
+cargo install --git https://github.com/alpibrusl/noether \
+    --branch research/grid noether-grid-broker
+# → installed at ~/.cargo/bin/noether-grid-broker
+
+# Optional config in /etc/noether/grid-broker.env:
+#   NOETHER_GRID_BIND=0.0.0.0:8088
+#   NOETHER_GRID_SECRET=<random secret shared with workers>
+#   NOETHER_GRID_QUOTAS_FILE=/etc/noether/quotas.json
+#   NOETHER_STORE_PATH=/var/lib/noether/store.json
+
+# Run as a systemd service (unit file in infra/)
+sudo cp infra/noether-grid-broker.service /etc/systemd/system/
+sudo systemctl enable --now noether-grid-broker
+```
+
+Networking: open `:8088` on the broker host to the subnet that contains
+workers and agent submitters. Nothing else.
+
+### Worker node — one per machine with an LLM seat
+
+The worker is installed on any machine whose LLM credentials you want in
+the pool. Two flavours, depending on where the auth lives:
+
+**Headless worker (server with API keys in env):**
+
+```bash
+cargo install --git https://github.com/alpibrusl/noether \
+    --branch research/grid noether-grid-worker
+
+# /etc/noether/grid-worker.env — API keys + declared monthly caps:
+#   NOETHER_GRID_BROKER=http://broker.corp:8088
+#   NOETHER_GRID_SECRET=<same secret as broker>
+#   ANTHROPIC_API_KEY=sk-ant-...
+#   NOETHER_GRID_ANTHROPIC_BUDGET_CENTS=20000
+#   OPENAI_API_KEY=sk-...
+#   NOETHER_GRID_OPENAI_BUDGET_CENTS=10000
+
+sudo cp infra/noether-grid-worker.service /etc/systemd/system/
+sudo systemctl enable --now noether-grid-worker
+```
+
+Networking: worker needs outbound to the broker and to the LLM providers;
+inbound on `:8089` from the broker. Typically no inbound from anywhere
+else — the dispatch flow is broker → worker, not client → worker.
+
+**Developer laptop worker (CLI auth — Claude Desktop, Cursor, Copilot):**
+
+Phase-5-in-progress. Currently the worker still requires env-var API keys
+for any seat it advertises; CLI-based subscriptions (`~/.config/anthropic`,
+`~/.cursor`, `~/.config/gh/copilot`) are detected manually by setting
+the relevant env vars yourself. Auto-discovery of logged-in CLIs is the
+next item on the branch backlog — see `docs/research/grid.md`.
+
+Until that lands, on a developer laptop you'd typically point the worker
+at whatever ambient API key the user has:
+
+```bash
+# Add to ~/.profile or ~/.zshrc
+export NOETHER_GRID_BROKER=http://broker.corp:8088
+export NOETHER_GRID_ANTHROPIC_BUDGET_CENTS=20000
+# ANTHROPIC_API_KEY already set from your normal noether usage
+
+# Run in the background (or as a user-level systemd service):
+nohup noether-grid-worker &
+```
+
+### Agent submitter — anywhere an agent runs
+
+Whatever was running `noether run` / `noether compose` / `noether-scheduler`
+against a local store continues to work. To route through the broker,
+one env var (or one scheduler config line) flips the behaviour:
+
+```bash
+# One-off graph
+NOETHER_GRID_BROKER=http://broker.corp:8088 noether run graph.json
+
+# Scheduled graphs — edit scheduler.json:
+{
+  "store_path": ".noether/store.json",
+  "grid_broker": "http://broker.corp:8088",
+  "jobs": [ ... ]
+}
+```
+
+No changes to graphs. No changes to stage specs. Nothing else in the
+agent's setup differs between "local mode" and "grid mode".
+
+### Sizing — how many of each role
+
+| Role | Count | Notes |
+|---|---|---|
+| Broker | **1** per company | Multi-instance with leader election is phase-4 deferred; one is plenty for a pilot. |
+| Worker | **1 per LLM-seat-holder** | Each developer laptop, shared GPU host, build bot, CI runner with an LLM key. Deploy gradually — 2 workers is enough to test; pool grows as you enrol more. |
+| Agent submitter | **unbounded** | Every existing `noether`/`noether-scheduler` invocation becomes a submitter by setting the env var. No enrolment, no heartbeat, no lifecycle — stateless clients of the broker. |
+
+---
+
 ## Five-minute install (LAN, single-host demo)
 
 ```bash
