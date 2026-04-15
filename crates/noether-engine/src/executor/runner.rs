@@ -404,7 +404,21 @@ fn execute_remote_stage(url: &str, input: &Value) -> Result<Value, ExecutionErro
             reason: format!("invalid JSON response: {e}"),
         })?;
 
-        // Extract output from ACLI envelope: {"data": {"output": ...}}
+        // ACLI envelope: {"ok": true, "data": {"output": ...}} on success,
+        // {"ok": false, "error": "..."} on failure. Check `ok` first so a
+        // worker-side error (e.g. stage not found) surfaces verbatim
+        // instead of being masked as "missing data.output".
+        if resp_json.get("ok") == Some(&Value::Bool(false)) {
+            let reason = resp_json
+                .get("error")
+                .and_then(|e| e.as_str())
+                .unwrap_or("remote reported ok=false without error message")
+                .to_string();
+            return Err(ExecutionError::RemoteCallFailed {
+                url: url.to_string(),
+                reason,
+            });
+        }
         resp_json
             .get("data")
             .and_then(|d| d.get("output"))

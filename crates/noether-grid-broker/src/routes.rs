@@ -331,6 +331,7 @@ async fn dispatch(
                         format!("no remaining capacity after {} attempts: {refusal}", n - 1)
                     }
                 };
+                state.metrics.jobs_failed_total.inc();
                 set_job_status(&state, &job_id, JobStatus::Failed, None, Some(msg)).await;
                 return;
             }

@@ -39,12 +39,10 @@ struct Cli {
     #[arg(long, default_value = "10")]
     heartbeat_secs: u64,
     /// Path to the local noether store (for stage resolution).
-    #[arg(
-        long,
-        env = "NOETHER_STORE_PATH",
-        default_value = ".noether/store.json"
-    )]
-    store_path: String,
+    /// Defaults to `$HOME/.noether/store.json` — must match what the
+    /// broker loads, or dispatched stages will come back "not found".
+    #[arg(long, env = "NOETHER_STORE_PATH")]
+    store_path: Option<String>,
 }
 
 struct WorkerState {
@@ -84,7 +82,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cli.broker
     );
 
-    let store = JsonFileStore::open(&cli.store_path)?;
+    let resolved_store_path = cli.store_path.clone().unwrap_or_else(|| {
+        let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+        format!("{home}/.noether/store.json")
+    });
+    let store = JsonFileStore::open(&resolved_store_path)?;
+    let stages_indexed = store.list(None).len();
+    tracing::info!("store loaded from {resolved_store_path}: {stages_indexed} stage(s) indexed");
+    if stages_indexed < 20 {
+        tracing::warn!(
+            "worker store at {resolved_store_path} looks small ({stages_indexed} stages) — \
+             dispatched user stages may come back 'not found'. Match the broker's --store-path."
+        );
+    }
     let state = Arc::new(WorkerState {
         store,
         in_flight: AtomicU32::new(0),
