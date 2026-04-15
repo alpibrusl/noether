@@ -237,27 +237,27 @@ pub fn pick_worker_for(
             Effect::Llm { model } => Some(model.clone()),
             _ => None,
         });
-        let needed = match &model_needed {
-            Some(m) => m,
-            // Should not happen — the splitter only calls us for
-            // Llm-effect stages — but be defensive.
-            None => return Err(RoutingRefusal::AllBusy),
+        let needed = model_needed.as_deref().unwrap_or("");
+        // Stages declaring a bare-string `"llm"` effect parse as
+        // `Llm { model: "unknown" }`. Treat that (and empty) as "any
+        // worker with any Llm capability" rather than requiring an
+        // exact-model match — otherwise the happy-path pilot with
+        // caloron's effect style routes zero stages.
+        let any_llm = needed.is_empty() || needed == "unknown";
+
+        let model_match = |c: &noether_grid_protocol::LlmCapability| -> bool {
+            c.budget_remaining_cents > 0 && (any_llm || c.model == needed)
         };
 
         let candidate = workers
             .iter()
             .filter(|w| w.is_healthy(now))
-            .filter(|w| {
-                w.advertisement
-                    .capabilities
-                    .iter()
-                    .any(|c| c.model == *needed && c.budget_remaining_cents > 0)
-            })
+            .filter(|w| w.advertisement.capabilities.iter().any(model_match))
             .max_by_key(|w| {
                 w.advertisement
                     .capabilities
                     .iter()
-                    .filter(|c| c.model == *needed)
+                    .filter(|c| model_match(c))
                     .map(|c| c.budget_remaining_cents)
                     .sum::<u64>()
             });
@@ -268,7 +268,7 @@ pub fn pick_worker_for(
                 w.advertisement.url.clone(),
             )),
             None => Err(RoutingRefusal::NoCapabilityMatch {
-                needed: vec![needed.clone()],
+                needed: vec![needed.to_string()],
             }),
         }
     }
@@ -405,6 +405,38 @@ mod tests {
         })
         .unwrap();
         assert_eq!(out.rewritten, node);
+    }
+
+    #[test]
+    fn unknown_model_routes_to_any_llm_worker() {
+        use noether_grid_protocol::{AuthVia, LlmCapability, WorkerAdvertisement};
+        let store = store_with(vec![make_stage("bare_llm", Some("unknown"))]);
+        let node = CompositionNode::Stage {
+            id: StageId("bare_llm".into()),
+            config: None,
+        };
+        let worker = crate::state::WorkerEntry {
+            advertisement: WorkerAdvertisement {
+                worker_id: WorkerId("alice".into()),
+                url: "http://alice.corp:8089".into(),
+                capabilities: vec![LlmCapability {
+                    provider: "anthropic".into(),
+                    model: "claude-opus".into(),
+                    auth_via: AuthVia::Cli,
+                    budget_monthly_cents: 2000,
+                    budget_remaining_cents: 2000,
+                    rate_limit_rpm: None,
+                }],
+                noether_version: "0.3.2".into(),
+                heartbeat_interval_secs: 10,
+            },
+            last_seen: chrono::Utc::now(),
+            in_flight_jobs: 0,
+            draining: false,
+        };
+        let workers = vec![worker];
+        let out = split_graph(&node, &store, pick_worker_for(&workers)).unwrap();
+        assert_eq!(out.assigned_workers, vec![WorkerId("alice".into())]);
     }
 
     #[test]

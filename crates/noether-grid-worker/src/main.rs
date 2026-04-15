@@ -251,10 +251,24 @@ fn probe_subscription_clis() -> Vec<LlmCapability> {
         return Vec::new();
     }
 
+    tracing::info!(
+        "probing subscription CLIs; PATH={}",
+        std::env::var("PATH").unwrap_or_else(|_| "<unset>".into())
+    );
+
     let mut caps = Vec::new();
     for spec in specs::ALL {
         let provider = CliProvider::new(*spec);
-        if !provider.available() {
+        let resolved = which_on_path(spec.binary);
+        let available = provider.available();
+        tracing::info!(
+            "probe {}: binary={} resolved={} available={}",
+            spec.provider_slug,
+            spec.binary,
+            resolved.as_deref().unwrap_or("<not on PATH>"),
+            available,
+        );
+        if !available {
             continue;
         }
         let budget = subscription_budget(spec.provider_slug);
@@ -301,6 +315,19 @@ fn subscription_budget(provider_slug: &str) -> u64 {
         "opencode" => 0,
         _ => 0,
     }
+}
+
+/// Resolve a bare binary name against `$PATH` the same way a shell
+/// would, for diagnostic logging. Returns `None` if not found.
+fn which_on_path(binary: &str) -> Option<String> {
+    let path = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path) {
+        let candidate = dir.join(binary);
+        if candidate.is_file() {
+            return Some(candidate.to_string_lossy().into_owned());
+        }
+    }
+    None
 }
 
 fn parse_budget(var: &str) -> u64 {

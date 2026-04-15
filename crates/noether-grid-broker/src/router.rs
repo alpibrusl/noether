@@ -89,11 +89,14 @@ pub async fn select_worker(
 }
 
 fn worker_has_model(worker: &WorkerEntry, model: &str) -> bool {
+    // Bare-string `"llm"` effects parse as `Llm { model: "unknown" }`.
+    // Treat that (and empty) as "any worker with any Llm capability".
+    let any_llm = model.is_empty() || model == "unknown";
     worker
         .advertisement
         .capabilities
         .iter()
-        .any(|c| c.model == model && c.budget_remaining_cents > 0)
+        .any(|c| c.budget_remaining_cents > 0 && (any_llm || c.model == model))
 }
 
 #[cfg(test)]
@@ -174,6 +177,16 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(chosen, WorkerId("bob".into()));
+    }
+
+    #[tokio::test]
+    async fn unknown_model_matches_any_llm_worker() {
+        // Stages declaring bare-string `"llm"` effects come through as
+        // model == "unknown" — any worker with any Llm capability
+        // should match.
+        let state = make_state_with(vec![advertisement("alice", &[("gpt-4", 1000)])]).await;
+        let chosen = select_worker(&state, &["unknown".into()]).await.unwrap();
+        assert_eq!(chosen, WorkerId("alice".into()));
     }
 
     #[tokio::test]

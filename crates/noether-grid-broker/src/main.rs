@@ -31,12 +31,13 @@ struct Cli {
     /// Path to a JSON store the broker reads at startup to seed its
     /// stage catalogue. The catalogue is used by the graph splitter
     /// to look up each `Stage { id }`'s declared effects.
-    #[arg(
-        long,
-        env = "NOETHER_STORE_PATH",
-        default_value = ".noether/store.json"
-    )]
-    store_path: String,
+    /// When unset, defaults to `$HOME/.noether/store.json` (matches
+    /// the CLI's `noether_dir()`). A past pilot silently loaded an
+    /// 80-stage fallback because the broker's CWD-relative default
+    /// missed the real store; we now resolve to `$HOME` and warn loudly
+    /// if the catalogue looks small.
+    #[arg(long, env = "NOETHER_STORE_PATH")]
+    store_path: Option<String>,
     /// Optional path to a JSON file mapping API key → monthly quota
     /// (in US cents). Format: `{"key-abc": 50000, "key-def": 10000}`.
     /// When present, every `POST /jobs` checks the quota before
@@ -98,15 +99,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         use noether_core::stdlib::load_stdlib;
         use noether_store::{JsonFileStore, StageStore};
+        let resolved_path = cli.store_path.clone().unwrap_or_else(|| {
+            let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+            format!("{home}/.noether/store.json")
+        });
         let mut seed = load_stdlib();
-        if let Ok(store) = JsonFileStore::open(&cli.store_path) {
-            for stage in store.list(None) {
-                seed.push(stage.clone());
+        let mut extra = 0usize;
+        match JsonFileStore::open(&resolved_path) {
+            Ok(store) => {
+                for stage in store.list(None) {
+                    seed.push(stage.clone());
+                    extra += 1;
+                }
+                tracing::info!("seeded {extra} stage(s) from {resolved_path}");
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "could not open store at {resolved_path}: {e}; booting with stdlib only"
+                );
             }
         }
         let count = seed.len();
         state.seed_stages(seed).await;
-        tracing::info!("loaded {count} stage(s) into broker catalogue");
+        if extra < 20 {
+            tracing::warn!(
+                "catalogue looks small: {count} stage(s) total ({extra} from {resolved_path}). \
+                 If you expected a larger catalogue, set --store-path or NOETHER_STORE_PATH."
+            );
+        } else {
+            tracing::info!("loaded {count} stage(s) into broker catalogue");
+        }
     }
 
     // Optionally seed per-agent quotas from JSON. Format:
