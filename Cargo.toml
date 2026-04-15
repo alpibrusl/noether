@@ -6,6 +6,10 @@ members = [
     "crates/noether-engine",
     "crates/noether-cli",
     "crates/noether-scheduler",
+    # Research — not published, not tagged. See docs/research/grid.md.
+    "crates/noether-grid-protocol",
+    "crates/noether-grid-broker",
+    "crates/noether-grid-worker",
 ]
 
 [workspace.package]

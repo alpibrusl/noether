@@ -1,0 +1,32 @@
+[package]
+name = "noether-grid-worker"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "RESEARCH — noether-grid worker: advertises LLM capacity, runs graphs on request"
+publish = false
+
+[[bin]]
+name = "noether-grid-worker"
+path = "src/main.rs"
+
+[dependencies]
+noether-grid-protocol = { path = "../noether-grid-protocol", version = "0.3" }
+noether-core = { path = "../noether-core", version = "0.3" }
+noether-store = { path = "../noether-store", version = "0.3" }
+noether-engine = { path = "../noether-engine", version = "0.3" }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+tokio = { version = "1", features = ["full"] }
+axum = "0.8"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+clap = { version = "4", features = ["derive", "env"] }
+hostname = "0.4"
