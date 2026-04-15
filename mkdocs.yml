@@ -98,6 +98,9 @@ nav:
       - NoetherReact: research/noether-react.md
       - WASM Target: research/wasm-target.md
       - Cloud Registry: research/cloud-registry.md
+      - Grid — Subscription Pooling: research/grid.md
+      - Grid — Capability Generalisation: research/grid-capabilities.md
+      - llm-here — Consolidation Plan: research/llm-here.md
 
 extra:
   social:

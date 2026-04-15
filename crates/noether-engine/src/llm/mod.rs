@@ -1,7 +1,15 @@
 pub mod anthropic;
+pub mod cli_provider;
 pub mod mistral;
 pub mod openai;
 pub mod vertex;
+
+// Back-compat re-export: phase 5 shipped with a `claude_cli` module
+// that has since been generalised into `cli_provider`. Keep the old
+// name working so any downstream import still compiles until the
+// broader consolidation lands (see docs/research/llm-here.md).
+#[deprecated(note = "use crate::llm::cli_provider instead")]
+pub use cli_provider as claude_cli;
 
 use serde::{Deserialize, Serialize};
 

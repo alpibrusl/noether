@@ -1,0 +1,50 @@
+[package]
+name = "noether-grid-broker"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "RESEARCH — noether-grid broker: pools worker LLM capacity, dispatches jobs"
+publish = false
+
+[[bin]]
+name = "noether-grid-broker"
+path = "src/main.rs"
+
+[dependencies]
+noether-grid-protocol = { path = "../noether-grid-protocol", version = "0.4" }
+noether-engine = { path = "../noether-engine", version = "0.4" }
+noether-store = { path = "../noether-store", version = "0.4" }
+noether-core = { path = "../noether-core", version = "0.4" }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+tokio = { version = "1", features = ["full"] }
+axum = "0.8"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+uuid = { version = "1", features = ["v4"] }
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+clap = { version = "4", features = ["derive", "env"] }
+prometheus = { version = "0.13", default-features = false, features = ["process"] }
+# Postgres-backed durability — opt in with `--features postgres` (off by
+# default so the binary stays small and the pure intra-LAN demo path
+# doesn't need a database). When enabled, pass `--postgres-url
+# postgres://...` and the broker writes through every mutation; reads
+# stay served from in-memory caches that are hydrated on boot.
+tokio-postgres = { version = "0.7", features = ["with-serde_json-1", "with-chrono-0_4"], optional = true }
+deadpool-postgres = { version = "0.14", features = ["rt_tokio_1"], optional = true }
+
+[features]
+default = []
+postgres = ["dep:tokio-postgres", "dep:deadpool-postgres"]
+
+[dev-dependencies]
+axum = "0.8"
+tokio = { version = "1", features = ["full", "test-util"] }
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }

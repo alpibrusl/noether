@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>noether-grid · live</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #0c0e14;
+    --bg-2: #141821;
+    --bg-3: #1c2230;
+    --fg: #e6e9ef;
+    --fg-dim: #8a93a6;
+    --accent: #7c5cff;
+    --accent-2: #5cd6c0;
+    --warn: #f5a623;
+    --err: #ff6b6b;
+    --ok: #5cd6c0;
+    --line: #262d3d;
+    --mono: ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: Inter, system-ui, -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+    margin: 0;
+    line-height: 1.5;
+  }
+  header {
+    border-bottom: 1px solid var(--line);
+    padding: 1.2rem 2rem;
+    display: flex;
+    align-items: baseline;
+    gap: 1.5rem;
+  }
+  h1 {
+    margin: 0;
+    font-size: 1.1rem;
+    letter-spacing: 0.02em;
+    font-weight: 600;
+  }
+  h1 .pulse {
+    display: inline-block;
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 50%;
+    background: var(--ok);
+    margin-right: 0.5rem;
+    animation: pulse 2s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+  header .meta { color: var(--fg-dim); font-size: 0.85rem; font-family: var(--mono); }
+  main { padding: 1.5rem 2rem; max-width: 1200px; margin: 0 auto; }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 1rem;
+    margin-bottom: 2rem;
+  }
+  .stat {
+    background: var(--bg-2);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 1rem 1.2rem;
+  }
+  .stat .label {
+    font-size: 0.75rem;
+    color: var(--fg-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+  .stat .value {
+    font-family: var(--mono);
+    font-size: 1.6rem;
+    font-weight: 600;
+    margin-top: 0.3rem;
+  }
+  .stat .value.accent { color: var(--accent); }
+  .stat .value.ok { color: var(--ok); }
+  .stat .value.warn { color: var(--warn); }
+  .stat .value.err { color: var(--err); }
+  .stat .sub { color: var(--fg-dim); font-size: 0.75rem; margin-top: 0.25rem; }
+
+  section {
+    background: var(--bg-2);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 1.2rem 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+  section h2 {
+    margin: 0 0 0.8rem;
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--fg-dim);
+    font-weight: 600;
+  }
+  table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 0.85rem; }
+  th, td {
+    text-align: left;
+    padding: 0.5rem 0.8rem;
+    border-bottom: 1px solid var(--line);
+  }
+  th {
+    color: var(--fg-dim);
+    font-weight: 500;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+  tr:last-child td { border-bottom: none; }
+  .pill {
+    display: inline-block;
+    padding: 0.1rem 0.6rem;
+    border-radius: 999px;
+    font-size: 0.7rem;
+    background: var(--bg-3);
+    color: var(--fg-dim);
+  }
+  .pill.ok { background: rgba(92, 214, 192, 0.15); color: var(--ok); }
+  .pill.warn { background: rgba(245, 166, 35, 0.15); color: var(--warn); }
+  .pill.err { background: rgba(255, 107, 107, 0.15); color: var(--err); }
+  .pill.accent { background: rgba(124, 92, 255, 0.15); color: var(--accent); }
+  .empty {
+    color: var(--fg-dim);
+    font-style: italic;
+    padding: 1rem 0;
+    text-align: center;
+  }
+  footer {
+    text-align: center;
+    color: var(--fg-dim);
+    font-size: 0.75rem;
+    padding: 2rem;
+    font-family: var(--mono);
+  }
+  footer a { color: var(--fg-dim); text-decoration: underline; }
+</style>
+</head>
+<body>
+<header>
+  <h1><span class="pulse"></span> noether-grid</h1>
+  <span class="meta" id="meta">connecting…</span>
+</header>
+
+<main>
+  <div class="grid">
+    <div class="stat"><div class="label">Workers</div><div class="value accent" id="stat-workers">—</div><div class="sub" id="stat-workers-sub"></div></div>
+    <div class="stat"><div class="label">Capabilities</div><div class="value" id="stat-caps">—</div><div class="sub">distinct provider × model</div></div>
+    <div class="stat"><div class="label">Remaining budget</div><div class="value ok" id="stat-budget">—</div><div class="sub">across the pool, US$</div></div>
+    <div class="stat"><div class="label">Spent so far</div><div class="value warn" id="stat-spent">—</div><div class="sub">cumulative, US$</div></div>
+    <div class="stat"><div class="label">Jobs</div><div class="value" id="stat-jobs">—</div><div class="sub" id="stat-jobs-sub"></div></div>
+  </div>
+
+  <section>
+    <h2>Workers</h2>
+    <div id="workers-table"></div>
+  </section>
+
+  <section>
+    <h2>Recent jobs</h2>
+    <div id="jobs-table"></div>
+  </section>
+</main>
+
+<footer>
+  <span id="footer-text">Polling every 3s · </span>
+  <a href="/metrics">/metrics</a> ·
+  <a href="/workers">/workers</a> ·
+  <a href="https://github.com/alpibrusl/noether/blob/research/grid/docs/research/grid.md" target="_blank">design doc</a>
+</footer>
+
+<script>
+const POLL_MS = 3000;
+
+function fmtCents(c) {
+  if (c == null) return '—';
+  return '$' + (c / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function timeAgo(iso) {
+  if (!iso) return '—';
+  const ms = Date.now() - new Date(iso).getTime();
+  if (ms < 1000) return 'now';
+  if (ms < 60000) return Math.round(ms / 1000) + 's ago';
+  if (ms < 3600000) return Math.round(ms / 60000) + 'm ago';
+  return Math.round(ms / 3600000) + 'h ago';
+}
+
+function statusPill(status) {
+  const cls = { ok: 'ok', queued: 'accent', running: 'accent', failed: 'err', abandoned: 'warn', skipped: 'warn' }[status] || '';
+  return `<span class="pill ${cls}">${status}</span>`;
+}
+
+async function refresh() {
+  try {
+    const [workers, metricsText] = await Promise.all([
+      fetch('/workers').then(r => r.json()),
+      fetch('/metrics').then(r => r.text()),
+    ]);
+
+    // ── Stats ─────────────────────────────────────────────────────
+    const healthy = workers.filter(w => w.healthy).length;
+    document.getElementById('stat-workers').textContent = healthy;
+    document.getElementById('stat-workers-sub').textContent =
+      workers.length > healthy ? `${workers.length - healthy} stale` : 'all healthy';
+
+    const allCaps = workers.flatMap(w => w.capabilities || []);
+    const distinctCaps = new Set(allCaps.map(c => `${c.provider}/${c.model}`));
+    document.getElementById('stat-caps').textContent = distinctCaps.size;
+
+    const totalRemaining = allCaps.reduce((s, c) => s + (c.budget_remaining_cents || 0), 0);
+    document.getElementById('stat-budget').textContent = fmtCents(totalRemaining);
+
+    // Parse Prometheus metrics for cents_spent + jobs counters
+    const spent = parseProm(metricsText, 'noether_grid_cents_spent_total');
+    document.getElementById('stat-spent').textContent = fmtCents(spent);
+
+    const submitted = parseProm(metricsText, 'noether_grid_jobs_submitted_total');
+    const ok       = parseProm(metricsText, 'noether_grid_jobs_succeeded_total');
+    const failed   = parseProm(metricsText, 'noether_grid_jobs_failed_total');
+    const aban     = parseProm(metricsText, 'noether_grid_jobs_abandoned_total');
+    document.getElementById('stat-jobs').textContent = submitted;
+    document.getElementById('stat-jobs-sub').textContent =
+      `${ok} ok · ${failed} failed · ${aban} abandoned`;
+
+    // ── Workers table ────────────────────────────────────────────
+    const wt = document.getElementById('workers-table');
+    if (workers.length === 0) {
+      wt.innerHTML = '<div class="empty">No workers enrolled. Run <code>noether-grid-worker</code> on a machine with LLM credentials.</div>';
+    } else {
+      wt.innerHTML = `
+        <table>
+          <thead><tr>
+            <th>Worker</th><th>URL</th><th>Capabilities</th>
+            <th>Remaining</th><th>In flight</th><th>Last seen</th><th>Status</th>
+          </tr></thead>
+          <tbody>${workers.map(w => `
+            <tr>
+              <td>${w.worker_id}</td>
+              <td><span class="pill">${w.url}</span></td>
+              <td>${(w.capabilities || []).map(c =>
+                `<span class="pill accent">${c.provider}/${c.model}</span>`
+              ).join(' ') || '<span class="pill warn">none</span>'}</td>
+              <td>${fmtCents((w.capabilities || []).reduce((s, c) => s + (c.budget_remaining_cents || 0), 0))}</td>
+              <td>${w.in_flight_jobs}</td>
+              <td>${timeAgo(w.last_seen)}</td>
+              <td>${w.healthy ? statusPill('ok') : statusPill('failed')}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>`;
+    }
+
+    document.getElementById('meta').textContent =
+      `last refresh ${new Date().toLocaleTimeString()}`;
+  } catch (e) {
+    document.getElementById('meta').textContent = 'broker unreachable: ' + e.message;
+  }
+}
+
+// Minimal Prometheus parser — finds `<name> <number>` and returns the number.
+function parseProm(text, name) {
+  const re = new RegExp('^' + name + '\\s+(\\d+(?:\\.\\d+)?)', 'm');
+  const m = text.match(re);
+  return m ? Number(m[1]) : 0;
+}
+
+refresh();
+setInterval(refresh, POLL_MS);
+</script>
+</body>
+</html>

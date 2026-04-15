@@ -1,0 +1,24 @@
+[Unit]
+Description=Noether grid worker
+Documentation=https://github.com/alpibrusl/noether/blob/research/grid/docs/research/grid.md
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/noether-grid-worker
+Restart=always
+RestartSec=5
+WorkingDirectory=/var/lib/noether
+EnvironmentFile=-/etc/noether/grid-worker.env
+Environment=RUST_LOG=noether_grid_worker=info
+# We keep ProtectHome off because the worker frequently needs access to
+# user-level credential stores (~/.config/anthropic, ~/.cursor, etc.)
+# when capabilities advertise CLI-auth providers.
+ProtectSystem=strict
+ProtectHome=false
+PrivateTmp=true
+NoNewPrivileges=true
+ReadWritePaths=/var/lib/noether
+
+[Install]
+WantedBy=multi-user.target

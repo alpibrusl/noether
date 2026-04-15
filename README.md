@@ -147,6 +147,20 @@ Full operator reference: **[Composition Graphs →](./docs/guides/composition-gr
 
 ---
 
+## What's new in v0.4
+
+- **`noether-grid`** — pool LLM capacity across machines. A broker
+  splits composition graphs so `Effect::Llm` stages dispatch to a
+  worker with matching subscription / API credentials while pure
+  stages execute locally. Auto-discovers Claude Desktop, Gemini CLI,
+  Cursor Agent, and OpenCode on each worker's `$PATH`. See
+  **[broker README →](./crates/noether-grid-broker/README.md)** and
+  **[design →](./docs/research/grid.md)**.
+- **Subscription-CLI providers in `noether-engine`** — `NOETHER_LLM_PROVIDER=claude-cli`
+  (or `gemini-cli`, `cursor-cli`, `opencode`) shells out to a local
+  subscription CLI instead of an API key. Useful on workstations
+  that already have a signed-in CLI.
+
 ## What's new in v0.2
 
 - **`Let` operator** — carry original-input fields through `Sequential` pipelines.

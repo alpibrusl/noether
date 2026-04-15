@@ -17,6 +17,7 @@ Current implementation status and future directions for Noether.
 | 6 | NixExecutor hardening | ✅ Done | `NixConfig` (timeout, output limits), error classification, `NixExecutor::warmup()` |
 | 7 | Cloud Registry hardening | ✅ Done | `DELETE /stages/:id`, paginated refresh, on-demand `get_live`, scheduler remote-store support |
 | 8 | Runtime budget enforcement | ✅ Done | `BudgetedExecutor`, `Arc<AtomicU64>` cost tracking, `--budget-cents`, `BudgetExceeded` error |
+| 9 | Grid — subscription pooling | ✅ Done (v0.4.0) | `noether-grid-broker` + `noether-grid-worker`, graph splitting on `Effect::Llm`, four subscription-CLI providers, retry-with-exclusion, optional postgres persistence, Prometheus metrics, per-agent quotas |
 
 ---
 
@@ -40,6 +41,8 @@ These are not scheduled — they are design explorations:
 
 | Idea | Notes |
 |---|---|
+| **Grid — capability generalisation** | Lift grid routing beyond `Effect::Llm` to any capability kind (GPU time, DB connections, scraper rotation). See [research](research/grid-capabilities.md). |
+| **`llm-here`** | Unify caloron's `_llm.py`, agentspec's resolver, and grid's `cli_provider.rs` behind one shared tool. See [research](research/llm-here.md). |
 | **NoetherReact** | Content-addressed UI components as stages; `UI = f(stage_graph(state))`. See [research](research/noether-react.md). |
 | **WASM stdlib** | Compile Pure Rust stdlib stages to WASM for zero-latency in-browser execution. See [research](research/wasm-target.md). |
 | **Multi-tenant stores** | Separate stage namespaces per agent / team |
