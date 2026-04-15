@@ -15,10 +15,10 @@ name = "noether-grid-worker"
 path = "src/main.rs"
 
 [dependencies]
-noether-grid-protocol = { path = "../noether-grid-protocol", version = "0.3" }
-noether-core = { path = "../noether-core", version = "0.3" }
-noether-store = { path = "../noether-store", version = "0.3" }
-noether-engine = { path = "../noether-engine", version = "0.3" }
+noether-grid-protocol = { path = "../noether-grid-protocol", version = "0.4" }
+noether-core = { path = "../noether-core", version = "0.4" }
+noether-store = { path = "../noether-store", version = "0.4" }
+noether-engine = { path = "../noether-engine", version = "0.4" }
 
 serde = { workspace = true }
 serde_json = { workspace = true }

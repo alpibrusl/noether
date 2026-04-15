@@ -14,6 +14,97 @@ uses [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.4.0] — 2026-04-15
+
+First release with **noether-grid**: a broker + worker pair that pools
+LLM capacity across machines. Three new binaries ship alongside the
+existing `noether` / `noether-scheduler`:
+`noether-grid-broker`, `noether-grid-worker`, and the
+`noether-grid-protocol` crate they share.
+
+See `crates/noether-grid-broker/README.md` for the per-role deploy
+walkthrough and `docs/research/grid.md` for the design.
+
+### Added
+- **`noether-grid-broker`** — pools worker capacity, splits Lagrange
+  graphs so `Effect::Llm` stages dispatch to a worker with matching
+  capability while pure stages execute locally. Retry-with-exclusion
+  on worker failure, optional postgres write-through persistence
+  (`--features postgres`), self-contained HTML dashboard at `/`,
+  Prometheus metrics at `/metrics`, per-agent quotas via
+  `--quotas-file`.
+- **`noether-grid-worker`** — enrols with a broker, advertises its
+  LLM capabilities, serves `/execute` (full graph) and `/stage/{id}`
+  (single-stage, `RemoteStage`-compatible). Auto-discovers four
+  subscription CLIs (Claude, Gemini, Cursor Agent, OpenCode) plus
+  API-key providers (Anthropic, OpenAI, Mistral, Vertex AI).
+- **Subscription-CLI support in `noether-engine`.** New
+  `crate::llm::cli_provider` module generalises over Claude Desktop,
+  Gemini CLI, Cursor Agent, and OpenCode. Opt in via
+  `NOETHER_LLM_PROVIDER={claude-cli,gemini-cli,cursor-cli,opencode}`
+  or auto-detect when no API key is set. Suppress via
+  `NOETHER_LLM_SKIP_CLI=1` for sandboxed environments.
+- **`RemoteStage` error surface** now propagates the remote worker's
+  `ok: false, error: <msg>` verbatim instead of masking it as
+  "missing data.output field".
+- **Three research notes** in `docs/research/`: `grid.md` (design),
+  `grid-capabilities.md` (future generalisation beyond LLMs),
+  `llm-here.md` (planned consolidation with caloron's `_llm.py` and
+  agentspec's resolver).
+
+### Migration
+
+**You only need to migrate if you adopt `noether-grid`.** The
+`noether` CLI, stdlib, scheduler, and graph format are unchanged.
+
+If you deploy grid:
+
+1. **Store path must match on broker and all workers.** Both
+   `noether-grid-broker` and `noether-grid-worker` default their
+   `--store-path` to `$HOME/.noether/store.json` (matching the CLI's
+   `noether_dir()`). Previous prerelease builds of grid used a
+   CWD-relative `.noether/store.json` default, which silently
+   diverged when the broker and worker were launched from different
+   directories. If you pinned an earlier grid build and relied on
+   that behaviour, set `NOETHER_STORE_PATH` explicitly — or nothing,
+   and let the new `$HOME` default apply.
+
+2. **Subscription CLIs are auto-detected by default.** Running grid
+   on a machine with `claude` / `gemini` / `cursor-agent` /
+   `opencode` on `$PATH` now advertises each as pooled capacity.
+   If you want a headless worker that ignores ambient CLI auth
+   (e.g. a CI runner, a Nix-sandboxed executor), set
+   `NOETHER_LLM_SKIP_CLI=1`.
+
+3. **Bare-string `"llm"` effects now route.** A stage declaring
+   `"effects": ["llm"]` parses as `Effect::Llm { model: "unknown" }`
+   and dispatches to any worker with any LLM capability. Previous
+   behaviour was to refuse routing with `no worker matches ["unknown"]`.
+   If you previously worked around this by declaring
+   `Effect::Llm { model: "<specific>" }`, nothing changes — exact-model
+   match still wins when the model is set.
+
+### Fixed
+- `jobs_failed_total` now increments on the splitter-refusal terminal
+  path (it previously only counted post-dispatch failures).
+- Worker capability probing logs the resolved path per subscription
+  CLI at `INFO`, so a silent zero-capabilities advertisement surfaces
+  its cause instead of requiring out-of-band debugging.
+- Broker logs the resolved store path + stage count at boot and warns
+  loudly when the seeded catalogue looks small (<20 extra stages).
+
+### Known caveats (not blockers)
+- Cost model today assumes metered APIs — subscription-path jobs
+  report `cents_spent_total = 0`. Capacity-based metrics
+  (`jobs_routed_total{provider}`, `capacity_used_ratio`) are the
+  v0.4.1 plan; see `docs/research/grid-capabilities.md`.
+- Cross-machine + multi-seat fan-out is implemented and
+  unit-tested, but has not been piloted on production hardware as
+  of this release. The MVP pilot was single-broker + single-worker
+  on one host.
+
+---
+
 ## [0.3.1] — 2026-04-14
 
 Bug-fix release driven by issues caloron-noether hit migrating from v0.2.

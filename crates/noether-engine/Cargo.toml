@@ -17,8 +17,8 @@ default = ["native"]
 native = ["dep:reqwest", "dep:rusqlite", "dep:arrow", "dep:base64"]
 
 [dependencies]
-noether-core = { path = "../noether-core", version = "0.3" }
-noether-store = { path = "../noether-store", version = "0.3" }
+noether-core = { path = "../noether-core", version = "0.4" }
+noether-store = { path = "../noether-store", version = "0.4" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_jcs = "0.2"
