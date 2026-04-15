@@ -7,6 +7,7 @@
 mod registry;
 mod router;
 mod routes;
+mod splitter;
 mod state;
 
 use axum::{routing, Router};
@@ -26,6 +27,15 @@ struct Cli {
     /// (dev only).
     #[arg(long, env = "NOETHER_GRID_SECRET", default_value = "")]
     secret: String,
+    /// Path to a JSON store the broker reads at startup to seed its
+    /// stage catalogue. The catalogue is used by the graph splitter
+    /// to look up each `Stage { id }`'s declared effects.
+    #[arg(
+        long,
+        env = "NOETHER_STORE_PATH",
+        default_value = ".noether/store.json"
+    )]
+    store_path: String,
 }
 
 #[tokio::main]
@@ -39,6 +49,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let cli = Cli::parse();
     let state = Arc::new(AppState::new(cli.secret.clone()));
+
+    // Seed the broker's stage catalogue from a local JSON store. This
+    // is what the graph splitter walks to identify Llm-effect stages
+    // worth dispatching. Always include the stdlib so simple test
+    // graphs (Const-only or stdlib-only) work without extra setup.
+    {
+        use noether_core::stdlib::load_stdlib;
+        use noether_store::{JsonFileStore, StageStore};
+        let mut seed = load_stdlib();
+        if let Ok(store) = JsonFileStore::open(&cli.store_path) {
+            for stage in store.list(None) {
+                seed.push(stage.clone());
+            }
+        }
+        let count = seed.len();
+        state.seed_stages(seed).await;
+        tracing::info!("loaded {count} stage(s) into broker catalogue");
+    }
 
     // Spawn the worker-pruner so dead workers disappear from the
     // registry within 3× their declared heartbeat interval.

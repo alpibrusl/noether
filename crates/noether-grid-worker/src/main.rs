@@ -52,6 +52,20 @@ struct WorkerState {
     in_flight: AtomicU32,
 }
 
+impl WorkerState {
+    /// Snapshot the store into a fresh `MemoryStore`. We take a snapshot
+    /// per single-stage call rather than borrowing across `.await` —
+    /// `JsonFileStore` is sync and not `Sync`-safe to share across
+    /// blocking thread boundaries.
+    fn store_snapshot(&self) -> noether_store::MemoryStore {
+        let mut snap = noether_store::MemoryStore::new();
+        for stage in self.store.list(None) {
+            let _ = snap.upsert(stage.clone());
+        }
+        snap
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
@@ -115,6 +129,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = Router::new()
         .route("/health", routing::get(health))
         .route("/execute", routing::post(execute))
+        // Single-stage RemoteStage-compatible endpoint. Used by the
+        // broker's graph splitter — broker rewrites Stage{id} nodes
+        // into RemoteStage pointing at this URL, so the existing
+        // noether-engine RemoteStage executor handles the HTTP call
+        // without any new code on its side.
+        .route("/stage/{id}", routing::post(execute_single_stage))
         .with_state(state);
 
     let addr: SocketAddr = cli.bind.parse()?;
@@ -258,6 +278,60 @@ async fn execute(
     let result = run_graph(&state.store, req).await;
     state.in_flight.fetch_sub(1, Ordering::Relaxed);
     (StatusCode::OK, Json(result))
+}
+
+/// `POST /stage/{id}` — RemoteStage-compatible single-stage execution.
+///
+/// Body: `{"input": <value>}`. Response (success):
+/// `{"ok": true, "data": {"output": <value>, "spent_cents": <u64>}}`.
+/// On failure: `{"ok": false, "error": <msg>}` with HTTP 500.
+///
+/// This is the contract noether-engine's `RemoteStage` executor expects
+/// (it reads `data.output`). Used by the broker's graph splitter — when
+/// the broker rewrites a `Stage { id }` node as
+/// `RemoteStage { url: ".../stage/<id>" }`, the RemoteStage executor
+/// hits this endpoint without further code changes.
+async fn execute_single_stage(
+    State(state): State<Arc<WorkerState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    use noether_core::stage::StageId;
+    use noether_engine::executor::composite::CompositeExecutor;
+    use noether_engine::executor::StageExecutor;
+
+    let input = body
+        .get("input")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let stage_id = StageId(id);
+
+    state.in_flight.fetch_add(1, Ordering::Relaxed);
+    let store_clone = state.store_snapshot();
+    let result = tokio::task::spawn_blocking(move || {
+        let executor = CompositeExecutor::from_store(&store_clone);
+        executor.execute(&stage_id, &input)
+    })
+    .await;
+    state.in_flight.fetch_sub(1, Ordering::Relaxed);
+
+    match result {
+        Ok(Ok(output)) => (
+            StatusCode::OK,
+            Json(json!({
+                "ok": true,
+                "data": { "output": output, "spent_cents": 0 }
+            })),
+        ),
+        Ok(Err(e)) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"ok": false, "error": format!("{e}")})),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"ok": false, "error": format!("task panicked: {e}")})),
+        ),
+    }
 }
 
 async fn run_graph(store: &JsonFileStore, req: ExecuteRequest) -> JobResult {

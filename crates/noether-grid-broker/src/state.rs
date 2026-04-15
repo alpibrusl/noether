@@ -57,6 +57,13 @@ pub struct AppState {
     pub jobs: Mutex<HashMap<JobId, JobEntry>>,
     /// Shared secret workers present when enrolling. Empty = no auth.
     pub secret: String,
+    /// Stage catalogue used by the graph splitter to look up stage
+    /// metadata (effects, signatures) for each `Stage { id }` it
+    /// encounters in submitted graphs. Snapshot of whatever is in the
+    /// store the broker was launched against — the broker doesn't keep
+    /// it live-synced. Re-run the broker after `stage add` if
+    /// freshness matters.
+    pub stages: Mutex<noether_store::MemoryStore>,
 }
 
 impl AppState {
@@ -65,6 +72,18 @@ impl AppState {
             workers: Mutex::new(HashMap::new()),
             jobs: Mutex::new(HashMap::new()),
             secret,
+            stages: Mutex::new(noether_store::MemoryStore::new()),
+        }
+    }
+
+    /// Replace the stage catalogue with `stages`. Used at boot from a
+    /// JsonFileStore or remote registry seed.
+    pub async fn seed_stages(&self, stages: Vec<noether_core::stage::Stage>) {
+        use noether_store::StageStore;
+        let mut store = self.stages.lock().await;
+        *store = noether_store::MemoryStore::new();
+        for s in stages {
+            let _ = store.upsert(s);
         }
     }
 

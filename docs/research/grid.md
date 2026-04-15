@@ -4,6 +4,11 @@
 supported. This page describes the design; the prototype lives on the
 `research/grid` branch.
 
+**Phase 1** (initial scaffold) and **phase 2 core** (graph splitting + cost
+ledger + scheduler integration) are in. **Phase 3** (postgres state,
+worker-death retry, deployment manifests, Prometheus metrics) is the next
+session's work.
+
 ## Problem
 
 Companies pay for per-seat LLM subscriptions (Claude, Cursor, GPT,

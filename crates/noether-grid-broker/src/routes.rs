@@ -8,12 +8,12 @@ use axum::{
 };
 use chrono::Utc;
 use noether_grid_protocol::{
-    ExecuteRequest, Heartbeat, JobId, JobResult, JobSpec, JobStatus, WorkerAdvertisement, WorkerId,
+    Heartbeat, JobId, JobResult, JobSpec, JobStatus, WorkerAdvertisement, WorkerId,
 };
 use serde_json::json;
 use std::sync::Arc;
 
-use crate::{registry, router, state::AppState};
+use crate::{registry, router, splitter, state::AppState};
 
 pub async fn health(State(state): State<Arc<AppState>>) -> Response {
     let workers = state.snapshot_workers().await;
@@ -87,9 +87,8 @@ pub async fn drain_worker(
 }
 
 pub async fn submit_job(State(state): State<Arc<AppState>>, Json(spec): Json<JobSpec>) -> Response {
-    // Infer LLM requirements from the graph so the router picks
-    // appropriately. Parse through noether-engine; on any parse error
-    // fail fast with 400 (the graph wouldn't run anyway).
+    // Parse the graph. Invalid JSON → 400 immediately; the graph wouldn't
+    // run anyway and we want a clear error before any worker bookkeeping.
     let graph = match noether_engine::lagrange::parse_graph(&spec.graph.to_string()) {
         Ok(g) => g,
         Err(e) => {
@@ -100,42 +99,41 @@ pub async fn submit_job(State(state): State<Arc<AppState>>, Json(spec): Json<Job
                 .into_response();
         }
     };
-    let models = infer_llm_models(&graph);
 
-    // Dummy store for effect inference — we only need the graph's
-    // declared effects, not actual stage lookups. If a stage isn't in
-    // the store the inferred effect is Unknown, which our router
-    // treats as "any worker".
-    let empty_store = noether_store::MemoryStore::new();
-    let _ = noether_engine::checker::infer_effects(&graph.root, &empty_store);
-
-    let chosen = match router::select_worker(&state, &models).await {
-        Ok(id) => id,
-        Err(refusal) => {
-            return (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(json!({"error": refusal.to_string()})),
-            )
-                .into_response();
-        }
+    // Look up the graph's required LLM models from the broker's stage
+    // catalogue. If the catalogue doesn't know a stage, the splitter
+    // leaves it alone — no model requirement is contributed.
+    let stages_snapshot = {
+        let lock = state.stages.lock().await;
+        clone_store(&lock)
     };
+    let models = splitter::required_llm_models(&graph.root, &stages_snapshot);
+
+    // Pre-flight pool capacity. With graph splitting we don't pick a
+    // single worker — the splitter picks per-node — but we still need
+    // at least one healthy worker that covers each model.
+    if let Err(refusal) = router::select_worker(&state, &models).await {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"error": refusal.to_string()})),
+        )
+            .into_response();
+    }
 
     let job_id = JobId(uuid::Uuid::new_v4().to_string());
     let job_entry = crate::state::JobEntry {
         status: JobStatus::Queued,
         result: None,
         created_at: Utc::now(),
-        dispatched_to: Some(chosen.clone()),
+        dispatched_to: None, // assigned by the splitter
     };
     state.jobs.lock().await.insert(job_id.clone(), job_entry);
 
-    // Fire-and-forget dispatch. The caller polls `GET /jobs/{id}` for
-    // the result — full synchronous dispatch would block the HTTP
-    // handler through the worker's entire run.
+    // Fire-and-forget dispatch.
     let state_clone = state.clone();
     let job_id_clone = job_id.clone();
     tokio::spawn(async move {
-        dispatch(state_clone, job_id_clone, chosen, spec).await;
+        dispatch(state_clone, job_id_clone, graph, spec).await;
     });
 
     (
@@ -146,6 +144,15 @@ pub async fn submit_job(State(state): State<Arc<AppState>>, Json(spec): Json<Job
         })),
     )
         .into_response()
+}
+
+fn clone_store(src: &noether_store::MemoryStore) -> noether_store::MemoryStore {
+    use noether_store::StageStore;
+    let mut out = noether_store::MemoryStore::new();
+    for stage in src.list(None) {
+        let _ = out.upsert(stage.clone());
+    }
+    out
 }
 
 pub async fn get_job(State(state): State<Arc<AppState>>, Path(id): Path<String>) -> Response {
@@ -190,121 +197,130 @@ fn check_grid_secret(state: &AppState, headers: &HeaderMap) -> Result<(), Respon
     }
 }
 
-/// Walk the graph and collect every `Effect::Llm{model}` string.
-fn infer_llm_models(graph: &noether_engine::lagrange::CompositionGraph) -> Vec<String> {
-    // Phase 1: the stages aren't in a store we control, so we can't
-    // actually look up their declared effects. Look at the graph
-    // structure itself — any `Stage` node that has `Effect::Llm` would
-    // need to be in the store; until then the router accepts "any"
-    // match. Keep the infrastructure here so phase 2 can plug in a
-    // shared store reference.
-    let _ = graph;
-    Vec::new()
-}
+async fn dispatch(
+    state: Arc<AppState>,
+    job_id: JobId,
+    graph: noether_engine::lagrange::CompositionGraph,
+    spec: JobSpec,
+) {
+    use noether_engine::executor::composite::CompositeExecutor;
+    use noether_engine::executor::runner::run_composition;
+    use noether_engine::lagrange::compute_composition_id;
 
-async fn dispatch(state: Arc<AppState>, job_id: JobId, worker_id: WorkerId, spec: JobSpec) {
-    // Look up the worker's URL.
-    let url = match state.workers.lock().await.get(&worker_id) {
-        Some(w) => w.advertisement.url.clone(),
-        None => {
-            set_job_status(
-                &state,
-                &job_id,
-                JobStatus::Abandoned,
-                None,
-                Some("worker disappeared before dispatch".into()),
-            )
-            .await;
-            return;
-        }
+    // Snapshot workers + stages for the splitter. Holding the locks
+    // across the whole dispatch would block heartbeats.
+    let workers_snapshot: Vec<crate::state::WorkerEntry> = {
+        let workers = state.workers.lock().await;
+        workers.values().cloned().collect()
+    };
+    let stages_snapshot = {
+        let lock = state.stages.lock().await;
+        clone_store(&lock)
     };
 
-    set_job_status(&state, &job_id, JobStatus::Running, None, None).await;
-
-    // Increment in-flight counter on the worker.
-    {
-        let mut workers = state.workers.lock().await;
-        if let Some(w) = workers.get_mut(&worker_id) {
-            w.in_flight_jobs += 1;
-        }
-    }
-
-    let request = ExecuteRequest {
-        job_id: job_id.clone(),
-        graph: spec.graph,
-        input: spec.input,
-    };
-
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(300))
-        .build()
-        .expect("reqwest client");
-    let response = client
-        .post(format!("{url}/execute"))
-        .json(&request)
-        .send()
-        .await;
-
-    // Always decrement in-flight regardless of outcome.
-    {
-        let mut workers = state.workers.lock().await;
-        if let Some(w) = workers.get_mut(&worker_id) {
-            w.in_flight_jobs = w.in_flight_jobs.saturating_sub(1);
-        }
-    }
-
-    let result = match response {
-        Ok(r) if r.status().is_success() => match r.json::<JobResult>().await {
-            Ok(res) => res,
-            Err(e) => {
-                set_job_status(
-                    &state,
-                    &job_id,
-                    JobStatus::Failed,
-                    None,
-                    Some(format!("malformed worker response: {e}")),
-                )
-                .await;
-                return;
-            }
-        },
-        Ok(r) => {
-            let code = r.status();
-            let body = r.text().await.unwrap_or_default();
+    // Rewrite Llm-effect Stage nodes into RemoteStage nodes pointing
+    // at the chosen worker's /stage/{id} endpoint.
+    let pick = splitter::pick_worker_for(&workers_snapshot);
+    let split = match splitter::split_graph(&graph.root, &stages_snapshot, pick) {
+        Ok(s) => s,
+        Err(refusal) => {
             set_job_status(
                 &state,
                 &job_id,
                 JobStatus::Failed,
                 None,
-                Some(format!("worker returned {code}: {body}")),
-            )
-            .await;
-            return;
-        }
-        Err(e) => {
-            set_job_status(
-                &state,
-                &job_id,
-                JobStatus::Abandoned,
-                None,
-                Some(format!("worker unreachable: {e}")),
+                Some(format!("graph splitting failed: {refusal}")),
             )
             .await;
             return;
         }
     };
 
-    // Bookkeeping: subtract spent_cents across any capability whose
-    // model the graph might have used. Phase 1 is crude — it simply
-    // decrements *every* LLM capability on the worker by spent_cents /
-    // N, so the ledger tracks rough burn. Phase 2 makes this precise.
-    if result.spent_cents > 0 {
+    // Bookkeeping: bump in-flight counters on every assigned worker.
+    let assigned = split.assigned_workers.clone();
+    {
         let mut workers = state.workers.lock().await;
-        if let Some(w) = workers.get_mut(&worker_id) {
-            let n = w.advertisement.capabilities.len().max(1) as u64;
-            let per = result.spent_cents / n;
-            for cap in w.advertisement.capabilities.iter_mut() {
-                cap.budget_remaining_cents = cap.budget_remaining_cents.saturating_sub(per);
+        for id in &assigned {
+            if let Some(w) = workers.get_mut(id) {
+                w.in_flight_jobs = w.in_flight_jobs.saturating_add(1);
+            }
+        }
+    }
+
+    set_job_status(&state, &job_id, JobStatus::Running, None, None).await;
+    {
+        let mut jobs = state.jobs.lock().await;
+        if let Some(entry) = jobs.get_mut(&job_id) {
+            entry.dispatched_to = assigned.first().cloned();
+        }
+    }
+
+    // Run the rewritten graph on a blocking thread — the noether
+    // engine is synchronous + the RemoteStage executor uses
+    // reqwest::blocking under the hood.
+    let rewritten =
+        noether_engine::lagrange::CompositionGraph::new(graph.description.clone(), split.rewritten);
+    let composition_id = compute_composition_id(&rewritten).unwrap_or_else(|_| "unknown".into());
+    let input = spec.input.clone();
+    let exec_store = stages_snapshot;
+    let comp_id = composition_id.clone();
+    let run_outcome = tokio::task::spawn_blocking(move || {
+        let executor = CompositeExecutor::from_store(&exec_store);
+        run_composition(&rewritten.root, &input, &executor, &comp_id)
+    })
+    .await;
+
+    // Decrement in-flight counters.
+    {
+        let mut workers = state.workers.lock().await;
+        for id in &assigned {
+            if let Some(w) = workers.get_mut(id) {
+                w.in_flight_jobs = w.in_flight_jobs.saturating_sub(1);
+            }
+        }
+    }
+
+    let result = match run_outcome {
+        Ok(Ok(comp)) => JobResult {
+            job_id: job_id.clone(),
+            status: JobStatus::Ok,
+            output: comp.output,
+            spent_cents: comp.spent_cents,
+            composition_id: Some(composition_id.clone()),
+            error: None,
+            completed_at: Utc::now(),
+        },
+        Ok(Err(e)) => JobResult {
+            job_id: job_id.clone(),
+            status: JobStatus::Failed,
+            output: serde_json::Value::Null,
+            spent_cents: 0,
+            composition_id: Some(composition_id.clone()),
+            error: Some(format!("{e}")),
+            completed_at: Utc::now(),
+        },
+        Err(e) => JobResult {
+            job_id: job_id.clone(),
+            status: JobStatus::Abandoned,
+            output: serde_json::Value::Null,
+            spent_cents: 0,
+            composition_id: Some(composition_id.clone()),
+            error: Some(format!("dispatch task panicked: {e}")),
+            completed_at: Utc::now(),
+        },
+    };
+
+    // Cost ledger: subtract spent_cents from each assigned worker's
+    // budget. Distribute proportionally across the workers actually
+    // used; phase 3 makes this fully per-stage.
+    if result.spent_cents > 0 && !assigned.is_empty() {
+        let per = result.spent_cents / assigned.len() as u64;
+        let mut workers = state.workers.lock().await;
+        for id in &assigned {
+            if let Some(w) = workers.get_mut(id) {
+                for cap in w.advertisement.capabilities.iter_mut() {
+                    cap.budget_remaining_cents = cap.budget_remaining_cents.saturating_sub(per);
+                }
             }
         }
     }

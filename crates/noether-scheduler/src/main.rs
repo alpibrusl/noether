@@ -28,9 +28,14 @@ pub struct ScheduledJob {
 
 /// Top-level scheduler config (parsed from JSON).
 ///
-/// Store selection (in priority order):
-/// 1. `registry_url` + optional `registry_api_key` → `RemoteStageStore`
-/// 2. `store_path` → local `JsonFileStore`
+/// Execution selection (in priority order):
+/// 1. `grid_broker` → submit each job to a `noether-grid-broker` and let
+///    it route to a worker. Stage resolution lives on the broker; this
+///    scheduler instance just submits + polls. Use this to opt into
+///    intra-company LLM-pool dispatch.
+/// 2. `registry_url` + optional `registry_api_key` → `RemoteStageStore`,
+///    composition runs locally.
+/// 3. `store_path` → local `JsonFileStore`, composition runs locally.
 #[derive(Debug, Deserialize)]
 pub struct SchedulerConfig {
     /// Path to a local JsonFileStore (used when `registry_url` is absent).
@@ -41,6 +46,11 @@ pub struct SchedulerConfig {
     pub registry_url: Option<String>,
     /// API key for the remote registry (`X-API-Key` header).
     pub registry_api_key: Option<String>,
+    /// Optional `noether-grid-broker` URL. When set, every scheduled job
+    /// is submitted to the broker via `POST /jobs` and polled instead of
+    /// being executed locally. The broker decides routing and graph
+    /// splitting; this scheduler doesn't need to know about workers.
+    pub grid_broker: Option<String>,
     pub jobs: Vec<ScheduledJob>,
 }
 
@@ -54,6 +64,96 @@ struct WebhookPayload {
     output: serde_json::Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
+}
+
+/// Submit a job to a `noether-grid-broker` and poll for completion.
+/// Returns `Some((composition_id, webhook_payload))` when the broker
+/// reaches a terminal status, or `None` if dispatch never started.
+async fn dispatch_to_grid(
+    broker: &str,
+    job: &ScheduledJob,
+    graph_raw: &str,
+    _graph: &noether_engine::lagrange::CompositionGraph,
+) -> Option<(String, WebhookPayload)> {
+    let client = reqwest::Client::new();
+    let body = serde_json::json!({
+        "graph": serde_json::from_str::<serde_json::Value>(graph_raw).ok()?,
+        "input": job.input.clone().unwrap_or(serde_json::Value::Null),
+    });
+
+    let submit = match client
+        .post(format!("{broker}/jobs"))
+        .json(&body)
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            error!("Job {} — broker submit failed: {e}", job.name);
+            return None;
+        }
+    };
+    if !submit.status().is_success() {
+        let code = submit.status();
+        let txt = submit.text().await.unwrap_or_default();
+        error!("Job {} — broker rejected submit ({code}): {txt}", job.name);
+        return None;
+    }
+    let submit_body: serde_json::Value = match submit.json().await {
+        Ok(v) => v,
+        Err(e) => {
+            error!("Job {} — broker submit response not JSON: {e}", job.name);
+            return None;
+        }
+    };
+    let job_id = match submit_body.get("job_id").and_then(|v| v.as_str()) {
+        Some(s) => s.to_string(),
+        None => {
+            error!("Job {} — broker response missing job_id", job.name);
+            return None;
+        }
+    };
+
+    info!("Job {} — submitted to grid as {job_id}", job.name);
+
+    // Poll for terminal status. Cap at 10 minutes; the broker has its
+    // own timeouts so this is just a sanity bound.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(600);
+    loop {
+        if std::time::Instant::now() > deadline {
+            error!("Job {} — grid dispatch timed out after 10 min", job.name);
+            return None;
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        let resp = match client.get(format!("{broker}/jobs/{job_id}")).send().await {
+            Ok(r) => r,
+            Err(e) => {
+                warn!("Job {} — grid poll error: {e}", job.name);
+                continue;
+            }
+        };
+        let v: serde_json::Value = match resp.json().await {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let status = v["status"].as_str().unwrap_or("").to_string();
+        if status == "ok" || status == "failed" || status == "abandoned" {
+            let result = &v["result"];
+            let composition_id = result["composition_id"]
+                .as_str()
+                .unwrap_or("unknown")
+                .to_string();
+            let ok = status == "ok";
+            let payload = WebhookPayload {
+                ok,
+                job: job.name.clone(),
+                composition_id: composition_id.clone(),
+                output: result["output"].clone(),
+                error: result["error"].as_str().map(String::from),
+            };
+            return Some((composition_id, payload));
+        }
+    }
 }
 
 async fn fire_webhook(url: &str, payload: &WebhookPayload) {
@@ -87,6 +187,20 @@ async fn run_job(job: &ScheduledJob, config: &SchedulerConfig) {
             return;
         }
     };
+
+    // Grid-broker dispatch: hand the graph + input to a remote broker
+    // and poll for completion. The broker handles stage resolution,
+    // worker selection, and graph splitting; we only relay the
+    // outcome to the webhook the same way local execution would.
+    if let Some(broker) = &config.grid_broker {
+        if let Some((cid, payload)) = dispatch_to_grid(broker, job, &graph_json, &graph).await {
+            if let Some(url) = &job.webhook {
+                fire_webhook(url, &payload).await;
+            }
+            info!("Job {} — composition_id={cid}", job.name);
+        }
+        return;
+    }
 
     // Build the store and run the composition synchronously, then drop the
     // store before any `.await` points so the future stays `Send`.
