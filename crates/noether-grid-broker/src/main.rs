@@ -36,6 +36,12 @@ struct Cli {
         default_value = ".noether/store.json"
     )]
     store_path: String,
+    /// Optional path to a JSON file mapping API key → monthly quota
+    /// (in US cents). Format: `{"key-abc": 50000, "key-def": 10000}`.
+    /// When present, every `POST /jobs` checks the quota before
+    /// accepting; over-quota submissions return 429.
+    #[arg(long, env = "NOETHER_GRID_QUOTAS_FILE")]
+    quotas_file: Option<String>,
 }
 
 #[tokio::main]
@@ -68,6 +74,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tracing::info!("loaded {count} stage(s) into broker catalogue");
     }
 
+    // Optionally seed per-agent quotas from JSON. Format:
+    // `{"<api-key>": <monthly-cents>}`. Missing file or parse error =
+    // log + boot anyway with no quotas.
+    if let Some(path) = &cli.quotas_file {
+        match std::fs::read_to_string(path) {
+            Ok(raw) => match serde_json::from_str::<std::collections::HashMap<String, u64>>(&raw) {
+                Ok(map) => {
+                    let n = map.len();
+                    state.seed_quotas(map).await;
+                    tracing::info!("loaded {n} per-agent quota(s) from {path}");
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "could not parse quotas file {path}: {e}; running without quotas"
+                    );
+                }
+            },
+            Err(e) => {
+                tracing::warn!("could not read quotas file {path}: {e}; running without quotas");
+            }
+        }
+    }
+
     // Spawn the worker-pruner so dead workers disappear from the
     // registry within 3× their declared heartbeat interval.
     {
@@ -81,6 +110,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
+    // Background gauge refresher — workers_total / workers_healthy
+    // gauges are only useful when up-to-date. Cheap snapshot every 5s.
+    {
+        let state = state.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(std::time::Duration::from_secs(5));
+            loop {
+                ticker.tick().await;
+                let snapshot = state.snapshot_workers().await;
+                state.metrics.workers_total.set(snapshot.len() as i64);
+                state
+                    .metrics
+                    .workers_healthy
+                    .set(snapshot.iter().filter(|w| w.healthy).count() as i64);
+            }
+        });
+    }
+
     let app = Router::new()
         .route("/health", routing::get(routes::health))
         .route("/workers", routing::get(routes::list_workers))
@@ -89,6 +136,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/workers/{id}", routing::delete(routes::drain_worker))
         .route("/jobs", routing::post(routes::submit_job))
         .route("/jobs/{id}", routing::get(routes::get_job))
+        .route("/metrics", routing::get(routes::metrics))
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .with_state(state);
 

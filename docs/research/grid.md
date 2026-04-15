@@ -4,10 +4,15 @@
 supported. This page describes the design; the prototype lives on the
 `research/grid` branch.
 
-**Phase 1** (initial scaffold) and **phase 2 core** (graph splitting + cost
-ledger + scheduler integration) are in. **Phase 3** (postgres state,
-worker-death retry, deployment manifests, Prometheus metrics) is the next
-session's work.
+**Phase 1**, **phase 2 core** (graph splitting + cost ledger + scheduler
+integration) and **phase 3 essentials** (worker-death retry, per-agent
+quotas, Prometheus `/metrics`, systemd units) are in. The only piece of
+the original phase-3 scope deferred to a later session is **postgres
+state for the broker** — kept in-memory because re-enrolment via heartbeat
+recovers worker state in ~10 s and a 60 s sprint cron edge supersedes any
+in-flight job lost on restart. Postgres becomes worth adding when the
+broker grows multi-instance or when job persistence outlives a sprint
+tick (the dashboard work in phase 4 will surface that pressure first).
 
 ## Problem
 
@@ -174,6 +179,52 @@ metrics, graph splitting for heterogeneous `Effect::Llm` graphs.
 
 **Phase 3 (~2 weeks):** postgres state, worker-death retry, systemd / k8s
 manifests, registry-UI dashboard page.
+
+## Deploying
+
+Both the broker and the worker ship as single static Rust binaries.
+For the caloron pilot the recommended layout is:
+
+- **One broker** on a stable host inside the corp network
+  (`broker.corp.internal:8088`). systemd unit at
+  `crates/noether-grid-broker/infra/noether-grid-broker.service`.
+  The broker is in-memory only — restart re-enrols workers via heartbeat.
+- **One worker per LLM-credentialed machine** (engineer dev boxes,
+  shared GPU host, build-bot, anything that has a Claude / Cursor / GPT
+  login). systemd unit at
+  `crates/noether-grid-worker/infra/noether-grid-worker.service`. Each
+  worker reads LLM credentials from the host's standard env
+  (`MISTRAL_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
+  `VERTEX_AI_PROJECT`).
+- **Caloron's scheduler** points at the broker via `grid_broker:` in
+  `scheduler.json` (no graph or stage changes).
+
+Optional config files:
+
+- `/etc/noether/grid-broker.env` — `NOETHER_GRID_BIND`,
+  `NOETHER_GRID_SECRET`, `NOETHER_STORE_PATH`, `NOETHER_GRID_QUOTAS_FILE`.
+- `/etc/noether/grid-worker.env` — `NOETHER_GRID_BROKER`,
+  `NOETHER_GRID_WORKER_BIND`, `NOETHER_GRID_WORKER_URL`,
+  `NOETHER_GRID_SECRET`, plus the LLM credential vars.
+- `/etc/noether/quotas.json` — optional per-API-key monthly cents map.
+
+Observability: `GET /metrics` on the broker exposes Prometheus
+text-format counters and gauges (`noether_grid_workers_*`,
+`noether_grid_jobs_*_total`, `noether_grid_cents_spent_total`). Point
+your existing scrape at it.
+
+## Reliability
+
+Worker death mid-job is handled with up to **3 dispatch attempts** per
+submitted job. On a `RemoteCallFailed` from any RemoteStage, the broker
+excludes the assigned worker(s) from the next split attempt and tries
+again from a fresh worker snapshot. After 3 attempts the job's final
+status is `Failed` with the last error reported in the trace.
+
+Per-agent quotas (loaded from `--quotas-file`) gate `POST /jobs` before
+dispatch: missing `X-API-Key` returns 401, exhausted budget returns 429.
+When no quotas file is configured, the broker is single-tenant and
+accepts every submission.
 
 ## Open design questions
 

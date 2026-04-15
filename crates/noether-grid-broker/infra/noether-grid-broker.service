@@ -1,0 +1,24 @@
+[Unit]
+Description=Noether grid broker
+Documentation=https://github.com/alpibrusl/noether/blob/research/grid/docs/research/grid.md
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/noether-grid-broker
+Restart=always
+RestartSec=5
+WorkingDirectory=/var/lib/noether
+EnvironmentFile=-/etc/noether/grid-broker.env
+Environment=RUST_LOG=noether_grid_broker=info,tower_http=warn
+# Hardening — the broker doesn't write to disk in phase-3 (no postgres
+# yet) so we can lock down the filesystem aggressively.
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+ReadWritePaths=/var/lib/noether
+DynamicUser=true
+
+[Install]
+WantedBy=multi-user.target

@@ -51,6 +51,94 @@ pub struct JobEntry {
     pub dispatched_to: Option<WorkerId>,
 }
 
+/// Per-API-key spending limit + running total. Looked up on every
+/// `POST /jobs` so a single agent can't drain the pool.
+#[derive(Debug, Clone)]
+pub struct AgentQuota {
+    pub monthly_cents: u64,
+    pub spent_cents: u64,
+}
+
+/// Prometheus metrics surface. Counters + gauges, no histograms in
+/// phase 3 — we'll add request-duration histograms when we have a
+/// concrete dashboard requirement.
+pub struct Metrics {
+    pub workers_total: prometheus::IntGauge,
+    pub workers_healthy: prometheus::IntGauge,
+    pub jobs_submitted_total: prometheus::IntCounter,
+    pub jobs_succeeded_total: prometheus::IntCounter,
+    pub jobs_failed_total: prometheus::IntCounter,
+    pub jobs_abandoned_total: prometheus::IntCounter,
+    pub cents_spent_total: prometheus::IntCounter,
+    pub registry: prometheus::Registry,
+}
+
+impl Metrics {
+    pub fn new() -> Self {
+        let registry = prometheus::Registry::new();
+        let workers_total =
+            prometheus::IntGauge::new("noether_grid_workers_total", "registered workers").unwrap();
+        let workers_healthy = prometheus::IntGauge::new(
+            "noether_grid_workers_healthy",
+            "workers within heartbeat TTL and not draining",
+        )
+        .unwrap();
+        let jobs_submitted_total = prometheus::IntCounter::new(
+            "noether_grid_jobs_submitted_total",
+            "POST /jobs that reached dispatch",
+        )
+        .unwrap();
+        let jobs_succeeded_total = prometheus::IntCounter::new(
+            "noether_grid_jobs_succeeded_total",
+            "jobs whose final status was Ok",
+        )
+        .unwrap();
+        let jobs_failed_total = prometheus::IntCounter::new(
+            "noether_grid_jobs_failed_total",
+            "jobs whose final status was Failed",
+        )
+        .unwrap();
+        let jobs_abandoned_total = prometheus::IntCounter::new(
+            "noether_grid_jobs_abandoned_total",
+            "jobs whose final status was Abandoned (worker death, panic)",
+        )
+        .unwrap();
+        let cents_spent_total = prometheus::IntCounter::new(
+            "noether_grid_cents_spent_total",
+            "cumulative spent_cents observed across all workers",
+        )
+        .unwrap();
+        for c in [workers_total.clone(), workers_healthy.clone()] {
+            registry.register(Box::new(c)).unwrap();
+        }
+        for c in [
+            jobs_submitted_total.clone(),
+            jobs_succeeded_total.clone(),
+            jobs_failed_total.clone(),
+            jobs_abandoned_total.clone(),
+            cents_spent_total.clone(),
+        ] {
+            registry.register(Box::new(c)).unwrap();
+        }
+        Self {
+            workers_total,
+            workers_healthy,
+            jobs_submitted_total,
+            jobs_succeeded_total,
+            jobs_failed_total,
+            jobs_abandoned_total,
+            cents_spent_total,
+            registry,
+        }
+    }
+}
+
+impl Default for Metrics {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Shared application state.
 pub struct AppState {
     pub workers: Mutex<HashMap<WorkerId, WorkerEntry>>,
@@ -64,6 +152,10 @@ pub struct AppState {
     /// it live-synced. Re-run the broker after `stage add` if
     /// freshness matters.
     pub stages: Mutex<noether_store::MemoryStore>,
+    /// API-key → quota mapping. Loaded once at startup from the
+    /// `--quotas-file` JSON. Empty map means "no per-agent limits".
+    pub quotas: Mutex<HashMap<String, AgentQuota>>,
+    pub metrics: Metrics,
 }
 
 impl AppState {
@@ -73,6 +165,24 @@ impl AppState {
             jobs: Mutex::new(HashMap::new()),
             secret,
             stages: Mutex::new(noether_store::MemoryStore::new()),
+            quotas: Mutex::new(HashMap::new()),
+            metrics: Metrics::new(),
+        }
+    }
+
+    /// Replace the quota map with the contents of `entries`. Called at
+    /// boot from the optional --quotas-file JSON.
+    pub async fn seed_quotas(&self, entries: HashMap<String, u64>) {
+        let mut quotas = self.quotas.lock().await;
+        *quotas = HashMap::new();
+        for (key, monthly_cents) in entries {
+            quotas.insert(
+                key,
+                AgentQuota {
+                    monthly_cents,
+                    spent_cents: 0,
+                },
+            );
         }
     }
 

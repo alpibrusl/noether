@@ -31,6 +31,11 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 uuid = { version = "1", features = ["v4"] }
 tower-http = { version = "0.6", features = ["cors", "trace"] }
 clap = { version = "4", features = ["derive", "env"] }
+prometheus = { version = "0.13", default-features = false, features = ["process"] }
+# Postgres-backed durability is deferred to phase 4 — see docs/research/grid.md.
+# The broker is currently in-memory; restart re-enrols workers via heartbeat
+# within ~10s and re-fires any pending sprint-tick on the next cron edge,
+# which is fine for caloron's pilot loop.
 
 [dev-dependencies]
 axum = "0.8"
