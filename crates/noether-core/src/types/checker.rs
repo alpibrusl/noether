@@ -69,6 +69,17 @@ impl fmt::Display for IncompatibilityReason {
     }
 }
 
+/// True when values of this type may legitimately be absent from a Record
+/// value — i.e. the declared type admits `null`. Used by Record subtyping
+/// to treat nullable fields as optional.
+fn is_nullable(t: &NType) -> bool {
+    match t {
+        NType::Null | NType::Any => true,
+        NType::Union(variants) => variants.iter().any(is_nullable),
+        _ => false,
+    }
+}
+
 /// Check if `sub` is a structural subtype of `sup`.
 ///
 /// Returns `Compatible` if a value of type `sub` can safely be used where
@@ -129,13 +140,23 @@ pub fn is_subtype_of(sub: &NType, sup: &NType) -> TypeCompatibility {
         // Record: width + depth subtyping
         // Sub may have MORE fields than sup (width subtyping).
         // Each field in sup must exist in sub with a compatible type (depth).
+        //
+        // A field typed as nullable in sup (`T | Null`, `Null`, or `Any`) is
+        // treated as optional: the value (sub) may omit it entirely, since
+        // "absent" is equivalent to "null" for downstream consumers that
+        // already have to handle null. This lets stage authors declare
+        // config-like fields (`threshold_pct: Number | Null`) without
+        // forcing every upstream stage to carry the field through its own
+        // output schema.
         (Record(sub_fields), Record(sup_fields)) => {
             for (field_name, sup_type) in sup_fields {
                 match sub_fields.get(field_name) {
                     None => {
-                        return Incompatible(MissingField {
-                            field: field_name.clone(),
-                        })
+                        if !is_nullable(sup_type) {
+                            return Incompatible(MissingField {
+                                field: field_name.clone(),
+                            });
+                        }
                     }
                     Some(sub_type) => {
                         if let Incompatible(r) = is_subtype_of(sub_type, sup_type) {
@@ -340,6 +361,58 @@ mod tests {
             }
             TypeCompatibility::Compatible => panic!("expected incompatible"),
         }
+    }
+
+    // --- Optional-field tests (nullable = absent) ---
+
+    #[test]
+    fn nullable_field_may_be_absent_from_sub() {
+        // Required field `foo: Number | Null` in sup: sub may omit it.
+        let sup = NType::record([
+            ("name", NType::Text),
+            ("foo", NType::optional(NType::Number)),
+        ]);
+        let sub = NType::record([("name", NType::Text)]);
+        assert!(compatible(&sub, &sup));
+    }
+
+    #[test]
+    fn non_nullable_field_still_required() {
+        // A non-nullable field omitted from sub is still an error.
+        let sup = NType::record([("name", NType::Text), ("age", NType::Number)]);
+        let sub = NType::record([("name", NType::Text)]);
+        assert!(!compatible(&sub, &sup));
+    }
+
+    #[test]
+    fn null_typed_field_is_optional() {
+        // A field typed literally as `Null` counts as nullable.
+        let sup = NType::record([("name", NType::Text), ("marker", NType::Null)]);
+        let sub = NType::record([("name", NType::Text)]);
+        assert!(compatible(&sub, &sup));
+    }
+
+    #[test]
+    fn any_typed_field_is_optional() {
+        // A field typed as `Any` counts as nullable (Any admits null).
+        let sup = NType::record([("name", NType::Text), ("extra", NType::Any)]);
+        let sub = NType::record([("name", NType::Text)]);
+        assert!(compatible(&sub, &sup));
+    }
+
+    #[test]
+    fn nullable_field_may_be_present_with_null_value() {
+        // Present-with-null still works (unchanged behaviour).
+        let sup = NType::record([("foo", NType::optional(NType::Number))]);
+        let sub = NType::record([("foo", NType::Null)]);
+        assert!(compatible(&sub, &sup));
+    }
+
+    #[test]
+    fn nullable_field_may_be_present_with_t_value() {
+        let sup = NType::record([("foo", NType::optional(NType::Number))]);
+        let sub = NType::record([("foo", NType::Number)]);
+        assert!(compatible(&sub, &sup));
     }
 
     #[test]

@@ -55,4 +55,16 @@ pub trait StageStore {
     fn list_owned(&self, lifecycle: Option<&StageLifecycle>) -> Vec<Stage> {
         self.list(lifecycle).into_iter().cloned().collect()
     }
+
+    /// Find all stages whose metadata `name` field matches exactly.
+    /// Used by graph loaders so composition files can reference stages
+    /// by their human-authored name instead of their 8-char content-hash
+    /// prefix. Returns every match across all lifecycles; callers
+    /// typically filter for `Active`.
+    fn find_by_name(&self, name: &str) -> Vec<&Stage> {
+        self.list(None)
+            .into_iter()
+            .filter(|s| s.name.as_deref() == Some(name))
+            .collect()
+    }
 }

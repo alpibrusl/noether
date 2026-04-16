@@ -192,6 +192,7 @@ impl StageBuilder {
             ui_style: None,
             tags: self.tags,
             aliases: self.aliases,
+            name: self.name.clone(),
         })
     }
 
@@ -245,6 +246,7 @@ impl StageBuilder {
             ui_style: self.ui_style,
             tags: self.tags,
             aliases: self.aliases,
+            name: self.name.clone(),
         })
     }
 
@@ -289,6 +291,7 @@ impl StageBuilder {
             ui_style: self.ui_style,
             tags: self.tags,
             aliases: self.aliases,
+            name: self.name.clone(),
         })
     }
 }

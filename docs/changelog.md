@@ -14,6 +14,66 @@ uses [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.4.1] — 2026-04-16
+
+DX release: two ergonomic frictions that surfaced while building a
+realistic telemetry pipeline (see `/home/alpibru/workspace/noether-telemetry`
+for the exercise that drove these) are now fixed. Backward-compatible
+for the type system; additive for the graph resolver. **No change to
+stage content hashes** — existing stages and compositions keep their
+identities.
+
+### Changed
+
+- **Nullable Record fields are now optional.** A field declared
+  `T | Null` (or `Null`, or `Any`) in a record type is treated as
+  optional — the value may omit the key entirely instead of being
+  required to include it with a null. Type-checker rule:
+  `is_subtype_of(Record{…}, Record{field: T | Null})` now accepts
+  records that don't contain `field`. Non-nullable fields remain
+  strictly required. Motivation: config-like stage inputs
+  (`threshold_pct`, `peak_power_kwp`) previously had to be carried
+  through every upstream stage's output schema, because `T | Null`
+  meant "present, possibly null" not "may be absent." The new
+  semantics line up with how JSON Schema + TypeScript + pydantic
+  treat nullable fields.
+
+### Added
+
+- **Stage lookup by `name` in graph references.** Composition graphs
+  can now write `{"op": "Stage", "id": "volvo_map"}` — the graph
+  loader resolves the string against the store by name when it
+  doesn't match an ID prefix. Active stages win over Draft /
+  Deprecated; duplicates across Active lifecycles are still an
+  explicit `Ambiguous` error. Previously, graphs had to paste the
+  8-char content-hash prefix that `stage add` emitted. Existing
+  hex-prefix references continue to work — the new behaviour only
+  kicks in when the reference isn't a valid hex prefix of any stored
+  stage.
+- `Stage.name: Option<String>` field, populated automatically from
+  the spec's top-level `name`. Not part of the content hash —
+  changing the human-authored name doesn't change the stage's
+  identity. Two stages with the same name but different types remain
+  distinct identities (the resolver errors on ambiguity rather than
+  guessing).
+- `StageStore::find_by_name(name)` default method — returns all
+  stages with a matching `name` field, across all lifecycles. Built
+  on `list()`, so every store impl gets it for free.
+
+### Migration
+
+Nothing breaks. Existing stage specs, composition graphs, and stores
+from v0.4.0 load and run identically. Two optional cleanups you can
+make to take advantage:
+
+1. Drop the carried-through config fields from intermediate stage
+   outputs. A downstream stage that declares `field: Number | Null`
+   no longer requires every upstream stage to include that field.
+2. Rewrite graph references from hex prefixes to names:
+   `{"id": "abc12345"}` → `{"id": "<spec-name>"}`.
+
+---
+
 ## [0.4.0] — 2026-04-15
 
 First release with **noether-grid**: a broker + worker pair that pools

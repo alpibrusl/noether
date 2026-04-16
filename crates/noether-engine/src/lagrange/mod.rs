@@ -2,7 +2,7 @@ mod ast;
 
 pub use ast::{collect_stage_ids, CompositionGraph, CompositionNode};
 
-use noether_core::stage::StageId;
+use noether_core::stage::{Stage, StageId};
 use noether_store::StageStore;
 use sha2::{Digest, Sha256};
 
@@ -50,57 +50,122 @@ impl std::fmt::Display for PrefixResolutionError {
 
 impl std::error::Error for PrefixResolutionError {}
 
+/// Snapshot of the store's identity metadata, used to resolve composition
+/// references without holding the store reference across nested walks.
+struct ResolverIndex {
+    /// Every stage ID currently in the store, for prefix matching.
+    all_ids: Vec<String>,
+    /// Name → (active_ids, non_active_ids). A stage-ref string is tried as
+    /// a name lookup when it doesn't match any ID prefix. Active matches
+    /// win unconditionally; non-active are only considered when no Active
+    /// candidate exists.
+    by_name: std::collections::HashMap<String, (Vec<String>, Vec<String>)>,
+}
+
 /// Walk a composition graph and replace any stage IDs that are unique
-/// prefixes of a real stage in the store with their full 64-character IDs.
+/// prefixes — or human-authored names — of a real stage in the store with
+/// their full 64-character IDs.
 ///
-/// Exact matches are passed through unchanged. Hand-authored graphs can
-/// therefore use 8-character prefixes (the same form `noether stage list`
-/// prints) without manually looking up the full hash.
+/// Resolution order for `{"op": "Stage", "id": "<ref>"}`:
+///
+///   1. `<ref>` is an exact full-length ID → pass through.
+///   2. `<ref>` is a unique hex prefix of one stored ID → use it.
+///   3. `<ref>` matches exactly one stored stage's `name` field — with
+///      Active preferred over Draft/Deprecated — → use that stage's ID.
+///   4. Otherwise error with `NotFound` or `Ambiguous`.
+///
+/// Hand-authored graphs can therefore reference stages by the name from
+/// their spec (`{"id": "volvo_map"}`) without juggling 8-char prefixes.
 pub fn resolve_stage_prefixes(
     node: &mut CompositionNode,
     store: &(impl StageStore + ?Sized),
 ) -> Result<(), PrefixResolutionError> {
-    // Snapshot the IDs once — repeated walks would otherwise pay for it per node.
-    let ids: Vec<String> = store.list(None).iter().map(|s| s.id.0.clone()).collect();
-    resolve_in_node(node, &ids)
+    let stages: Vec<&Stage> = store.list(None);
+    let mut by_name: std::collections::HashMap<String, (Vec<String>, Vec<String>)> =
+        std::collections::HashMap::new();
+    for s in &stages {
+        if let Some(name) = &s.name {
+            let entry = by_name.entry(name.clone()).or_default();
+            if matches!(s.lifecycle, noether_core::stage::StageLifecycle::Active) {
+                entry.0.push(s.id.0.clone());
+            } else {
+                entry.1.push(s.id.0.clone());
+            }
+        }
+    }
+    let index = ResolverIndex {
+        all_ids: stages.iter().map(|s| s.id.0.clone()).collect(),
+        by_name,
+    };
+    resolve_in_node(node, &index)
 }
 
 fn resolve_in_node(
     node: &mut CompositionNode,
-    all_ids: &[String],
+    index: &ResolverIndex,
 ) -> Result<(), PrefixResolutionError> {
     match node {
         CompositionNode::Stage { id, .. } => {
-            // Exact match: nothing to do.
-            if all_ids.iter().any(|i| i == &id.0) {
+            // 1. Exact full-length ID.
+            if index.all_ids.iter().any(|i| i == &id.0) {
                 return Ok(());
             }
-            // Otherwise, look for prefix matches.
-            let matches: Vec<&String> = all_ids.iter().filter(|i| i.starts_with(&id.0)).collect();
-            match matches.len() {
-                0 => Err(PrefixResolutionError::NotFound {
-                    prefix: id.0.clone(),
-                }),
-                1 => {
-                    *id = StageId(matches[0].clone());
-                    Ok(())
+            // 2. Hex prefix match. Guarded by "looks hex-ish" so a name
+            //    that happens to start with hex chars doesn't block name
+            //    lookup (e.g. the name `fade_in` would prefix-match
+            //    "fade…" stage IDs).
+            let looks_like_prefix = !id.0.is_empty() && id.0.chars().all(|c| c.is_ascii_hexdigit());
+            if looks_like_prefix {
+                let matches: Vec<&String> = index
+                    .all_ids
+                    .iter()
+                    .filter(|i| i.starts_with(&id.0))
+                    .collect();
+                match matches.len() {
+                    0 => {}
+                    1 => {
+                        *id = StageId(matches[0].clone());
+                        return Ok(());
+                    }
+                    _ => {
+                        return Err(PrefixResolutionError::Ambiguous {
+                            prefix: id.0.clone(),
+                            matches: matches.into_iter().cloned().collect(),
+                        })
+                    }
                 }
-                _ => Err(PrefixResolutionError::Ambiguous {
-                    prefix: id.0.clone(),
-                    matches: matches.into_iter().cloned().collect(),
-                }),
             }
+            // 3. Name lookup — Active preferred, then fall back.
+            if let Some((active, other)) = index.by_name.get(&id.0) {
+                let candidates = if !active.is_empty() { active } else { other };
+                match candidates.len() {
+                    0 => {}
+                    1 => {
+                        *id = StageId(candidates[0].clone());
+                        return Ok(());
+                    }
+                    _ => {
+                        return Err(PrefixResolutionError::Ambiguous {
+                            prefix: id.0.clone(),
+                            matches: candidates.clone(),
+                        })
+                    }
+                }
+            }
+            Err(PrefixResolutionError::NotFound {
+                prefix: id.0.clone(),
+            })
         }
         CompositionNode::RemoteStage { .. } | CompositionNode::Const { .. } => Ok(()),
         CompositionNode::Sequential { stages } => {
             for s in stages {
-                resolve_in_node(s, all_ids)?;
+                resolve_in_node(s, index)?;
             }
             Ok(())
         }
         CompositionNode::Parallel { branches } => {
             for b in branches.values_mut() {
-                resolve_in_node(b, all_ids)?;
+                resolve_in_node(b, index)?;
             }
             Ok(())
         }
@@ -109,29 +174,29 @@ fn resolve_in_node(
             if_true,
             if_false,
         } => {
-            resolve_in_node(predicate, all_ids)?;
-            resolve_in_node(if_true, all_ids)?;
-            resolve_in_node(if_false, all_ids)
+            resolve_in_node(predicate, index)?;
+            resolve_in_node(if_true, index)?;
+            resolve_in_node(if_false, index)
         }
         CompositionNode::Fanout { source, targets } => {
-            resolve_in_node(source, all_ids)?;
+            resolve_in_node(source, index)?;
             for t in targets {
-                resolve_in_node(t, all_ids)?;
+                resolve_in_node(t, index)?;
             }
             Ok(())
         }
         CompositionNode::Merge { sources, target } => {
             for s in sources {
-                resolve_in_node(s, all_ids)?;
+                resolve_in_node(s, index)?;
             }
-            resolve_in_node(target, all_ids)
+            resolve_in_node(target, index)
         }
-        CompositionNode::Retry { stage, .. } => resolve_in_node(stage, all_ids),
+        CompositionNode::Retry { stage, .. } => resolve_in_node(stage, index),
         CompositionNode::Let { bindings, body } => {
             for b in bindings.values_mut() {
-                resolve_in_node(b, all_ids)?;
+                resolve_in_node(b, index)?;
             }
-            resolve_in_node(body, all_ids)
+            resolve_in_node(body, index)
         }
     }
 }
@@ -166,6 +231,123 @@ mod tests {
         let json = serialize_graph(&graph).unwrap();
         let parsed = parse_graph(&json).unwrap();
         assert_eq!(graph, parsed);
+    }
+
+    #[test]
+    fn resolver_resolves_by_name_when_no_prefix_match() {
+        use noether_core::capability::Capability;
+        use noether_core::effects::EffectSet;
+        use noether_core::stage::{CostEstimate, Stage, StageLifecycle, StageSignature};
+        use noether_core::types::NType;
+        use noether_store::MemoryStore;
+        use noether_store::StageStore as _;
+        use std::collections::BTreeSet;
+
+        let sig = StageSignature {
+            input: NType::Text,
+            output: NType::Number,
+            effects: EffectSet::pure(),
+            implementation_hash: "hash".into(),
+        };
+        let stage = Stage {
+            id: StageId("ffaa1122deadbeef0000000000000000000000000000000000000000000000ff".into()),
+            canonical_id: None,
+            signature: sig,
+            capabilities: BTreeSet::<Capability>::new(),
+            cost: CostEstimate {
+                time_ms_p50: None,
+                tokens_est: None,
+                memory_mb: None,
+            },
+            description: "stub".into(),
+            examples: vec![],
+            lifecycle: StageLifecycle::Active,
+            ed25519_signature: None,
+            signer_public_key: None,
+            implementation_code: None,
+            implementation_language: None,
+            ui_style: None,
+            tags: vec![],
+            aliases: vec![],
+            name: Some("volvo_map".into()),
+        };
+        let mut store = MemoryStore::new();
+        store.put(stage.clone()).unwrap();
+
+        let mut node = CompositionNode::Stage {
+            id: StageId("volvo_map".into()),
+            config: None,
+        };
+        resolve_stage_prefixes(&mut node, &store).unwrap();
+        match node {
+            CompositionNode::Stage { id, .. } => assert_eq!(id.0, stage.id.0),
+            _ => panic!("expected Stage node"),
+        }
+    }
+
+    #[test]
+    fn resolver_prefers_active_when_duplicate_names() {
+        use noether_core::capability::Capability;
+        use noether_core::effects::EffectSet;
+        use noether_core::stage::{CostEstimate, Stage, StageLifecycle, StageSignature};
+        use noether_core::types::NType;
+        use noether_store::MemoryStore;
+        use noether_store::StageStore as _;
+        use std::collections::BTreeSet;
+
+        fn mk(id_hex: &str, lifecycle: StageLifecycle, hash: &str) -> Stage {
+            Stage {
+                id: StageId(id_hex.into()),
+                canonical_id: None,
+                signature: StageSignature {
+                    input: NType::Text,
+                    output: NType::Number,
+                    effects: EffectSet::pure(),
+                    implementation_hash: hash.into(),
+                },
+                capabilities: BTreeSet::<Capability>::new(),
+                cost: CostEstimate {
+                    time_ms_p50: None,
+                    tokens_est: None,
+                    memory_mb: None,
+                },
+                description: "stub".into(),
+                examples: vec![],
+                lifecycle,
+                ed25519_signature: None,
+                signer_public_key: None,
+                implementation_code: None,
+                implementation_language: None,
+                ui_style: None,
+                tags: vec![],
+                aliases: vec![],
+                name: Some("shared".into()),
+            }
+        }
+
+        let draft = mk(
+            "1111111111111111111111111111111111111111111111111111111111111111",
+            StageLifecycle::Draft,
+            "h1",
+        );
+        let active = mk(
+            "2222222222222222222222222222222222222222222222222222222222222222",
+            StageLifecycle::Active,
+            "h2",
+        );
+        let mut store = MemoryStore::new();
+        store.put(draft).unwrap();
+        store.put(active.clone()).unwrap();
+
+        let mut node = CompositionNode::Stage {
+            id: StageId("shared".into()),
+            config: None,
+        };
+        resolve_stage_prefixes(&mut node, &store).unwrap();
+        match node {
+            CompositionNode::Stage { id, .. } => assert_eq!(id.0, active.id.0),
+            _ => panic!("expected Stage node"),
+        }
     }
 
     #[test]

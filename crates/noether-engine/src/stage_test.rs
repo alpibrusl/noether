@@ -237,6 +237,7 @@ mod tests {
             ui_style: None,
             tags: vec![],
             aliases: vec![],
+            name: None,
         }
     }
 

@@ -231,6 +231,7 @@ mod tests {
             ui_style: None,
             tags: vec![],
             aliases: vec![],
+            name: None,
         }
     }
 
@@ -358,6 +359,7 @@ mod tests {
             ui_style: None,
             tags: vec![],
             aliases: vec![],
+            name: None,
         };
         store.put(free).unwrap();
 

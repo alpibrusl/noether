@@ -87,6 +87,14 @@ pub struct Stage {
     /// Not part of the content hash.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub aliases: Vec<String>,
+    /// Human-authored name from the original stage spec (e.g. `volvo_map`).
+    /// Used for name-based lookup in graph references — a composition can
+    /// say `{"op": "Stage", "id": "volvo_map"}` and the loader resolves it
+    /// to the latest Active stage with this name. Not part of the content
+    /// hash (two stages with the same name but different types are distinct
+    /// identities).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }
 
 #[cfg(test)]
@@ -127,6 +135,7 @@ mod tests {
             ui_style: None,
             tags: vec![],
             aliases: vec![],
+            name: Some("text_to_number".into()),
         };
         let json = serde_json::to_string_pretty(&stage).unwrap();
         let deserialized: Stage = serde_json::from_str(&json).unwrap();
