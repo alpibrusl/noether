@@ -1,25 +1,34 @@
 # Nix Execution Layer
 
-Nix provides hermetic, reproducible sandboxed execution for Python, JavaScript,
-and bash stages. It is Noether's L1 — the layer below the stage store.
+Nix provides a reproducible, pinned runtime for Python, JavaScript, and bash
+stages. It is Noether's L1 — the layer below the stage store.
+
+!!! danger "Reproducibility, not isolation"
+    Nix pins the runtime's binaries and libraries so you always get the same
+    Python, the same NumPy, the same everything. It does **not** run the
+    stage inside a sandbox. The subprocess inherits the host user's
+    privileges, filesystem, and network. A stage can call `os.system(...)`,
+    read files outside its working directory, and make arbitrary HTTP
+    requests. Treat stages you did not write as untrusted code.
 
 ---
 
 ## Why Nix
 
-A stage is identified by its content hash. For that guarantee to mean anything,
-the execution environment must also be reproducible. The same Python stage on two
-machines must produce the same output from the same input.
+A stage is identified by its content hash. For that guarantee to mean
+anything, the runtime must also be reproducible: the same Python stage on
+two machines must produce the same output from the same input.
 
-Nix achieves this through:
+Nix gives us that via:
 
-- **Content-addressed derivations** — every package is identified by the hash of its
-  build recipe. Two Nix derivations with the same hash produce bit-for-bit identical
-  outputs.
-- **No shared mutable state** — packages live in `/nix/store/<hash>-<name>`, isolated
-  from system libraries.
-- **Hermetic builds** — network access is blocked during evaluation; all inputs are
-  declared explicitly.
+- **Content-addressed derivations** — every package is identified by the
+  hash of its build recipe. Two Nix derivations with the same hash produce
+  bit-for-bit identical outputs.
+- **No shared mutable state** — packages live in `/nix/store/<hash>-<name>`,
+  isolated from system libraries.
+- **Hermetic builds** — Nix evaluation is hermetic at *build time*: network
+  access is blocked, all inputs are declared explicitly. (This is distinct
+  from the subprocess's network access at *run time*, which is unrestricted.)
 
 ---
 

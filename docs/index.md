@@ -2,7 +2,14 @@
 
 **Typed, content-addressed pipelines — reproducible by construction, LLM-assisted by option.**
 
-Decompose computation into stages with structural type signatures. Compose them into graphs the type system guarantees fit. Execute in a hermetic sandbox. Replay any run from its composition hash.
+Decompose computation into stages with structural type signatures. The type checker verifies graph *topology* before execution — it does not prove stage bodies correct. Run stages in a Nix-pinned runtime for byte-identical reproduction. Replay any run from its composition hash.
+
+!!! warning "Reproducibility is not isolation"
+    The Nix-pinned runtime fixes the language and library versions so the
+    same stage produces the same output. It does **not** sandbox the
+    subprocess: stages run with host-user privileges and can read the
+    filesystem, make network calls, and read environment variables. Do not
+    run stages you did not write without reading [SECURITY.md](https://github.com/alpibrusl/noether/blob/main/SECURITY.md).
 
 ```bash
 cargo install noether-cli

@@ -1,7 +1,14 @@
 //! Nix-based executor for synthesized stages.
 //!
-//! Runs stage implementations as isolated subprocesses using `nix run nixpkgs#<runtime>`,
-//! giving us hermetic, reproducible execution without requiring any ambient language runtime.
+//! Runs stage implementations as subprocesses using `nix run nixpkgs#<runtime>`,
+//! giving a reproducible, Nix-pinned runtime for Python/JavaScript/Bash code
+//! without requiring any ambient language runtime on the host.
+//!
+//! **This is a reproducibility boundary, not an isolation boundary.** Stages
+//! run with the privileges of the host user — they can read/write the
+//! filesystem, make arbitrary network calls, and read environment variables.
+//! Do not execute untrusted stages on a host with credentials you are not
+//! willing to risk. See SECURITY.md for the full trust model.
 //!
 //! ## Execution protocol
 //!
@@ -87,9 +94,12 @@ struct StageImpl {
 
 /// Executor that runs synthesized stages through Nix-managed language runtimes.
 ///
-/// When `nix` is available, each stage is executed inside a hermetically isolated
-/// subprocess (e.g. `nix run nixpkgs#python3 -- stage.py`).  The Nix binary cache
-/// ensures the runtime is downloaded once and then reused forever from the store.
+/// When `nix` is available, each stage is executed as a subprocess with a
+/// Nix-pinned runtime (e.g. `nix run nixpkgs#python3 -- stage.py`). The Nix
+/// binary cache ensures the runtime is downloaded once and then reused from
+/// the store. **This gives reproducibility, not isolation**: the subprocess
+/// inherits the host user's privileges, filesystem, and network. See module
+/// docs and SECURITY.md for the full trust model.
 ///
 /// ## Resource limits
 ///
@@ -490,14 +500,49 @@ impl NixExecutor {
     }
 
     /// Extract pip requirements from `# requires: pkg1==ver, pkg2==ver` comments.
+    ///
+    /// Each spec is validated to prevent typosquatting and shell-metacharacter
+    /// injection from LLM-authored stages. By default, every package must be
+    /// pinned to an exact version (`pkg==1.2.3`). Set
+    /// `NOETHER_ALLOW_UNPINNED_PIP=1` to lift the pinning requirement for
+    /// local development; the character-set validation always runs.
+    ///
+    /// Invalid specs are dropped with a warning; if no valid specs remain,
+    /// this returns `None` and the caller falls back to the default Nix
+    /// runtime (where the missing dependency will surface as an honest
+    /// runtime error instead of a silent pip-install of attacker-chosen
+    /// names).
     fn extract_pip_requirements(code: &str) -> Option<String> {
         for line in code.lines() {
             let trimmed = line.trim();
             if trimmed.starts_with("# requires:") {
                 let reqs = trimmed.strip_prefix("# requires:").unwrap().trim();
-                if !reqs.is_empty() {
-                    return Some(reqs.to_string());
+                if reqs.is_empty() {
+                    continue;
                 }
+                let valid: Vec<String> = reqs
+                    .split(',')
+                    .map(|s| s.trim())
+                    .filter(|s| !s.is_empty())
+                    .filter(|s| match validate_pip_spec(s) {
+                        Ok(()) => true,
+                        Err(reason) => {
+                            eprintln!(
+                                "[noether] rejected `# requires:` entry {s:?} ({reason}); skipping"
+                            );
+                            false
+                        }
+                    })
+                    .map(|s| s.to_string())
+                    .collect();
+
+                if valid.is_empty() {
+                    eprintln!(
+                        "[noether] all `# requires:` entries rejected (raw={reqs:?}); falling back to default Nix runtime"
+                    );
+                    return None;
+                }
+                return Some(valid.join(", "));
             }
         }
         None
@@ -685,6 +730,54 @@ fn first_line(s: &str) -> &str {
         .unwrap_or(s)
 }
 
+/// Validate a single pip requirement spec from a `# requires:` comment.
+///
+/// Accepts `pkg==version`. The package name must match PEP 503 normalisation
+/// (letters, digits, `_`, `-`, `.`). The version must be a straightforward
+/// PEP 440-ish literal (letters, digits, `.`, `+`, `!`, `-`). The pinning
+/// requirement (`==`) can be lifted with `NOETHER_ALLOW_UNPINNED_PIP=1`
+/// for local dev, but the character-set validation always runs so injected
+/// shell metacharacters, quotes, or URL-form specs are rejected.
+fn validate_pip_spec(spec: &str) -> Result<(), &'static str> {
+    let allow_unpinned = matches!(
+        std::env::var("NOETHER_ALLOW_UNPINNED_PIP").as_deref(),
+        Ok("1" | "true" | "yes" | "on")
+    );
+
+    // Split at the first `==`. If absent, require the opt-in flag.
+    let (name, version) = match spec.split_once("==") {
+        Some((n, v)) => (n.trim(), Some(v.trim())),
+        None => {
+            if !allow_unpinned {
+                return Err("unpinned; use pkg==version or set NOETHER_ALLOW_UNPINNED_PIP=1");
+            }
+            (spec.trim(), None)
+        }
+    };
+
+    if name.is_empty() {
+        return Err("empty package name");
+    }
+    if !name
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
+    {
+        return Err("package name contains disallowed characters");
+    }
+    if let Some(v) = version {
+        if v.is_empty() {
+            return Err("empty version after `==`");
+        }
+        if !v
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'+' | b'!' | b'-'))
+        {
+            return Err("version contains disallowed characters");
+        }
+    }
+    Ok(())
+}
+
 // ── StageExecutor impl ────────────────────────────────────────────────────────
 
 impl StageExecutor for NixExecutor {
@@ -715,6 +808,54 @@ mod tests {
             config: NixConfig::default(),
             implementations: HashMap::new(),
         }
+    }
+
+    #[test]
+    fn validate_pip_spec_accepts_pinned() {
+        assert!(validate_pip_spec("pandas==2.0.0").is_ok());
+        assert!(validate_pip_spec("scikit-learn==1.5.1").is_ok());
+        assert!(validate_pip_spec("urllib3==2.2.3").is_ok());
+        assert!(validate_pip_spec("pydantic==2.5.0+cu121").is_ok());
+    }
+
+    #[test]
+    fn validate_pip_spec_rejects_unpinned_by_default() {
+        // Ensure the opt-in flag is not accidentally set in the test env.
+        let guard = (std::env::var_os("NOETHER_ALLOW_UNPINNED_PIP"),);
+        // SAFETY: single-threaded test — no other test reads this var at the same time.
+        unsafe {
+            std::env::remove_var("NOETHER_ALLOW_UNPINNED_PIP");
+        }
+        let result = validate_pip_spec("pandas");
+        // Restore prior state before asserting.
+        if let (Some(prev),) = guard {
+            unsafe {
+                std::env::set_var("NOETHER_ALLOW_UNPINNED_PIP", prev);
+            }
+        }
+        assert!(result.is_err(), "bare name must be rejected without opt-in");
+    }
+
+    #[test]
+    fn validate_pip_spec_rejects_shell_metacharacters() {
+        for bad in [
+            "pandas; rm -rf /",
+            "pandas==$(whoami)",
+            "pandas==1.0.0; echo pwned",
+            "pandas==`id`",
+            "https://evil.example/wheel.whl",
+            "git+https://example.com/repo.git",
+            "pkg with space==1.0",
+            "pkg==1.0 && echo",
+        ] {
+            assert!(validate_pip_spec(bad).is_err(), "should reject {bad:?}");
+        }
+    }
+
+    #[test]
+    fn validate_pip_spec_rejects_empty() {
+        assert!(validate_pip_spec("==1.0").is_err());
+        assert!(validate_pip_spec("pkg==").is_err());
     }
 
     #[test]

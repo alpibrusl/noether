@@ -14,9 +14,11 @@ graph TB
 
 ## L1 — Nix Execution Layer
 
-Stages run inside Nix-managed environments. Each stage declares its language runtime (Python 3.11, Node 20, Bash) and Nix provides a hermetic sandbox with the exact dependencies pinned to the Nix store hash.
+Stages run inside Nix-managed environments. Each stage declares its language runtime (Python 3.11, Node 20, Bash) and Nix provides a runtime with the exact dependencies pinned to the Nix store hash.
 
-This means:
+This is a **reproducibility boundary, not an isolation boundary**: the subprocess inherits the host user's privileges, filesystem access, and network. Stages can `os.system(...)`, read `~/.ssh/id_ed25519`, and make arbitrary HTTP calls. Don't execute stages you did not write unless you have independent isolation (bwrap, firejail, nsjail, a container, a throwaway VM).
+
+What you do get:
 - The same `StageId` produces the same output on any machine that has Nix.
 - No "works on my machine" — dependencies are content-addressed.
 - No ambient environment leaks — stages cannot access the host filesystem or network unless their `effects` declare it.
