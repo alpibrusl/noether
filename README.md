@@ -2,7 +2,9 @@
 
 **Typed, content-addressed pipelines — reproducible by construction, LLM-assisted by option.**
 
-Decompose computation into stages with structural type signatures. Compose them into graphs the type system guarantees fit. Execute in a hermetic sandbox. Replay any run from its composition hash.
+Decompose computation into stages with structural type signatures. The type checker verifies every edge of a composition graph before execution (topology only — it does not prove stage *bodies* correct). Run stages in a Nix-pinned runtime for byte-identical reproduction. Replay any run from its composition hash.
+
+> **Trust model (read first):** the Nix-pinned runtime is a reproducibility boundary, **not** an isolation boundary. Stages run with host-user privileges and can read the filesystem, make network calls, and touch your environment. See [SECURITY.md](./SECURITY.md) before running a stage you did not write.
 
 [![Crates.io](https://img.shields.io/crates/v/noether-cli.svg)](https://crates.io/crates/noether-cli)
 [![Docs](https://img.shields.io/badge/docs-noether.alpibru.com-blue.svg)](https://alpibrusl.github.io/noether/)
@@ -30,7 +32,7 @@ stage: { input: T } → { output: U }
 identity: SHA-256(signature)   ← not a name, not a version, a hash
 ```
 
-Two stages with the same hash are provably the same computation — across machines, across repos, forever. The **composition engine** type-checks every edge of a graph before executing it, using structural subtyping (`Record { a, b, c }` is a subtype of `Record { a, b }`).
+Two stages with the same hash are provably the same computation — across machines, across repos, forever. The **composition engine** type-checks every edge of a graph before executing it, using structural subtyping (`Record { a, b, c }` is a subtype of `Record { a, b }`). This checks graph *topology*; it does not verify that a stage's implementation honours its declared signature (a Python stage claiming `Text → Number` can return a string and you find out at runtime).
 
 Good fit: **typed ETL pipelines, analytics DAGs, data-normalisation across providers, LLM-augmented decisioning, anything where "the same inputs should always produce the same outputs" is a correctness requirement**. Effects are first-class (`Pure`, `Network`, `Llm`, `Cost`, `Process`, etc.) so budget, routing, and policy decisions ride on them.
 
@@ -51,7 +53,7 @@ Two binaries ship from this repo:
 | **GitHub Releases** | [Download prebuilt binaries](https://github.com/alpibrusl/noether/releases/latest) — Linux / macOS / Windows, both binaries packaged separately |
 | **Source** | `cargo build --release -p noether-cli -p noether-scheduler` |
 
-Nix is optional; it's required only to execute Python / JavaScript / Bash stages in a hermetic sandbox. Rust-native stdlib stages run without it.
+Nix is optional; it's required only to execute Python / JavaScript / Bash stages in a Nix-pinned runtime (reproducibility, not isolation). Rust-native stdlib stages run without it.
 
 ---
 
@@ -210,7 +212,7 @@ Guide: **[Remote Registry →](./docs/guides/remote-registry.md)** — publishin
 L4 — Agent Interface      ACLI CLI · Composition Agent · Semantic Index
 L3 — Composition Engine   Type checker · Planner · Executor · Traces
 L2 — Stage Store          Content-addressed registry · Lifecycle · Stdlib
-L1 — Execution Layer      Nix hermetic sandbox · Python/JS/Bash runtimes
+L1 — Execution Layer      Nix-pinned runtimes · Python/JS/Bash (reproducible, not isolated)
 ```
 
 | Crate | Purpose |
