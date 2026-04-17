@@ -4,7 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Status
 
-Noether has completed **Phases 0–3** (Foundation, Store + Stdlib, Composition Engine, Agent Interface). The full design spec is in `docs/roadmap.md`.
+Noether has completed **Phases 0–9** per `docs/roadmap.md`, covering
+foundation, stdlib, composition engine, agent interface, hardening,
+effects v2, NixExecutor hardening, cloud-registry hardening, runtime
+budget enforcement, and distributed execution (`noether-grid-*`).
+Treat that file as the source of truth — this summary is prone to
+drifting, `docs/roadmap.md` isn't.
 
 ## Build & Test Commands
 
@@ -102,7 +107,7 @@ Scalar, Collections, Control, I/O, LLM primitives, Data, Noether internal, Text 
 
 ## Architecture (4 Layers)
 
-- **L1 — Nix Execution Layer**: Hermetic sandboxed execution via Nix store (CAS), binary cache, runtime management.
+- **L1 — Nix Execution Layer**: Reproducible Nix-pinned runtime for Python/JS/Bash stages (CAS, binary cache). **Not an isolation boundary** — subprocess inherits host-user privileges. See SECURITY.md.
 - **L2 — Stage Store**: Immutable versioned registry of stages identified by SHA-256 content hash (not name). Lifecycle: draft → active → deprecated → tombstone.
 - **L3 — Composition Engine**: Type checking, DAG verification, execution planning, structured trace output.
 - **L4 — Agent Interface**: ACLI-compliant CLI (the only public API), Composition Agent (LLM-powered), semantic search index.
@@ -125,13 +130,17 @@ Caloron decides **what** to do (sprint planning, task decomposition). Noether de
 | Phase | Focus | Status |
 |---|---|---|
 | 0 | Foundation — type system, hashing, stage schema | **Done** |
-| 1 | Store + Stdlib — 50 stdlib stages, test harness | **Done** |
+| 1 | Store + Stdlib — 76 stdlib stages, test harness | **Done** |
 | 2 | Composition Engine — DAG executor, trace output | **Done** |
 | 3 | Agent Interface — Composition Agent, semantic index | **Done** |
-| 4 | Hardening — deduplication, store health, CI, docs site | **Done** |
-| 5 | noether-cloud foundation — registry API, scheduler, library API | **Done** |
-| 6 | Effects enforcement — Nix sandbox resource limits, effect mismatch errors | Planned |
-| 7 | Public cloud registry — multi-tenant, billing, dashboard | Planned |
+| 4 | Hardening — `noether build`, store dedup, browser target | **Done** |
+| 5 | Effects v2 — `EffectPolicy`, `infer_effects`, `--allow-effects` | **Done** |
+| 6 | NixExecutor hardening — `NixConfig`, error classification, `warmup()` | **Done** |
+| 7 | Cloud Registry hardening — `DELETE /stages/:id`, paginated refresh | **Done** |
+| 8 | Runtime budget enforcement — `BudgetedExecutor`, `--budget-cents` | **Done** |
+| 9 | Grid — subscription pooling — `noether-grid-broker`/`worker` | **Done (v0.4.0)** |
+
+`docs/roadmap.md` is the source of truth; this table will drift otherwise.
 
 ## noether-cloud Architecture
 

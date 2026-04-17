@@ -122,14 +122,15 @@ impl NixExecutor {
         if determinate.exists() {
             return Some(determinate);
         }
-        // Fallback: check PATH
-        if let Ok(output) = Command::new("which").arg("nix").output() {
-            let p = std::str::from_utf8(&output.stdout)
-                .unwrap_or("")
-                .trim()
-                .to_string();
-            if !p.is_empty() {
-                return Some(PathBuf::from(p));
+
+        // Walk $PATH directly rather than spawning `which`. Avoids a
+        // subprocess + the risk that `which` is missing or shadowed on
+        // minimal systems (e.g. some container base images).
+        let path_env = std::env::var_os("PATH")?;
+        for dir in std::env::split_paths(&path_env) {
+            let candidate = dir.join("nix");
+            if candidate.is_file() {
+                return Some(candidate);
             }
         }
         None

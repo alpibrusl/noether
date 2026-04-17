@@ -1,0 +1,55 @@
+name: Fresh-machine quickstart
+
+# Walks the README quickstart on a clean ubuntu-latest to catch drift
+# between docs and code: missing deps, broken install instructions,
+# stale examples. Runs weekly and on PRs touching README or examples.
+#
+# This exercises the offline subset — `cargo install noether-cli` from
+# crates.io is exercised by the release workflow; here we build from
+# source so the README's "Source" install option stays honest.
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'   # weekly, Monday 06:00 UTC
+  pull_request:
+    paths:
+      - 'README.md'
+      - 'docs/getting-started/**'
+      - 'examples/**'
+      - '.github/workflows/quickstart.yml'
+  workflow_dispatch:
+
+jobs:
+  source-install-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build from source (README "Source" option)
+        run: cargo build --release -p noether-cli -p noether-scheduler
+
+      - name: noether version
+        run: ./target/release/noether version
+
+      - name: noether introspect has the expected top-level commands
+        run: |
+          out=$(./target/release/noether introspect)
+          for cmd in stage store run build compose trace; do
+            if ! echo "$out" | grep -q "\"$cmd\""; then
+              echo "::error::\`$cmd\` missing from \`noether introspect\` — README contract drift"
+              exit 1
+            fi
+          done
+
+      - name: Stdlib loads and stage list works
+        run: ./target/release/noether stage list > /tmp/stage-list.json
+
+      - name: Stage list produces valid JSON
+        run: python3 -c 'import json,sys; json.load(open("/tmp/stage-list.json"))'
+
+      - name: Dry-run the built-in example composition
+        if: hashFiles('examples/count-rows.json') != ''
+        run: ./target/release/noether run --dry-run examples/count-rows.json
