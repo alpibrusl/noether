@@ -16,11 +16,10 @@ pub fn cmd_stats(store: &dyn StageStore, index: &SemanticIndex) {
             "by_lifecycle": stats.by_lifecycle,
             "by_effect": stats.by_effect,
             "near_duplicate_pairs": near_duplicate_pairs,
-            "dedup_rate_pct": if stats.total > 0 {
-                (near_duplicate_pairs * 2 * 100) / stats.total
-            } else {
-                0
-            },
+            "dedup_rate_pct": near_duplicate_pairs
+                .saturating_mul(200)
+                .checked_div(stats.total)
+                .unwrap_or(0),
         }))
     );
 }
