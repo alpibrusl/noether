@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 72e1c8da11669b7895e00d3892a04990ebf6963f8f2e5980d0e03808b4ad248f # shrinks to pairs = [("b", Stage { id: StageId("a"), config: None }), ("b", Stage { id: StageId("b"), config: None })], body = Stage { id: StageId("a"), config: None }
+cc acb09096056496c8c83508ef70a2b1d66f26d93ec40a63a6ffaacb7b5ce9ef45 # shrinks to pairs = [("pe", Stage { id: StageId("a"), config: None }), ("pe", Stage { id: StageId("b"), config: None })]

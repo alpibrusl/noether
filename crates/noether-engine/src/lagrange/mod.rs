@@ -1,6 +1,8 @@
 mod ast;
+pub mod canonical;
 
 pub use ast::{collect_stage_ids, CompositionGraph, CompositionNode};
+pub use canonical::canonicalise;
 
 use noether_core::stage::{Stage, StageId};
 use noether_store::StageStore;
@@ -206,9 +208,25 @@ pub fn serialize_graph(graph: &CompositionGraph) -> Result<String, serde_json::E
     serde_json::to_string_pretty(graph)
 }
 
-/// Compute a deterministic composition ID (SHA-256 of canonical JSON).
+/// Compute a deterministic composition ID.
+///
+/// The hash is taken over the **canonical form of the graph's root node**,
+/// serialised via JCS (RFC 8785). Metadata fields (`description`,
+/// `version`) do not contribute to the ID: cosmetic edits should not
+/// shift a composition's identity, and equivalent graphs with different
+/// surface syntax (nested Sequentials, permuted Parallel branches,
+/// collapsed Retry layers, etc.) must produce identical IDs.
+///
+/// The canonicalisation rules are documented in
+/// `docs/architecture/semantics.md` and implemented in
+/// `crate::lagrange::canonical`.
+///
+/// **Compatibility note.** This changes composition IDs from the
+/// pre-0.5 byte-of-the-whole-graph hash. Migration guidance lives in
+/// the 0.5.0 release notes.
 pub fn compute_composition_id(graph: &CompositionGraph) -> Result<String, serde_json::Error> {
-    let bytes = serde_json::to_vec(graph)?;
+    let canonical = canonicalise(&graph.root);
+    let bytes = serde_jcs::to_vec(&canonical)?;
     let hash = Sha256::digest(&bytes);
     Ok(hex::encode(hash))
 }
