@@ -34,6 +34,30 @@
         "output": { "description": "Expected output value" }
       }
     },
+    "property": {
+      "type": "object",
+      "description": "Declarative property the stage claims to satisfy for every (input, output) pair. See crates/noether-core/src/stage/property.rs for semantics.",
+      "required": ["kind", "field"],
+      "oneOf": [
+        {
+          "properties": {
+            "kind": { "const": "set_member" },
+            "field": { "type": "string", "description": "Dot-separated path rooted at `input.` or `output.`" },
+            "set": { "type": "array", "description": "Allowed JSON values (any type, compared by value equality)" }
+          },
+          "required": ["kind", "field", "set"]
+        },
+        {
+          "properties": {
+            "kind": { "const": "range" },
+            "field": { "type": "string", "description": "Dot-separated path rooted at `input.` or `output.` (must resolve to a number)" },
+            "min": { "type": "number", "description": "Inclusive lower bound. Omit for unbounded." },
+            "max": { "type": "number", "description": "Inclusive upper bound. Omit for unbounded." }
+          },
+          "required": ["kind", "field"]
+        }
+      ]
+    },
     "simple_spec": {
       "type": "object",
       "description": "Simple spec format — recommended for authoring new stages. The CLI computes the content hash, signs the stage, and registers it.",
@@ -94,6 +118,11 @@
           "type": "array",
           "items": { "type": "string" },
           "description": "Alternative names for search recall"
+        },
+        "properties": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/property" },
+          "description": "Declarative properties — value-level claims checked against examples at registration time. Per STABILITY.md, may grow additively in 1.x but existing entries cannot be removed."
         }
       }
     },
@@ -152,7 +181,12 @@
         "implementation_code": { "type": ["string", "null"] },
         "implementation_language": { "type": ["string", "null"] },
         "tags": { "type": "array", "items": { "type": "string" } },
-        "aliases": { "type": "array", "items": { "type": "string" } }
+        "aliases": { "type": "array", "items": { "type": "string" } },
+        "properties": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/property" },
+          "description": "Declarative properties. See property definition and STABILITY.md."
+        }
       }
     }
   }

@@ -203,6 +203,7 @@ mod tests {
             tags: vec![],
             aliases: vec![],
             name: None,
+            properties: Vec::new(),
         }
     }
 

@@ -289,6 +289,7 @@ mod tests {
             tags: vec![],
             aliases: vec![],
             name: Some("volvo_map".into()),
+            properties: Vec::new(),
         };
         let mut store = MemoryStore::new();
         store.put(stage.clone()).unwrap();
@@ -342,6 +343,7 @@ mod tests {
                 tags: vec![],
                 aliases: vec![],
                 name: Some("shared".into()),
+                properties: Vec::new(),
             }
         }
 
