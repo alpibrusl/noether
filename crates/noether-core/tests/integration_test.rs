@@ -68,6 +68,7 @@ fn full_stage_round_trip() {
         tags: vec![],
         aliases: vec![],
         name: None,
+        properties: Vec::new(),
     };
 
     // 6. Serialize to JSON and back

@@ -232,6 +232,7 @@ mod tests {
             tags: vec![],
             aliases: vec![],
             name: None,
+            properties: Vec::new(),
         }
     }
 
@@ -362,6 +363,7 @@ mod tests {
             tags: vec![],
             aliases: vec![],
             name: None,
+            properties: Vec::new(),
         };
         store.put(free).unwrap();
 

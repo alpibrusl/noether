@@ -193,6 +193,7 @@ impl StageBuilder {
             tags: self.tags,
             aliases: self.aliases,
             name: self.name.clone(),
+            properties: Vec::new(),
         })
     }
 
@@ -247,6 +248,7 @@ impl StageBuilder {
             tags: self.tags,
             aliases: self.aliases,
             name: self.name.clone(),
+            properties: Vec::new(),
         })
     }
 
@@ -292,6 +294,7 @@ impl StageBuilder {
             tags: self.tags,
             aliases: self.aliases,
             name: self.name.clone(),
+            properties: Vec::new(),
         })
     }
 }

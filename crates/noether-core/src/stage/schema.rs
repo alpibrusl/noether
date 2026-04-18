@@ -130,6 +130,51 @@ pub struct Stage {
     /// identities).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+
+    /// Declarative properties the stage claims to satisfy for every
+    /// `(input, output)` pair. Checked against examples at registration
+    /// time (`noether stage verify --with-properties`) and optionally
+    /// at runtime. Types say *what shape* the output has; properties
+    /// say *which values* it may actually take. See
+    /// [`crate::stage::property`] for the DSL.
+    ///
+    /// Not part of the content hash — a stage's properties can be
+    /// strengthened in a follow-up release without forcing a new
+    /// `StageId`. They **can** only grow within 1.x per
+    /// `STABILITY.md`: existing entries cannot be removed or
+    /// weakened.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub properties: Vec<crate::stage::property::Property>,
+}
+
+impl Stage {
+    /// Check every declared property against every declared example.
+    /// Returns `Ok(())` if all `(example, property)` pairs pass, or
+    /// the list of violations if any fail. Empty `properties` vacuously
+    /// passes.
+    ///
+    /// This is the CI-time check the M2 roadmap promises. `noether
+    /// stage verify --with-properties` wraps this with CLI reporting.
+    pub fn check_properties(
+        &self,
+    ) -> Result<(), Vec<(usize, crate::stage::property::PropertyViolation)>> {
+        if self.properties.is_empty() {
+            return Ok(());
+        }
+        let mut violations = Vec::new();
+        for (example_idx, example) in self.examples.iter().enumerate() {
+            for property in &self.properties {
+                if let Err(violation) = property.check(&example.input, &example.output) {
+                    violations.push((example_idx, violation));
+                }
+            }
+        }
+        if violations.is_empty() {
+            Ok(())
+        } else {
+            Err(violations)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -171,6 +216,7 @@ mod tests {
             tags: vec![],
             aliases: vec![],
             name: Some("text_to_number".into()),
+            properties: vec![],
         };
         let json = serde_json::to_string_pretty(&stage).unwrap();
         let deserialized: Stage = serde_json::from_str(&json).unwrap();
@@ -203,6 +249,71 @@ mod tests {
             stage.signature_id,
             Some(SignatureId("legacy_sig_hash".into()))
         );
+    }
+
+    #[test]
+    fn check_properties_empty_passes_vacuously() {
+        let mut stage = sample_stage();
+        stage.properties = vec![];
+        assert!(stage.check_properties().is_ok());
+    }
+
+    #[test]
+    fn check_properties_flags_all_violations_across_examples() {
+        use crate::stage::property::{Property, PropertyViolation};
+        let mut stage = sample_stage();
+        // Two examples: one passes, one fails the range property.
+        stage.examples = vec![
+            Example {
+                input: serde_json::json!(null),
+                output: serde_json::json!({"soc": 50.0}),
+            },
+            Example {
+                input: serde_json::json!(null),
+                output: serde_json::json!({"soc": 150.0}),
+            },
+        ];
+        stage.properties = vec![Property::Range {
+            field: "output.soc".into(),
+            min: Some(0.0),
+            max: Some(100.0),
+        }];
+
+        let result = stage.check_properties();
+        let violations = result.unwrap_err();
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].0, 1);
+        assert!(matches!(
+            violations[0].1,
+            PropertyViolation::AboveMax { .. }
+        ));
+    }
+
+    // Helper used only by the check_properties tests.
+    fn sample_stage() -> Stage {
+        Stage {
+            id: StageId("deadbeef".into()),
+            signature_id: Some(SignatureId("sig".into())),
+            signature: sample_signature(),
+            capabilities: BTreeSet::new(),
+            cost: CostEstimate {
+                time_ms_p50: None,
+                tokens_est: None,
+                memory_mb: None,
+            },
+            description: "sample".into(),
+            examples: vec![],
+            lifecycle: StageLifecycle::Active,
+            ed25519_signature: None,
+            signer_public_key: None,
+            implementation_code: None,
+            implementation_language: None,
+            ui_style: None,
+            tags: vec![],
+            aliases: vec![],
+            name: Some("sample".into()),
+            properties: vec![],
+        }
     }
 
     #[test]
