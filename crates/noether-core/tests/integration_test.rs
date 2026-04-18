@@ -32,7 +32,7 @@ fn full_stage_round_trip() {
     };
 
     // 2. Compute content-addressed ID
-    let stage_id = compute_stage_id(&sig).unwrap();
+    let stage_id = compute_stage_id("test", &sig).unwrap();
     assert_eq!(stage_id.0.len(), 64);
 
     // 3. Sign it
@@ -46,7 +46,7 @@ fn full_stage_round_trip() {
     // 5. Build the full Stage
     let stage = Stage {
         id: stage_id.clone(),
-        canonical_id: None,
+        signature_id: None,
         signature: sig,
         capabilities: BTreeSet::from([Capability::Network, Capability::Llm]),
         cost: CostEstimate {
@@ -84,7 +84,7 @@ fn full_stage_round_trip() {
     .unwrap());
 
     // 8. Verify the hash is still deterministic after round-trip
-    let recomputed_id = compute_stage_id(&deserialized.signature).unwrap();
+    let recomputed_id = compute_stage_id("test", &deserialized.signature).unwrap();
     assert_eq!(stage_id, recomputed_id);
 }
 

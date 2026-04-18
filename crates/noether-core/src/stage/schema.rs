@@ -4,17 +4,41 @@ use crate::types::NType;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-/// Content-addressed stage identity: hex-encoded SHA-256.
+/// Implementation-level stage identity: hex-encoded SHA-256 of the
+/// [`StageSignature`] (input, output, effects, and `implementation_hash`).
+///
+/// Two stages with the same `StageId` have the same *implementation* —
+/// bit-exact if you pin to this ID. This is the store's primary key.
+///
+/// From M2 (v0.6.0) onwards this field is also exposed as
+/// [`ImplementationId`] to make the role explicit at call sites. The
+/// type alias is preserved so existing code keeps compiling.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct StageId(pub String);
 
-/// Canonical identity: hex-encoded SHA-256 of (name + input + output + effects).
+/// Alias for [`StageId`]. New code should prefer this name — it makes
+/// the intent explicit at call sites and distinguishes it from
+/// [`SignatureId`], which is stable across implementation bugfixes.
+pub type ImplementationId = StageId;
+
+/// Signature-level stage identity: hex-encoded SHA-256 of
+/// (name + input + output + effects). Excludes `implementation_hash`.
 ///
-/// Two stages with the same canonical hash represent the same *concept* —
-/// they have the same name, types, and effects, but may differ in implementation.
-/// Only one active version per canonical hash should exist in the store.
+/// Two stages with the same `SignatureId` represent the same *concept* —
+/// same name, types, and effects, but possibly different implementations.
+/// This is the identity that is **stable across 1.x** per `STABILITY.md`:
+/// a bugfix that changes `implementation_hash` changes the `StageId` but
+/// not the `SignatureId`, so graphs pinned by signature keep working.
+///
+/// Only one active stage per `SignatureId` should exist in the store.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct CanonicalId(pub String);
+pub struct SignatureId(pub String);
+
+/// Deprecated alias for [`SignatureId`]. Kept for back-compat with code
+/// written against v0.4.x and v0.5.x. Callers should migrate to
+/// [`SignatureId`] — this alias will be removed in v0.7.0.
+#[deprecated(since = "0.6.0", note = "renamed to SignatureId")]
+pub type CanonicalId = SignatureId;
 
 /// The identity-determining fields of a stage.
 ///
@@ -54,10 +78,21 @@ pub enum StageLifecycle {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Stage {
     pub id: StageId,
-    /// Canonical identity — same concept (name + types + effects), regardless of
-    /// implementation. Used to detect re-registrations and auto-deprecate old versions.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub canonical_id: Option<CanonicalId>,
+    /// Signature identity — same concept (name + types + effects),
+    /// regardless of implementation. Per M2 this is required, but the
+    /// deserialiser accepts both the new `signature_id` field and the
+    /// legacy `canonical_id` field so v0.5.x stage JSONs keep loading.
+    ///
+    /// Stages loaded from storage where neither field is present will
+    /// have `signature_id == None`; such stages fail `stage verify`.
+    /// Builders always populate this — only hand-crafted JSONs from
+    /// before M2 can produce `None` here.
+    #[serde(
+        default,
+        alias = "canonical_id",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub signature_id: Option<SignatureId>,
     pub signature: StageSignature,
     pub capabilities: BTreeSet<Capability>,
     pub cost: CostEstimate,
@@ -114,7 +149,7 @@ mod tests {
     fn stage_serde_round_trip() {
         let stage = Stage {
             id: StageId("deadbeef".into()),
-            canonical_id: Some(CanonicalId("canonical123".into())),
+            signature_id: Some(SignatureId("canonical123".into())),
             signature: sample_signature(),
             capabilities: BTreeSet::from([Capability::Network]),
             cost: CostEstimate {
@@ -140,6 +175,34 @@ mod tests {
         let json = serde_json::to_string_pretty(&stage).unwrap();
         let deserialized: Stage = serde_json::from_str(&json).unwrap();
         assert_eq!(stage, deserialized);
+    }
+
+    #[test]
+    fn legacy_canonical_id_field_deserialises_into_signature_id() {
+        // v0.5.x stage JSONs used `"canonical_id"`. After the M2 rename
+        // the field is `"signature_id"`, but the deserialiser accepts
+        // the old name via serde alias.
+        let legacy_json = serde_json::json!({
+            "id": "deadbeef",
+            "canonical_id": "legacy_sig_hash",
+            "signature": {
+                "input": {"kind": "Text"},
+                "output": {"kind": "Number"},
+                "effects": {"effects": []},
+                "implementation_hash": "abc123",
+            },
+            "capabilities": [],
+            "cost": {},
+            "description": "legacy",
+            "examples": [],
+            "lifecycle": "Active",
+            "name": "legacy_stage",
+        });
+        let stage: Stage = serde_json::from_value(legacy_json).unwrap();
+        assert_eq!(
+            stage.signature_id,
+            Some(SignatureId("legacy_sig_hash".into()))
+        );
     }
 
     #[test]

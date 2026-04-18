@@ -446,16 +446,15 @@ pub fn cmd_add(
         }
     }
 
-    // ── Canonical dedup: auto-deprecate previous version ────────────────
-    // If a stage with the same canonical_id exists and is Active, deprecate
+    // ── Signature dedup: auto-deprecate previous version ────────────────
+    // If a stage with the same signature_id exists and is Active, deprecate
     // it with the new stage as successor. This ensures only one active
     // version per concept (name + types + effects).
     let mut deprecated_id: Option<String> = None;
-    if let Some(ref canonical) = stage.canonical_id {
+    if let Some(ref sig) = stage.signature_id {
         for existing in store.list(Some(&StageLifecycle::Active)) {
-            if existing.canonical_id.as_ref() == Some(canonical) && existing.id != stage.id {
+            if existing.signature_id.as_ref() == Some(sig) && existing.id != stage.id {
                 deprecated_id = Some(existing.id.0.clone());
-                // Don't deprecate yet — wait until the new stage is inserted successfully.
                 break;
             }
         }

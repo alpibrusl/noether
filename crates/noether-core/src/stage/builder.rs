@@ -1,6 +1,6 @@
 use crate::capability::Capability;
 use crate::effects::EffectSet;
-use crate::stage::hash::{compute_canonical_id, compute_stage_id};
+use crate::stage::hash::{compute_signature_id, compute_stage_id};
 use crate::stage::schema::{CostEstimate, Example, Stage, StageLifecycle, StageSignature};
 use crate::stage::signing::sign_stage_id;
 use crate::types::NType;
@@ -163,7 +163,7 @@ impl StageBuilder {
         };
 
         let effects = self.effects.unwrap_or_default();
-        let canonical_id = compute_canonical_id(name, &input, &output, &effects)?;
+        let signature_id = compute_signature_id(name, &input, &output, &effects)?;
 
         let signature = StageSignature {
             input,
@@ -172,13 +172,13 @@ impl StageBuilder {
             implementation_hash: impl_hash,
         };
 
-        let id = compute_stage_id(&signature)?;
+        let id = compute_stage_id(name, &signature)?;
         let sig_hex = sign_stage_id(&id, signing_key);
         let pub_hex = hex::encode(signing_key.verifying_key().to_bytes());
 
         Ok(Stage {
             id,
-            canonical_id: Some(canonical_id),
+            signature_id: Some(signature_id),
             signature,
             capabilities: self.capabilities,
             cost: self.cost,
@@ -217,7 +217,7 @@ impl StageBuilder {
             .ok_or_else(|| StageBuilderError::MissingField("description".into()))?;
 
         let effects = self.effects.unwrap_or_default();
-        let canonical_id = compute_canonical_id(&name, &input, &output, &effects)?;
+        let signature_id = compute_signature_id(&name, &input, &output, &effects)?;
 
         let signature = StageSignature {
             input,
@@ -226,13 +226,13 @@ impl StageBuilder {
             implementation_hash,
         };
 
-        let id = compute_stage_id(&signature)?;
+        let id = compute_stage_id(&name, &signature)?;
         let sig_hex = sign_stage_id(&id, signing_key);
         let pub_hex = hex::encode(signing_key.verifying_key().to_bytes());
 
         Ok(Stage {
             id,
-            canonical_id: Some(canonical_id),
+            signature_id: Some(signature_id),
             signature,
             capabilities: self.capabilities,
             cost: self.cost,
@@ -264,7 +264,7 @@ impl StageBuilder {
             .ok_or_else(|| StageBuilderError::MissingField("description".into()))?;
 
         let effects = self.effects.unwrap_or_default();
-        let canonical_id = compute_canonical_id(&name, &input, &output, &effects)?;
+        let signature_id = compute_signature_id(&name, &input, &output, &effects)?;
 
         let signature = StageSignature {
             input,
@@ -273,11 +273,11 @@ impl StageBuilder {
             implementation_hash,
         };
 
-        let id = compute_stage_id(&signature)?;
+        let id = compute_stage_id(&name, &signature)?;
 
         Ok(Stage {
             id,
-            canonical_id: Some(canonical_id),
+            signature_id: Some(signature_id),
             signature,
             capabilities: self.capabilities,
             cost: self.cost,

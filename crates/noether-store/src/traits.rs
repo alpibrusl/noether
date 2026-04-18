@@ -1,4 +1,4 @@
-use noether_core::stage::{Stage, StageId, StageLifecycle};
+use noether_core::stage::{SignatureId, Stage, StageId, StageLifecycle};
 use std::collections::BTreeMap;
 
 #[derive(Debug, thiserror::Error)]
@@ -66,5 +66,23 @@ pub trait StageStore {
             .into_iter()
             .filter(|s| s.name.as_deref() == Some(name))
             .collect()
+    }
+
+    /// Look up the Active stage for a given [`SignatureId`]. This is
+    /// the M2 "resolve signature to latest implementation" pathway: a
+    /// graph that pins a stage by `signature_id` gets whichever
+    /// implementation is Active today.
+    ///
+    /// **Determinism.** When multiple Active stages share a signature
+    /// (which a well-behaved store prevents via the `stage add`
+    /// deprecation path, but which can happen transiently), this
+    /// returns the stage with the lexicographically-smallest
+    /// implementation ID. A "first match" would be nondeterministic
+    /// under HashMap-backed stores.
+    fn get_by_signature(&self, signature_id: &SignatureId) -> Option<&Stage> {
+        self.list(Some(&StageLifecycle::Active))
+            .into_iter()
+            .filter(|s| s.signature_id.as_ref() == Some(signature_id))
+            .min_by(|a, b| a.id.0.cmp(&b.id.0))
     }
 }

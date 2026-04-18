@@ -179,7 +179,7 @@ mod tests {
     fn make_stage(id: &str) -> Stage {
         Stage {
             id: StageId(id.into()),
-            canonical_id: None,
+            signature_id: None,
             signature: StageSignature {
                 input: NType::Text,
                 output: NType::Number,

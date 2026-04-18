@@ -9,29 +9,39 @@ This is the most important design decision in the system.
 
 ## How a stage ID is computed
 
-A `StageId` is the hex-encoded SHA-256 of the canonical JSON serialisation of the
-stage's `StageSignature`:
+A `StageId` (also called `ImplementationId` from M2 onwards) is the
+hex-encoded SHA-256 of the JCS-canonicalised JSON of the stage's name
+plus the fields of its `StageSignature`. The hash **nests**
+`SignatureId`: changing the name, input, output, effects, OR
+implementation_hash changes the `StageId`. Changing only the
+implementation_hash changes the `StageId` but not the `SignatureId`.
 
 ```
-StageId = SHA-256(canonical_json(StageSignature))
-
-StageSignature = {
-    input:               NType,   // structural input type
-    output:              NType,   // structural output type
-    effects:             BTreeSet<Effect>,
-    implementation_hash: String   // SHA-256 of the implementation code
-}
+StageId = SHA-256(JCS({
+    name:                 String,
+    input:                NType,
+    output:               NType,
+    effects:              EffectSet,
+    implementation_hash:  String,
+}))
 ```
 
-The canonical JSON uses `BTreeMap`/`BTreeSet` everywhere — keys are sorted,
-output is deterministic across all platforms and compiler versions.
+The canonical JSON uses RFC 8785 JCS — keys sorted lexicographically,
+no insignificant whitespace, deterministic across all platforms.
 
 The Rust code:
 
 ```rust
-pub fn compute_stage_id(sig: &StageSignature) -> Result<StageId, _> {
-    let json = serde_json::to_string(sig)?;       // BTreeMap → sorted keys
-    let hash = Sha256::digest(json.as_bytes());
+pub fn compute_stage_id(name: &str, sig: &StageSignature) -> Result<StageId, _> {
+    let canonical = serde_json::json!({
+        "name": name,
+        "input": sig.input,
+        "output": sig.output,
+        "effects": sig.effects,
+        "implementation_hash": sig.implementation_hash,
+    });
+    let bytes = serde_jcs::to_vec(&canonical)?;
+    let hash = Sha256::digest(&bytes);
     Ok(StageId(hex::encode(hash)))
 }
 ```
@@ -40,14 +50,21 @@ pub fn compute_stage_id(sig: &StageSignature) -> Result<StageId, _> {
 
 ## What this means
 
-### Names are metadata, not identity
+### Name is in the signature; description and other metadata are not
+
+From M2 (v0.6.0) onwards, `name` is part of both `SignatureId` and
+`StageId`. Renaming a stage produces a different `StageId` — a
+deliberate, auditable break rather than a silent collision.
+
+Description, examples, cost, tags, and aliases are **not** part of
+the hash. Updating a description or adding an alias never changes
+the stage ID.
 
 ```bash
-# Two stages with different descriptions but identical signatures get the same ID.
-# Renaming a stage does not change its ID.
 noether stage get 39731ebb
+# "name":        "http_get_request"
 # "description": "Make an HTTP GET request"
-# id: 39731ebb   ← determined by types + effects + impl_hash, not the name
+# id: 39731ebb   ← determined by name + types + effects + impl_hash
 ```
 
 ### Changing behaviour changes the ID
@@ -143,23 +160,33 @@ noether stage get 8dfa010b
 
 ---
 
-## Canonical Identity
+## Signature Identity
 
 In addition to the full `StageId` (which includes the `implementation_hash`), each stage
-has a **canonical identity** that captures *what* the stage does without regard to *how*:
+has a **signature identity** that captures *what* the stage does without regard to *how*:
 
 ```
-canonical_id = SHA-256(name + input + output + effects)
+signature_id = SHA-256(name + input + output + effects)
 ```
 
-The canonical ID is used for **versioning**: only one Active version of a stage may exist
-per `canonical_id` at any time. When a new version of a stage with the same canonical ID
+The signature ID is used for **versioning**: only one Active version of a stage may exist
+per `signature_id` at any time. When a new version of a stage with the same signature ID
 is registered via `noether stage add`, the system auto-deprecates the previous Active
 version and sets its `successor_id` to the new stage.
 
 This means:
 
-- **Same interface, new implementation** produces a new `StageId` but the same `canonical_id`.
+- **Same interface, new implementation** produces a new `StageId` but the same `signature_id`.
 - The old version is automatically deprecated with a pointer to the new one.
 - Composition graphs referencing the old `StageId` still resolve (deprecated stages remain
   executable) but agents are guided toward the successor via search ranking.
+
+Per [`STABILITY.md`](../../STABILITY.md), `signature_id` is **stable across the 1.x
+line**: a bugfix that changes `implementation_hash` changes `StageId` but never
+`signature_id`. This is the identity that graphs should pin by default, so they
+pick up implementation fixes automatically.
+
+> **Naming note.** Prior to v0.6.0 this field was called `canonical_id` and the
+> type was `CanonicalId`. Both the old name (as a JSON field alias and a
+> deprecated type alias) and the new one are accepted in v0.6.x; the old
+> names are removed in v0.7.0.

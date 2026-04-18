@@ -410,7 +410,7 @@ mod tests {
     fn make_stage(id: &str, desc: &str, input: NType, output: NType) -> Stage {
         Stage {
             id: StageId(id.into()),
-            canonical_id: None,
+            signature_id: None,
             signature: StageSignature {
                 input,
                 output,

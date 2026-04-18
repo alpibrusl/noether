@@ -203,7 +203,7 @@ mod tests {
     fn make_costly_stage(id: &str, cents: u64) -> Stage {
         Stage {
             id: StageId(id.into()),
-            canonical_id: None,
+            signature_id: None,
             signature: StageSignature {
                 input: NType::Any,
                 output: NType::Any,
@@ -336,7 +336,7 @@ mod tests {
         // Stage with no Cost effect.
         let free = Stage {
             id: StageId("free".into()),
-            canonical_id: None,
+            signature_id: None,
             signature: StageSignature {
                 input: NType::Any,
                 output: NType::Any,

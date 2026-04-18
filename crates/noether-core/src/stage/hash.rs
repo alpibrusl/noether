@@ -1,5 +1,5 @@
 use crate::effects::EffectSet;
-use crate::stage::schema::{CanonicalId, StageId, StageSignature};
+use crate::stage::schema::{SignatureId, StageId, StageSignature};
 use crate::types::NType;
 use sha2::{Digest, Sha256};
 
@@ -21,27 +21,51 @@ pub fn canonical_json(sig: &StageSignature) -> Result<Vec<u8>, serde_json::Error
     serde_jcs::to_vec(sig)
 }
 
-/// Compute the content-addressed StageId from a StageSignature.
+/// Compute the content-addressed `StageId` (the implementation-level
+/// identity) from a name and signature.
 ///
-/// The identity is the hex-encoded SHA-256 of the JCS-canonicalised
-/// JSON of the signature.
-pub fn compute_stage_id(sig: &StageSignature) -> Result<StageId, serde_json::Error> {
-    let bytes = canonical_json(sig)?;
+/// This hash **nests** [`compute_signature_id`]: changing the name,
+/// input, output, effects, or implementation_hash changes this ID.
+/// Changing the implementation_hash *alone* changes this ID but not
+/// the signature ID — the property that makes bugfixes safe under
+/// signature pinning (see `STABILITY.md`).
+///
+/// Canonical JSON shape (JCS, sorted keys):
+/// ```text
+/// {
+///   "effects":             <EffectSet>,
+///   "implementation_hash": <String>,
+///   "input":               <NType>,
+///   "name":                <String>,
+///   "output":              <NType>
+/// }
+/// ```
+pub fn compute_stage_id(name: &str, sig: &StageSignature) -> Result<StageId, serde_json::Error> {
+    let canonical = serde_json::json!({
+        "name": name,
+        "input": sig.input,
+        "output": sig.output,
+        "effects": sig.effects,
+        "implementation_hash": sig.implementation_hash,
+    });
+    let bytes = serde_jcs::to_vec(&canonical)?;
     let hash = Sha256::digest(&bytes);
     Ok(StageId(hex::encode(hash)))
 }
 
-/// Compute the canonical identity from name + input + output + effects.
+/// Compute the signature identity from name + input + output + effects.
 ///
-/// This hash captures *what* a stage does (its interface contract) without
-/// the implementation. Two stages with the same canonical ID are considered
-/// versions of the same concept — only one should be Active at a time.
-pub fn compute_canonical_id(
+/// This hash captures *what* a stage does (its interface contract)
+/// without the implementation. Two stages with the same
+/// [`SignatureId`] are considered versions of the same concept — only
+/// one should be Active at a time. Per `STABILITY.md`, signature IDs
+/// are stable across the 1.x line even as implementations are bugfixed.
+pub fn compute_signature_id(
     name: &str,
     input: &NType,
     output: &NType,
     effects: &EffectSet,
-) -> Result<CanonicalId, serde_json::Error> {
+) -> Result<SignatureId, serde_json::Error> {
     let canonical = serde_json::json!({
         "name": name,
         "input": input,
@@ -50,7 +74,19 @@ pub fn compute_canonical_id(
     });
     let bytes = serde_jcs::to_vec(&canonical)?;
     let hash = Sha256::digest(&bytes);
-    Ok(CanonicalId(hex::encode(hash)))
+    Ok(SignatureId(hex::encode(hash)))
+}
+
+/// Deprecated name for [`compute_signature_id`]. Kept for back-compat
+/// through v0.6.x; removed in v0.7.0.
+#[deprecated(since = "0.6.0", note = "renamed to compute_signature_id")]
+pub fn compute_canonical_id(
+    name: &str,
+    input: &NType,
+    output: &NType,
+    effects: &EffectSet,
+) -> Result<SignatureId, serde_json::Error> {
+    compute_signature_id(name, input, output, effects)
 }
 
 #[cfg(test)]
@@ -71,8 +107,8 @@ mod tests {
     #[test]
     fn hash_is_deterministic() {
         let sig = sample_sig();
-        let id1 = compute_stage_id(&sig).unwrap();
-        let id2 = compute_stage_id(&sig).unwrap();
+        let id1 = compute_stage_id("test", &sig).unwrap();
+        let id2 = compute_stage_id("test", &sig).unwrap();
         assert_eq!(id1, id2);
     }
 
@@ -81,14 +117,14 @@ mod tests {
         let sig1 = sample_sig();
         let mut sig2 = sample_sig();
         sig2.output = NType::Text;
-        let id1 = compute_stage_id(&sig1).unwrap();
-        let id2 = compute_stage_id(&sig2).unwrap();
+        let id1 = compute_stage_id("sig1", &sig1).unwrap();
+        let id2 = compute_stage_id("sig2", &sig2).unwrap();
         assert_ne!(id1, id2);
     }
 
     #[test]
     fn hash_is_64_hex_chars() {
-        let id = compute_stage_id(&sample_sig()).unwrap();
+        let id = compute_stage_id("sample", &sample_sig()).unwrap();
         assert_eq!(id.0.len(), 64);
         assert!(id.0.chars().all(|c| c.is_ascii_hexdigit()));
     }
@@ -147,7 +183,7 @@ mod tests {
             ),
         ];
         for (sig, label) in cases {
-            let id = compute_stage_id(&sig).unwrap();
+            let id = compute_stage_id("test", &sig).unwrap();
             // Print so a regression shows the new value next to the old in
             // CI output, making the diff trivial to triage.
             eprintln!("golden {}: {}", label, id.0);
@@ -155,12 +191,16 @@ mod tests {
             // To regenerate after intentional change: run `cargo test -p
             // noether-core hash::tests::golden_vectors_are_stable -- --nocapture`
             // and paste the new digests below.
+            // v2 hash format (M2, v0.6.0): includes `name` so
+            // compute_stage_id nests compute_signature_id. Intentionally
+            // drifts from v0.4.x digests — v0.5.0 release notes call this
+            // out as breaking. Regeneration procedure as before.
             let expected = match label {
                 "v1:text->number/pure/abc123" => {
-                    "9f66c7c68e0d37b6ec162e1b833b0c9577e463cbf337833076df4be3a5daa3e0"
+                    "980de483c8940ece66165badd67c41a7f82aa286d1b170da5c12b149049e8ce3"
                 }
                 "v1:bool->bool/pure/identity" => {
-                    "ed852c94fa4b2b0935fd11f715cb5608a8f75780c73bb60ffd52f8ad8301819d"
+                    "9ff5f0c6927b8f2eb767e5ed2288dc07f192b2e8c6e78246fdd452a54296dbbc"
                 }
                 _ => unreachable!(),
             };
@@ -168,27 +208,74 @@ mod tests {
         }
     }
 
+    /// The core M2 invariant: changing only the implementation_hash
+    /// changes the StageId but not the SignatureId. Without this, bugfix
+    /// pinning under `Pinning::Signature` would misbehave.
     #[test]
-    fn canonical_id_ignores_implementation() {
+    fn signature_id_stable_across_impl_change() {
         let effects = EffectSet::pure();
-        let id1 = compute_canonical_id("my_stage", &NType::Text, &NType::Number, &effects).unwrap();
-        let id2 = compute_canonical_id("my_stage", &NType::Text, &NType::Number, &effects).unwrap();
+        let name = "my_stage";
+        let sig1 = StageSignature {
+            input: NType::Text,
+            output: NType::Number,
+            effects: effects.clone(),
+            implementation_hash: "impl-v1".into(),
+        };
+        let sig2 = StageSignature {
+            implementation_hash: "impl-v2".into(),
+            ..sig1.clone()
+        };
+        // Stage IDs differ — bit-exact pinning sees two distinct stages.
+        assert_ne!(
+            compute_stage_id(name, &sig1).unwrap(),
+            compute_stage_id(name, &sig2).unwrap()
+        );
+        // Signature IDs are equal — signature pinning treats them as
+        // the same concept.
+        assert_eq!(
+            compute_signature_id(name, &sig1.input, &sig1.output, &sig1.effects).unwrap(),
+            compute_signature_id(name, &sig2.input, &sig2.output, &sig2.effects).unwrap()
+        );
+    }
+
+    /// Renaming is a signature change (and therefore also a StageId
+    /// change). Without `name` in the stage hash, renames would be
+    /// invisible to the store — two different names could collide.
+    #[test]
+    fn stage_id_changes_with_rename() {
+        let sig = StageSignature {
+            input: NType::Text,
+            output: NType::Number,
+            effects: EffectSet::pure(),
+            implementation_hash: "abc".into(),
+        };
+        assert_ne!(
+            compute_stage_id("name_a", &sig).unwrap(),
+            compute_stage_id("name_b", &sig).unwrap()
+        );
+    }
+
+    #[test]
+    fn signature_id_ignores_implementation() {
+        let effects = EffectSet::pure();
+        let id1 = compute_signature_id("my_stage", &NType::Text, &NType::Number, &effects).unwrap();
+        let id2 = compute_signature_id("my_stage", &NType::Text, &NType::Number, &effects).unwrap();
         assert_eq!(id1, id2);
     }
 
     #[test]
-    fn canonical_id_differs_by_name() {
+    fn signature_id_differs_by_name() {
         let effects = EffectSet::pure();
-        let id1 = compute_canonical_id("stage_a", &NType::Text, &NType::Number, &effects).unwrap();
-        let id2 = compute_canonical_id("stage_b", &NType::Text, &NType::Number, &effects).unwrap();
+        let id1 = compute_signature_id("stage_a", &NType::Text, &NType::Number, &effects).unwrap();
+        let id2 = compute_signature_id("stage_b", &NType::Text, &NType::Number, &effects).unwrap();
         assert_ne!(id1, id2);
     }
 
     #[test]
-    fn canonical_id_differs_by_type() {
+    fn signature_id_differs_by_type() {
         let effects = EffectSet::pure();
-        let id1 = compute_canonical_id("my_stage", &NType::Text, &NType::Number, &effects).unwrap();
-        let id2 = compute_canonical_id("my_stage", &NType::Text, &NType::Text, &effects).unwrap();
+        let id1 = compute_signature_id("my_stage", &NType::Text, &NType::Number, &effects).unwrap();
+        let id2 = compute_signature_id("my_stage", &NType::Text, &NType::Text, &effects).unwrap();
         assert_ne!(id1, id2);
     }
 }
