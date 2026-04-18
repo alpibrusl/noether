@@ -48,6 +48,28 @@ impl CompositeExecutor {
         }
     }
 
+    /// Replace the isolation backend on the embedded NixExecutor.
+    /// No-op when Nix isn't installed (synthesized stages can't run
+    /// anyway, so the sandbox question doesn't arise).
+    pub fn with_isolation(mut self, backend: super::isolation::IsolationBackend) -> Self {
+        if let Some(nix) = self.nix.take() {
+            use super::nix::{NixConfig, NixExecutor};
+            // Rebuild NixExecutor with the new isolation setting.
+            // NixExecutor doesn't expose a public with_isolation setter
+            // today because the config field was just added; use the
+            // builder pattern via `NixConfig::with_isolation` at
+            // construction time. Reconstruct by re-reading the existing
+            // config and swapping the backend.
+            let old_config = nix.config_snapshot();
+            let new_config = NixConfig {
+                isolation: backend,
+                ..old_config
+            };
+            self.nix = NixExecutor::rebuild_with_config(nix, new_config);
+        }
+        self
+    }
+
     /// Attach an LLM provider so `llm_complete` / `llm_classify` / `llm_extract`
     /// stages are actually executed instead of returning a config error.
     pub fn with_llm(

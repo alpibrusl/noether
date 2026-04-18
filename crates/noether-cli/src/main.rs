@@ -64,6 +64,17 @@ enum Commands {
         /// Reject compositions whose estimated cost exceeds this value (in cents).
         #[arg(long)]
         budget_cents: Option<u64>,
+        /// Sandbox every stage subprocess. `auto` (default, v0.7+)
+        /// picks bubblewrap when available, falls back to `none` with
+        /// a warning. `bwrap` requires bubblewrap; fails hard if
+        /// missing. `none` disables isolation entirely — warns unless
+        /// `--unsafe-no-isolation` is also passed.
+        #[arg(long, env = "NOETHER_ISOLATION", default_value = "auto")]
+        isolate: String,
+        /// Silence the "isolation disabled" warning when `--isolate=none`.
+        /// Required in CI/scripts that deliberately opt out.
+        #[arg(long)]
+        unsafe_no_isolation: bool,
     },
     /// Retrieve execution trace for a past composition
     Trace {
@@ -603,6 +614,8 @@ fn main() {
             allow_capabilities,
             allow_effects,
             budget_cents,
+            isolate,
+            unsafe_no_isolation,
         } => {
             let store = build_store(registry);
             let mut trace_store = init_trace_store();
@@ -616,6 +629,36 @@ fn main() {
             };
             let policy = parse_capability_policy(allow_capabilities.as_deref());
             let effect_policy = parse_effect_policy(allow_effects.as_deref());
+
+            // Parse --isolate / NOETHER_ISOLATION. Warn loudly on
+            // --isolate=none unless --unsafe-no-isolation is also set.
+            use noether_engine::executor::isolation::IsolationBackend;
+            let (isolation_backend, isolation_warning) = match IsolationBackend::from_flag(&isolate)
+            {
+                Ok((b, w)) => (b, w),
+                Err(e) => {
+                    eprintln!(
+                        "{}",
+                        crate::output::acli_error(&format!("invalid --isolate value: {e}"))
+                    );
+                    std::process::exit(2);
+                }
+            };
+            if let Some(w) = &isolation_warning {
+                eprintln!("Warning: {w}");
+            }
+            if matches!(isolation_backend, IsolationBackend::None)
+                && isolation_warning.is_none()
+                && !unsafe_no_isolation
+            {
+                eprintln!(
+                    "Warning: --isolate=none runs stages with host-user \
+                     privileges. A malicious stage can read ~/.ssh, make \
+                     network calls, and write anywhere you can. Pass \
+                     --unsafe-no-isolation to silence this warning."
+                );
+            }
+
             commands::run::cmd_run(
                 store.as_ref(),
                 &mut trace_store,
@@ -626,6 +669,7 @@ fn main() {
                     capabilities: &policy,
                     effects: &effect_policy,
                     budget_cents,
+                    isolation: isolation_backend,
                 },
             );
         }

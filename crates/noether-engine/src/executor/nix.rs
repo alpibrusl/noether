@@ -69,6 +69,12 @@ pub struct NixConfig {
     /// Maximum number of bytes captured from stderr (for error messages).
     /// Default: 64 KiB.
     pub max_stderr_bytes: usize,
+    /// Isolation backend to wrap each stage subprocess in. When set
+    /// to [`super::isolation::IsolationBackend::None`] (the default
+    /// for back-compat), stages run with full host-user privileges
+    /// — see SECURITY.md. Set via
+    /// [`NixConfig::with_isolation`] or the CLI `--isolate` flag.
+    pub isolation: super::isolation::IsolationBackend,
 }
 
 impl Default for NixConfig {
@@ -77,17 +83,29 @@ impl Default for NixConfig {
             timeout_secs: 30,
             max_output_bytes: 10 * 1024 * 1024,
             max_stderr_bytes: 64 * 1024,
+            isolation: super::isolation::IsolationBackend::None,
         }
+    }
+}
+
+impl NixConfig {
+    /// Set the isolation backend. Returns `self` for chaining.
+    pub fn with_isolation(mut self, backend: super::isolation::IsolationBackend) -> Self {
+        self.isolation = backend;
+        self
     }
 }
 
 // ── Internal stage storage ───────────────────────────────────────────────────
 
-/// Maps stage IDs to their implementation (source code + language tag).
+/// Maps stage IDs to their implementation (source code + language tag +
+/// declared effects — needed so the isolation layer can derive a
+/// policy).
 #[derive(Clone)]
 struct StageImpl {
     code: String,
     language: String,
+    effects: noether_core::effects::EffectSet,
 }
 
 // ── NixExecutor ──────────────────────────────────────────────────────────────
@@ -165,6 +183,7 @@ impl NixExecutor {
                     StageImpl {
                         code: code.clone(),
                         language: lang.clone(),
+                        effects: stage.signature.effects.clone(),
                     },
                 );
             }
@@ -179,12 +198,54 @@ impl NixExecutor {
     }
 
     /// Register an in-memory synthesized stage without re-querying the store.
+    ///
+    /// The registered stage has no declared effects; the isolation
+    /// policy therefore defaults to a pure/no-network sandbox. Callers
+    /// that need network or filesystem effects should add the stage via
+    /// the store (which carries the declared `EffectSet`) or use
+    /// [`Self::register_with_effects`].
     pub fn register(&mut self, stage_id: &StageId, code: &str, language: &str) {
         self.implementations.insert(
             stage_id.0.clone(),
             StageImpl {
                 code: code.into(),
                 language: language.into(),
+                effects: noether_core::effects::EffectSet::pure(),
+            },
+        );
+    }
+
+    /// Clone the current config (minus the implementations map) for
+    /// callers that want to rebuild with different knobs.
+    pub fn config_snapshot(&self) -> NixConfig {
+        self.config.clone()
+    }
+
+    /// Rebuild a NixExecutor with a replacement config, preserving
+    /// its registered implementations. Returns `Some(..)` or `None`
+    /// when reconstruction fails — today it can't fail, but the
+    /// Option keeps the API forward-compatible.
+    pub fn rebuild_with_config(mut self, config: NixConfig) -> Option<Self> {
+        self.config = config;
+        Some(self)
+    }
+
+    /// Register a stage with explicit declared effects. Used by tests
+    /// and by callers that want to drive the isolation policy without
+    /// going through the full StageStore.
+    pub fn register_with_effects(
+        &mut self,
+        stage_id: &StageId,
+        code: &str,
+        language: &str,
+        effects: noether_core::effects::EffectSet,
+    ) {
+        self.implementations.insert(
+            stage_id.0.clone(),
+            StageImpl {
+                code: code.into(),
+                language: language.into(),
+                effects,
             },
         );
     }
@@ -292,28 +353,90 @@ impl NixExecutor {
 
         let (nix_subcommand, args) = self.build_nix_command(language, script, code);
 
-        // __direct__ means run the binary directly (venv Python), not via nix
-        let mut child = if nix_subcommand == "__direct__" {
-            Command::new(&args[0])
-                .args(&args[1..])
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()
+        // Build the full argv — either raw (no isolation) or wrapped in
+        // `bwrap` when an isolation backend is configured. The wrapped
+        // command spawns bwrap which execs the inner command inside a
+        // fresh sandbox.
+        let raw_argv: Vec<String> = if nix_subcommand == "__direct__" {
+            args.clone()
         } else {
-            Command::new(&self.nix_bin)
-                .arg(&nix_subcommand)
-                .args(["--no-write-lock-file", "--quiet"])
-                .args(&args)
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()
-        }
-        .map_err(|e| ExecutionError::StageFailed {
-            stage_id: stage_id.clone(),
-            message: format!("failed to spawn process: {e}"),
-        })?;
+            let mut v = vec![self.nix_bin.display().to_string(), nix_subcommand.clone()];
+            v.push("--no-write-lock-file".into());
+            v.push("--quiet".into());
+            v.extend(args.iter().cloned());
+            v
+        };
+
+        // Scratch work dir used as /work inside the sandbox. Must exist
+        // before bwrap spawns. Reuse a per-executor tmpdir; each stage
+        // invocation gets its own uniquely-named subdirectory so cross-
+        // stage filesystem collisions can't happen.
+        let work_host =
+            self.cache_dir
+                .join("work")
+                .join(format!("{}-{}", stage_id.0, std::process::id()));
+        let _ = std::fs::create_dir_all(&work_host);
+
+        let mut spawn = match &self.config.isolation {
+            super::isolation::IsolationBackend::None => {
+                // No sandbox — legacy behaviour.
+                let mut cmd = Command::new(&raw_argv[0]);
+                cmd.args(&raw_argv[1..]);
+                cmd
+            }
+            super::isolation::IsolationBackend::Bwrap { bwrap_path } => {
+                let policy = super::isolation::IsolationPolicy::from_effects(
+                    self.implementations
+                        .get(&stage_id.0)
+                        .map(|i| &i.effects)
+                        .unwrap_or(&noether_core::effects::EffectSet::pure()),
+                    work_host.clone(),
+                );
+                // Prepend the Nix binary to the ro_binds so the
+                // sandboxed process can invoke it. NixExecutor resolves
+                // `nix` at construction time from the host PATH; the
+                // bwrap sandbox doesn't inherit PATH, so we bind-mount
+                // the resolved path's parent directory read-only.
+                let mut policy = policy;
+                if let Some(parent) = self.nix_bin.parent() {
+                    policy
+                        .ro_binds
+                        .push((parent.to_path_buf(), parent.to_path_buf()));
+                }
+                // Rewrite the argv: the nix_bin inside the sandbox is
+                // at its real path (bind-mounted), so the absolute path
+                // in raw_argv[0] works. For `__direct__`, the first arg
+                // is typically a venv-installed Python binary at some
+                // arbitrary path — we bind-mount its parent dir so
+                // that resolves too.
+                if nix_subcommand == "__direct__" {
+                    if let Some(parent) = std::path::Path::new(&raw_argv[0]).parent() {
+                        policy
+                            .ro_binds
+                            .push((parent.to_path_buf(), parent.to_path_buf()));
+                    }
+                }
+                let mut cmd = super::isolation::build_bwrap_command(bwrap_path, &policy, &raw_argv);
+                // Pass through allowlisted env vars.
+                for var in &policy.env_allowlist {
+                    if let Ok(v) = std::env::var(var) {
+                        cmd.env(var, v);
+                    }
+                }
+                cmd
+            }
+        };
+
+        let mut child = spawn
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| ExecutionError::StageFailed {
+                stage_id: stage_id.clone(),
+                message: format!("failed to spawn process: {e}"),
+            })?;
+        let _ = raw_argv;
 
         // Write stdin in a background thread so we don't deadlock when the
         // child's stdin pipe fills before we start reading stdout.
@@ -1042,6 +1165,7 @@ mod tests {
                     StageImpl {
                         code: code.into(),
                         language: "python".into(),
+                        effects: noether_core::effects::EffectSet::pure(),
                     },
                 );
                 m
@@ -1085,6 +1209,7 @@ mod tests {
                     StageImpl {
                         code: code.into(),
                         language: "python".into(),
+                        effects: noether_core::effects::EffectSet::pure(),
                     },
                 );
                 m

