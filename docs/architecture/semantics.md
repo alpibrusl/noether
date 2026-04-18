@@ -2,7 +2,7 @@
 
 The denotational meaning of each composition operator in the Lagrange
 graph language. This document is the **contract**: every property test in
-`crates/noether-core/tests/laws.rs` checks a law stated here, and every
+`crates/noether-engine/tests/laws.rs` checks a law stated here, and every
 canonicalisation rule in `crates/noether-engine/src/lagrange/canonical.rs`
 is justified by one of these equivalences.
 
@@ -229,8 +229,10 @@ A graph is in **canonical form** when all of the following hold:
 4. **Let bindings sorted alphabetically** by name (same).
 5. **Retry collapse.** `Retry { _, 1, _ }` → inner stage. `Retry { Retry
    { s, n, d }, m, d }` → `Retry { s, n·m, d }`.
-6. **Empty Let collapse.** `Let { {}, body }` → `body` if body is
-   independent of shadowed fields (conservative: always).
+6. **Empty Let collapse.** `Let { {}, body }` → `body`. With no bindings
+   there are no shadowed fields, so the rewrite is always safe — the
+   "body must be independent of shadowed fields" qualifier of the general
+   semantics is vacuous.
 
 The canonical form is what the composition ID hashes. Two graphs with
 the same canonical form are semantically equivalent; two graphs with
@@ -251,26 +253,33 @@ cost of keeping M1's canonicalisation fast and bug-unlikely.
 
 ## Equivalence claims testable in `laws.rs`
 
-Every item below is one proptest.
+### Tested in M1
+
+Every item below has at least one proptest in `laws.rs`:
 
 | Law | Statement |
 |-----|-----------|
 | `L1` Sequential associativity | `flatten(Sequential[Sequential[a,b], c]) == Sequential[a,b,c]` |
-| `L2` Sequential left identity | `canonicalise(Sequential[id_stage, f]) ≡ f` |
-| `L3` Sequential right identity | `canonicalise(Sequential[f, id_stage]) ≡ f` |
 | `L4` Sequential singleton | `canonicalise(Sequential[a]) == a` |
 | `L5` Sequential nested flatten | any nesting of Sequentials produces a flat equivalent |
-| `L6` Parallel permutation | two Parallels with permuted branch sets produce equal canonical forms |
-| `L7` Let binding permutation | two Lets with permuted bindings produce equal canonical forms |
-| `L8` Const absorption | `canonicalise(Sequential[f, Const{v}]) ≡ Const{v}` (M2; skipped in M1) |
+| `L6` Parallel permutation | permuting branch-key insertion order yields an equal composition ID (JSON-level test — BTreeMap in-memory already enforces this; the test catches serialisation drift) |
+| `L7` Let binding permutation | permuting binding-key insertion order yields an equal composition ID (same rationale as L6) |
 | `L9` Retry 1-attempt collapse | `canonicalise(Retry{s, 1, _}) == s` |
 | `L10` Retry multiplication | `canonicalise(Retry{Retry{s, n, d}, m, d}) == Retry{s, n·m, d}` |
 | `L11` Empty Let collapse | `canonicalise(Let{{}, body}) == body` |
 | `L12` Canonicalisation is idempotent | `canonicalise(canonicalise(g)) == canonicalise(g)` |
 | `L13` Composition ID stability | `compute_composition_id(g) == compute_composition_id(permuted_but_equivalent(g))` |
 
-Laws `L8`, `L9`, `L10` depend on canonical rules that materialise in M1
-(`L9`, `L10`, `L11`) vs M2+ (`L8`).
+### Deferred — claims stand but tests ship in a later milestone
+
+These laws are true by the semantics above; proptests land alongside the
+canonical-form rules that realise them.
+
+| Law | Statement | Ships with |
+|-----|-----------|------------|
+| `L2` Sequential left identity | `canonicalise(Sequential[id_stage, f]) ≡ f` | M2 (stage-level identity detection needs stage metadata) |
+| `L3` Sequential right identity | `canonicalise(Sequential[f, id_stage]) ≡ f` | M2 (same) |
+| `L8` Const absorption | `canonicalise(Sequential[f, Const{v}]) ≡ Const{v}` | M2 (rewrite is semantics-preserving but deferred to M2 optimiser) |
 
 ---
 

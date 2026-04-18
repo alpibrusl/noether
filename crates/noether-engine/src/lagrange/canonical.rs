@@ -4,7 +4,7 @@
 //! semantically equivalent graphs produce the same byte representation
 //! (and therefore the same composition ID). The rules implemented here
 //! are justified in `docs/architecture/semantics.md`; the property tests
-//! in `crates/noether-core/tests/laws.rs` check every law.
+//! in `crates/noether-engine/tests/laws.rs` check every law.
 //!
 //! Rules (M1):
 //!
@@ -147,13 +147,20 @@ fn canonicalise_node(node: CompositionNode) -> CompositionNode {
             {
                 if inner_delay == delay_ms {
                     let combined = max_attempts.saturating_mul(inner_attempts);
-                    return CompositionNode::Retry {
+                    // Defensive: the combined Retry could itself be subject to
+                    // further node-local collapse (e.g. combined == 1). Re-feed
+                    // through canonicalise_node so one pass is enough
+                    // regardless of input tree shape. Proptest L12 locks
+                    // `canonicalise(canonicalise(g)) == canonicalise(g)`.
+                    return canonicalise_node(CompositionNode::Retry {
                         stage: inner_stage,
                         max_attempts: combined,
                         delay_ms,
-                    };
+                    });
                 }
-                // Different delays: keep the nesting so timing behaviour is preserved.
+                // Different delays: keep the nesting so timing behaviour is
+                // preserved. The inner stage is already canonical because
+                // children were processed bottom-up.
                 return CompositionNode::Retry {
                     stage: Box::new(CompositionNode::Retry {
                         stage: inner_stage,

@@ -150,77 +150,130 @@ proptest! {
 }
 
 // ── L6: Parallel branch-name permutation ────────────────────────────────────
+//
+// The in-memory `BTreeMap<String, CompositionNode>` already enforces key
+// ordering at construction time — two `Parallel` nodes built from the same
+// pairs with any insertion order compare structurally equal before any
+// canonicalisation runs. That alone would make the test tautological.
+//
+// The real risk is serialisation drift: a JSON reader that doesn't
+// normalise key order could produce different composition IDs for two
+// JSON encodings of the same `Parallel`. These tests construct graphs
+// from JSON with shuffled key order and check that `parse_graph` +
+// `compute_composition_id` produce identical hashes. That validates
+// both `BTreeMap` and the JCS step.
 
 proptest! {
     #[test]
-    fn l6_parallel_branch_permutation_stable_id(
+    fn l6_parallel_json_key_order_is_irrelevant(
         pairs in prop::collection::vec(
-            ("[a-z]{1,6}", stage()),
-            1..6,
+            ("[a-z]{1,6}", "[a-z]{1,6}"),
+            2..6,
         ),
     ) {
-        // Dedupe keys up-front so last-wins ordering does not change the
-        // value under different insertion orders — we want to test that
-        // key-order doesn't matter, not that the last write wins.
-        let canon: BTreeMap<String, CompositionNode> = pairs.into_iter().collect();
-        let entries: Vec<_> = canon.clone().into_iter().collect();
+        // Dedupe to avoid last-wins asymmetry across permutations.
+        let canon: BTreeMap<String, String> = pairs.into_iter().collect();
+        prop_assume!(canon.len() >= 2);
 
-        let mut map_fwd = BTreeMap::new();
-        for (k, v) in &entries {
-            map_fwd.insert(k.clone(), v.clone());
-        }
-        let mut map_rev = BTreeMap::new();
-        for (k, v) in entries.iter().rev() {
-            map_rev.insert(k.clone(), v.clone());
-        }
+        // Build JSON with fwd-ordered keys.
+        let fwd_branches: serde_json::Map<String, serde_json::Value> = canon
+            .iter()
+            .map(|(k, v)| (k.clone(), serde_json::json!({"op": "Stage", "id": v})))
+            .collect();
+        let fwd_json = serde_json::json!({
+            "description": "fwd",
+            "version": "0.1.0",
+            "root": {"op": "Parallel", "branches": fwd_branches},
+        });
 
-        let p1 = CompositionNode::Parallel { branches: map_fwd };
-        let p2 = CompositionNode::Parallel { branches: map_rev };
+        // Build JSON with reversed key order. Since serde_json::Map
+        // preserves insertion order, this really does produce a
+        // different byte sequence for the unsorted form.
+        let rev_branches: serde_json::Map<String, serde_json::Value> = canon
+            .iter()
+            .rev()
+            .map(|(k, v)| (k.clone(), serde_json::json!({"op": "Stage", "id": v})))
+            .collect();
+        let rev_json = serde_json::json!({
+            "description": "rev",
+            "version": "0.1.0",
+            "root": {"op": "Parallel", "branches": rev_branches},
+        });
 
-        prop_assert_eq!(canonicalise(&p1), canonicalise(&p2));
+        // Pre-normalisation JSON bytes should differ (sanity: otherwise
+        // the test isn't exercising permutation at all).
+        prop_assume!(
+            serde_json::to_string(&fwd_json).unwrap()
+                != serde_json::to_string(&rev_json).unwrap()
+        );
 
-        let g1 = CompositionGraph::new("p1", p1);
-        let g2 = CompositionGraph::new("p2", p2);
+        let g_fwd: CompositionGraph = serde_json::from_value(fwd_json).unwrap();
+        let g_rev: CompositionGraph = serde_json::from_value(rev_json).unwrap();
+
+        // Canonical AST equal.
+        prop_assert_eq!(canonicalise(&g_fwd.root), canonicalise(&g_rev.root));
+
+        // Composition IDs equal (this is the law the claim is about).
         prop_assert_eq!(
-            compute_composition_id(&g1).unwrap(),
-            compute_composition_id(&g2).unwrap()
+            compute_composition_id(&g_fwd).unwrap(),
+            compute_composition_id(&g_rev).unwrap()
         );
     }
 }
 
 // ── L7: Let binding permutation ─────────────────────────────────────────────
+//
+// Same rationale as L6 — enforce permutation invariance end-to-end
+// through JSON rather than trivially via BTreeMap.
 
 proptest! {
     #[test]
-    fn l7_let_binding_permutation_stable_id(
+    fn l7_let_json_binding_order_is_irrelevant(
         pairs in prop::collection::vec(
-            ("[a-z]{1,6}", stage()),
-            1..5,
+            ("[a-z]{1,6}", "[a-z]{1,6}"),
+            2..5,
         ),
-        body in stage(),
+        body_id in "[a-z]{1,6}",
     ) {
-        let canon: BTreeMap<String, CompositionNode> = pairs.into_iter().collect();
-        let entries: Vec<_> = canon.clone().into_iter().collect();
+        let canon: BTreeMap<String, String> = pairs.into_iter().collect();
+        prop_assume!(canon.len() >= 2);
 
-        let mut map_fwd = BTreeMap::new();
-        for (k, v) in &entries {
-            map_fwd.insert(k.clone(), v.clone());
-        }
-        let mut map_rev = BTreeMap::new();
-        for (k, v) in entries.iter().rev() {
-            map_rev.insert(k.clone(), v.clone());
-        }
-
-        let l1 = CompositionNode::Let {
-            bindings: map_fwd,
-            body: Box::new(body.clone()),
-        };
-        let l2 = CompositionNode::Let {
-            bindings: map_rev,
-            body: Box::new(body),
+        let mk_bindings = |iter: Box<dyn Iterator<Item = (&String, &String)>>|
+            -> serde_json::Map<String, serde_json::Value>
+        {
+            iter.map(|(k, v)| (k.clone(), serde_json::json!({"op": "Stage", "id": v})))
+                .collect()
         };
 
-        prop_assert_eq!(canonicalise(&l1), canonicalise(&l2));
+        let fwd_bindings = mk_bindings(Box::new(canon.iter()));
+        let rev_bindings = mk_bindings(Box::new(canon.iter().rev()));
+
+        let body = serde_json::json!({"op": "Stage", "id": body_id});
+
+        let fwd_json = serde_json::json!({
+            "description": "fwd",
+            "version": "0.1.0",
+            "root": {"op": "Let", "bindings": fwd_bindings, "body": body.clone()},
+        });
+        let rev_json = serde_json::json!({
+            "description": "rev",
+            "version": "0.1.0",
+            "root": {"op": "Let", "bindings": rev_bindings, "body": body},
+        });
+
+        prop_assume!(
+            serde_json::to_string(&fwd_json).unwrap()
+                != serde_json::to_string(&rev_json).unwrap()
+        );
+
+        let g_fwd: CompositionGraph = serde_json::from_value(fwd_json).unwrap();
+        let g_rev: CompositionGraph = serde_json::from_value(rev_json).unwrap();
+
+        prop_assert_eq!(canonicalise(&g_fwd.root), canonicalise(&g_rev.root));
+        prop_assert_eq!(
+            compute_composition_id(&g_fwd).unwrap(),
+            compute_composition_id(&g_rev).unwrap()
+        );
     }
 }
 
@@ -329,6 +382,35 @@ proptest! {
             }
             other => panic!("expected outer Retry, got {:?}", other),
         }
+    }
+}
+
+// L10 (deep): deeper-than-2 nested Retries with matching delays collapse in
+// one canonicalise pass.
+proptest! {
+    #[test]
+    fn l10_retry_deep_nesting_collapses_fully(
+        s in stage(),
+        attempts in prop::collection::vec(2u32..8, 3..6),
+        delay in prop::option::of(0u64..1_000),
+    ) {
+        // Build k-level nested Retry with the same delay_ms at every level.
+        let mut node = s.clone();
+        let mut product: u32 = 1;
+        for &n in &attempts {
+            product = product.saturating_mul(n);
+            node = CompositionNode::Retry {
+                stage: Box::new(node),
+                max_attempts: n,
+                delay_ms: delay,
+            };
+        }
+        let expected = CompositionNode::Retry {
+            stage: Box::new(s),
+            max_attempts: product,
+            delay_ms: delay,
+        };
+        prop_assert_eq!(canonicalise(&node), expected);
     }
 }
 

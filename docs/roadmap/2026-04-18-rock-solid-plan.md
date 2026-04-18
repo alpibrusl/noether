@@ -47,7 +47,7 @@ identically.
   `Retry`, `Const`, `Let`, `Merge`, `Stage`). Input/output relation,
   associativity, identity laws. English + sketched equations. Not
   category-theory notation; prose that an engineer understands.
-- `crates/noether-core/tests/laws.rs` — proptest suite with one test per
+- `crates/noether-engine/tests/laws.rs` — proptest suite with one test per
   claimed law:
   - `Sequential` associativity: `(a >> b) >> c ≡ a >> (b >> c)`
   - Left/right identity: `id >> f ≡ f ≡ f >> id`
