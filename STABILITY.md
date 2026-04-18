@@ -348,9 +348,16 @@ every public Rust API. Interpret the numbers like this:
 
 1. CI enforcement (`scripts/check_breaking_change.sh`) lands with M4
    (the 1.0 milestone). Until then, this document is informative.
-2. Property-level regressions: run `noether stage verify --with-properties`
-   against the stdlib — every stage ships with ≥3 declared properties
-   at 1.0, and each property must hold for every declared example.
+2. Property-level regressions: run `noether stage verify --properties`
+   against the stdlib. Every stage ships with properties **where they
+   are naturally expressible in the DSL**, and each declared property
+   must hold for every declared example. The earlier "≥3 per stage"
+   target is **not** enforced: the v0.6 DSL (SetMember, Range) only
+   expresses numeric bounds and enumerated sets, which don't fit most
+   stages that transform data structurally (e.g. `text_reverse`,
+   `filter`, `map`). DSL expansion to cross-field equality and
+   input-dependent ranges lands in a follow-up milestone
+   (`docs/roadmap/2026-04-18-property-dsl-expansion.md`).
 3. For air-gapped bit-exact pinning, set `pinning: "both"` on every
    `Stage` node in the graph and include the `implementation_id`. The
    resolver refuses to substitute any other implementation.

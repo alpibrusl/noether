@@ -33,6 +33,7 @@ pub struct StageBuilder {
     ui_style: Option<String>,
     tags: Vec<String>,
     aliases: Vec<String>,
+    properties: Vec<crate::stage::property::Property>,
 }
 
 impl StageBuilder {
@@ -55,6 +56,7 @@ impl StageBuilder {
             ui_style: None,
             tags: Vec::new(),
             aliases: Vec::new(),
+            properties: Vec::new(),
         }
     }
 
@@ -82,6 +84,18 @@ impl StageBuilder {
     /// Append a single alias / alternative name to improve search recall.
     pub fn alias(mut self, a: impl Into<String>) -> Self {
         self.aliases.push(a.into());
+        self
+    }
+
+    /// Append a declarative property this stage claims to hold for
+    /// every (input, output) example. See
+    /// [`crate::stage::property::Property`] for the DSL.
+    ///
+    /// Not part of the content hash — properties can be strengthened
+    /// without forcing a new `StageId`. Per `STABILITY.md`, properties
+    /// may only grow additively within 1.x.
+    pub fn property(mut self, p: crate::stage::property::Property) -> Self {
+        self.properties.push(p);
         self
     }
 
@@ -193,7 +207,7 @@ impl StageBuilder {
             tags: self.tags,
             aliases: self.aliases,
             name: self.name.clone(),
-            properties: Vec::new(),
+            properties: self.properties.clone(),
         })
     }
 
@@ -248,7 +262,7 @@ impl StageBuilder {
             tags: self.tags,
             aliases: self.aliases,
             name: self.name.clone(),
-            properties: Vec::new(),
+            properties: self.properties.clone(),
         })
     }
 
@@ -294,7 +308,7 @@ impl StageBuilder {
             tags: self.tags,
             aliases: self.aliases,
             name: self.name.clone(),
-            properties: Vec::new(),
+            properties: self.properties.clone(),
         })
     }
 }
