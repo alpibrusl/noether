@@ -101,6 +101,40 @@ contract holds.
 
 ---
 
+## Stage properties wire format — additive kinds
+
+Every stored Stage may carry a `properties` array. Each entry is a
+structured object tagged by `kind`:
+
+```json
+"properties": [
+  { "kind": "set_member", "field": "output.severity",
+    "set": ["CRITICAL", "HIGH", "WARNING"] },
+  { "kind": "range", "field": "output.soc_percent",
+    "min": 0.0, "max": 100.0 }
+]
+```
+
+**Kinds frozen at 1.0.** `"set_member"` and `"range"` carry the
+meanings documented in `crates/noether-core/src/stage/property.rs`.
+
+**Promise.** Existing `kind` strings, their required fields, and their
+evaluation semantics are frozen across 1.x. New `kind` variants may
+land (additive); a 1.0 reader loads them as `Property::Unknown` and
+skips them in aggregation rather than erroring. Readers MUST NOT treat
+an unknown kind as "property holds".
+
+**Properties are not part of the content hash** — a stage's
+`signature_id` and `id` are determined by `(name, input, output,
+effects[, implementation_hash])` only. Adding or tightening a
+property changes the stage's declared guarantees but not its
+identity. Existing entries cannot be removed or weakened within 1.x.
+
+**Field paths.** The `field` string is a dot-separated path rooted at
+`input` or `output`. Those two roots are frozen at 1.0.
+
+---
+
 ## Graph node `pinning` — frozen variants
 
 Every `CompositionNode::Stage` carries an optional `pinning` enum that
