@@ -53,6 +53,18 @@ pub enum CompositionNode {
     /// Use [`CompositionNode::stage`] to construct a node with default
     /// pinning; use the struct literal only when you need a non-default
     /// pinning or a config.
+    ///
+    /// # Known gap in M2 (v0.6.0)
+    ///
+    /// [`resolve_stage_ref`] is only wired into the type checker and
+    /// executor runner. Other passes (effect inference, Ed25519
+    /// verify, planner cost/parallel grouping, budget, grid-broker
+    /// splitter) still look up by [`StageId`] directly, which means
+    /// a `Pinning::Signature` node may type-check but fail at those
+    /// downstream passes. The resolver-normalisation pass lands as a
+    /// follow-up: it rewrites graph nodes to implementation IDs before
+    /// any downstream pass runs, so the rest of the engine keeps
+    /// operating on concrete implementation hashes.
     Stage {
         id: StageId,
         #[serde(default, skip_serializing_if = "Pinning::is_signature")]
@@ -163,14 +175,36 @@ impl CompositionNode {
     }
 }
 
-/// Resolve a `CompositionNode::Stage` reference to a concrete stage in
-/// the store, respecting the node's pinning.
+/// Resolve a `CompositionNode::Stage` reference to a concrete stage
+/// in the store, respecting the node's pinning.
 ///
-/// - [`Pinning::Signature`]: tries `store.get_by_signature` first; on
-///   miss, falls back to `store.get` (in case `id` is actually an
-///   implementation hash left over from a name-resolver pass).
-/// - [`Pinning::Both`]: requires `store.get` to return an exact match.
+/// - [`Pinning::Signature`]: `id` is interpreted as a
+///   [`noether_core::stage::SignatureId`]; the resolver returns the
+///   store's Active implementation for that signature.
+///   - If no Active match is found, the resolver **falls back** to
+///     `store.get(id)` *and* requires the looked-up stage to be
+///     Active. This fallback catches the case where a name- or
+///     prefix-resolver pass has already rewritten `id` into an
+///     implementation hash. It deliberately does NOT run Deprecated
+///     or Tombstone implementations — per STABILITY.md, deprecated
+///     stages should emit a warning when invoked, which a silent
+///     resolver cannot do. The right place for "run deprecated with
+///     a warning" is the CLI layer, not this helper.
+/// - [`Pinning::Both`]: `id` is an implementation-inclusive
+///   [`StageId`]; the resolver requires an exact `store.get` match.
 ///   No fallback to signature-level resolution.
+///
+/// # Known gap (tracked as M2 follow-up)
+///
+/// In M2 only the type checker and runtime executor use this helper.
+/// The effect-inference walk, `--allow-effects` enforcement, Ed25519
+/// verification pass, cost summary, planner parallel-grouping, budget
+/// collection, and grid-broker splitter all still call `store.get(id)`
+/// directly — which means a `Pinning::Signature` node can't resolve
+/// through those paths yet. The follow-up "resolver normalisation
+/// pass" rewrites graph nodes to their resolved implementation IDs
+/// before anything else runs, so the rest of the engine keeps
+/// operating on concrete implementation hashes.
 pub fn resolve_stage_ref<'a, S>(
     id: &StageId,
     pinning: Pinning,
@@ -179,16 +213,20 @@ pub fn resolve_stage_ref<'a, S>(
 where
     S: noether_store::StageStore + ?Sized,
 {
-    use noether_core::stage::SignatureId;
+    use noether_core::stage::{SignatureId, StageLifecycle};
     match pinning {
         Pinning::Signature => {
             let sig = SignatureId(id.0.clone());
             if let Some(stage) = store.get_by_signature(&sig) {
                 return Some(stage);
             }
-            // Fallback: a name-based or prefix-based resolver may have
-            // rewritten `id` to an implementation_id before we got here.
-            store.get(id).ok().flatten()
+            // Fallback for mixed legacy flows. Must be Active; a
+            // silent resolver must not execute a deprecated or
+            // tombstoned stage on behalf of the user.
+            match store.get(id).ok().flatten() {
+                Some(s) if matches!(s.lifecycle, StageLifecycle::Active) => Some(s),
+                _ => None,
+            }
         }
         Pinning::Both => store.get(id).ok().flatten(),
     }
