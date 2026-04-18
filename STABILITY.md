@@ -17,31 +17,35 @@ different for each.
 
 ### Stage signature ID — stable across 1.x
 
-The **signature ID** is the SHA-256 of the canonical JSON of the
-`StageSignature` fields: `name`, `input`, `output`, `effects`. Two stages
-with identical signatures have identical signature IDs, independent of
-implementation language, source code, or registry location.
+The **signature ID** (`SignatureId`) is the hex-encoded SHA-256 of the
+JCS-canonicalised JSON of `{name, input, output, effects}`. Two stages
+with the same values on those four fields have identical signature IDs,
+independent of implementation language, source code, or registry
+location. **Name is part of the signature** — a rename produces a new
+signature ID.
 
-**Promise.** A signature ID resolved from an active stdlib stage in
-v1.0.0 will resolve to a stage with identical input/output/effects in
-every v1.x release. Same inputs produce same-shaped outputs. Effect set
-does not grow (i.e. a `Pure` stage in 1.0 stays `Pure` in 1.9).
+**Promise.** A signature ID resolved from an Active stdlib stage in
+v1.0.0 resolves to a stage with identical input/output/effects in every
+v1.x release. Same inputs produce same-shaped outputs. The effect set
+does not grow (a `Pure` stage in 1.0 stays `Pure` in 1.9).
 
 **Not promised.** Byte-for-byte output equality for stages marked
 `NonDeterministic` or `Llm`. Performance. Cost.
 
 ### Stage implementation ID — may change on bugfixes
 
-The **implementation ID** is the SHA-256 of the canonical JSON of the
-stage body (script source, config, runtime pins). Two stages with
-identical implementations but different signatures (e.g. a rename) have
-different signature IDs but may have the same implementation ID.
+The **implementation ID** (`ImplementationId`, also called `StageId`
+for historical reasons — they are type-aliased today) is the
+hex-encoded SHA-256 of JCS(`{name, input, output, effects,
+implementation_hash}`). The hash **nests** the signature ID: changing
+any signature-level field *or* the implementation hash changes the
+implementation ID; changing only the implementation hash changes the
+implementation ID but leaves the signature ID stable.
 
 **Promise.** When a bugfix changes an implementation ID without changing
 the signature ID, graphs that reference the stage by signature keep
-working. Existing pinned graphs that reference the stage by `both`
-(signature + implementation) are unaffected — they keep running the old
-implementation until the user re-pins.
+working. Graphs with `pinning: "both"` are unaffected — they keep
+running the old implementation until the user re-pins.
 
 **Not promised.** That any specific implementation ID remains available
 forever. Implementations of `Deprecated` stages may be removed 6 months
@@ -97,6 +101,28 @@ contract holds.
 
 ---
 
+## Graph node `pinning` — frozen variants
+
+Every `CompositionNode::Stage` carries an optional `pinning` enum that
+determines how the node's `id` field resolves in the store. At 1.0 the
+variants are:
+
+- `"signature"` (default, omitted in JSON) — `id` is a `SignatureId`;
+  the resolver returns the current Active implementation.
+- `"both"` — `id` is an `ImplementationId`; the resolver requires an
+  exact match and refuses to fall back to a different implementation.
+
+**Promise.** The two variant strings and their wire-level meaning are
+frozen at 1.0. New variants may be added in 1.x (additive); existing
+ones cannot change. Omitting `pinning` continues to mean `"signature"`
+across 1.x.
+
+**Not promised.** That legacy pre-M2 graphs with a bare `"id"` field
+(pre-v0.6.0) load identically under every 1.x release — they may be
+accepted with a deprecation warning today and removed later in a major.
+
+---
+
 ## Graph JSON schema — additive-only within 1.x
 
 The composition-graph JSON format (`CompositionNode` tag = "op" union)
@@ -120,6 +146,7 @@ The noether-cloud registry HTTP surface:
 - `POST /stages`
 - `GET /stages`, `GET /stages/:id`
 - `PATCH /stages/:id/lifecycle`
+- `DELETE /stages/:id` — soft-delete (Tombstone) by admin
 - `GET /stages/search`
 - `POST /compositions/run`
 - `GET /health`
@@ -164,11 +191,86 @@ anything in `noether research` / `noether internal` namespaces.
 
 ---
 
+## Minimum supported Rust version (MSRV)
+
+**Promise.** 1.x releases compile with Rust stable `1.83` or newer. We
+pin the MSRV in `rust-toolchain.toml` and gate CI on it. Bumping the
+MSRV within 1.x requires a 6-month notice in the changelog.
+
+**Not promised.** Compilation with nightly-only features, stable
+versions older than the pinned MSRV, or non-standard targets (WASM
+beyond the listed `wasm32-unknown-unknown` browser target).
+
+---
+
+## Public Rust crate surface
+
+**Promise.** The following crate names publish to crates.io and ship
+`pub` symbols covered by the contract above:
+
+- `noether-core` — types, effects, stages, hashes, stdlib loader.
+- `noether-store` — `StageStore` trait + Memory / JsonFile impls.
+- `noether-engine` — composition engine, checker, planner, runner,
+  canonicalisation, semantic index.
+- `noether-cli` — `noether` binary.
+- `noether-scheduler` — `noether-scheduler` binary.
+
+**Not promised.** `noether-grid-*` crates (experimental;
+`publish = false` today). Test crates, `xtask`-style tooling crates,
+and any `pub` item gated on `#[doc(hidden)]` or living in modules
+named `internal` / `experimental`.
+
+---
+
+## On-disk formats
+
+**Promise.** The following file formats are stable across 1.x —
+additive changes only, never field removal or repurposing:
+
+- **JsonFileStore** (`.noether/registry.json`) — the list-of-stages
+  JSON that `noether stage add` writes. Loader must accept prior 1.x
+  outputs.
+- **Lagrange graph** (`*.json`, typically `graph.json`) — the
+  `CompositionGraph` JSON that `noether run` consumes. Additive fields
+  allowed on `CompositionNode` variants; readers ignore unknown ones.
+- **Composition trace** (written by `noether run --trace` / read by
+  `noether trace`) — the `CompositionTrace` JSON.
+- **Ed25519 stage signatures** — hex-encoded 64-byte Ed25519 signature
+  over the stage id bytes. Verification key is hex-encoded 32-byte
+  Ed25519 public key. Format frozen; new signing schemes (if any) ship
+  alongside the existing one, not in place of it.
+
+**Not promised.** Internal binary formats like cached build artefacts
+in `target/` or the semantic index on-disk cache. Those regenerate
+from scratch on version mismatch.
+
+---
+
+## Environment variable contract
+
+Environment variables that are part of the public surface:
+
+- `NOETHER_REGISTRY` — registry URL (CLI).
+- `NOETHER_API_KEY` / `NOETHER_API_KEYS` — registry authentication.
+- `NOETHER_LLM_PROVIDER` — explicit LLM provider selection.
+- `VERTEX_AI_*`, `OPENAI_*`, `ANTHROPIC_*`, `MISTRAL_*` — provider-
+  specific credentials and overrides.
+
+**Promise.** Variable names and their documented effect are stable
+across 1.x. Additional variables may be added (additive).
+
+**Not promised.** Non-documented variables (typically `NOETHER_DEBUG_*`,
+`NOETHER_TEST_*`) are implementation details and may change.
+
+---
+
 ## What the contract does NOT cover
 
 - Source-code stability. Rust crate internal APIs (`pub fn` inside a
   crate that isn't re-exported from the top level) can change freely.
-- Wire format of `noether-grid-*`. Experimental; reserved for 2.0.
+- Wire format of `noether-grid-*`. Experimental; the crates are
+  `publish = false` today and their ship posture for 1.0 is an open
+  decision tracked in `docs/roadmap/2026-04-18-rock-solid-plan.md`.
 - WASM target. Experimental; may be removed if unused by 1.0.
 - Performance SLAs. Noether is a single-maintainer project; we don't
   commit to microbenchmarks across releases.
@@ -210,12 +312,14 @@ every public Rust API. Interpret the numbers like this:
 
 ## How to verify a given release upholds this contract
 
-1. Check the CI status of the `stability` workflow on the release tag.
-2. Run `noether stability verify` on your graph. It walks every stage
-   reference, confirms each signature ID exists in the registry, and
-   reports any pinned implementation IDs that have been deprecated.
-3. For air-gapped pinning, use `pinning: "both"` on every node. The
-   engine then refuses to resolve a different implementation.
+1. CI enforcement (`scripts/check_breaking_change.sh`) lands with M4
+   (the 1.0 milestone). Until then, this document is informative.
+2. Property-level regressions: run `noether stage verify --with-properties`
+   against the stdlib — every stage ships with ≥3 declared properties
+   at 1.0, and each property must hold for every declared example.
+3. For air-gapped bit-exact pinning, set `pinning: "both"` on every
+   `Stage` node in the graph and include the `implementation_id`. The
+   resolver refuses to substitute any other implementation.
 
 ---
 
