@@ -269,7 +269,7 @@ mod tests {
         };
         let stage = Stage {
             id: StageId("ffaa1122deadbeef0000000000000000000000000000000000000000000000ff".into()),
-            canonical_id: None,
+            signature_id: None,
             signature: sig,
             capabilities: BTreeSet::<Capability>::new(),
             cost: CostEstimate {
@@ -316,7 +316,7 @@ mod tests {
         fn mk(id_hex: &str, lifecycle: StageLifecycle, hash: &str) -> Stage {
             Stage {
                 id: StageId(id_hex.into()),
-                canonical_id: None,
+                signature_id: None,
                 signature: StageSignature {
                     input: NType::Text,
                     output: NType::Number,

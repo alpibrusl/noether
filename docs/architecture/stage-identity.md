@@ -143,23 +143,33 @@ noether stage get 8dfa010b
 
 ---
 
-## Canonical Identity
+## Signature Identity
 
 In addition to the full `StageId` (which includes the `implementation_hash`), each stage
-has a **canonical identity** that captures *what* the stage does without regard to *how*:
+has a **signature identity** that captures *what* the stage does without regard to *how*:
 
 ```
-canonical_id = SHA-256(name + input + output + effects)
+signature_id = SHA-256(name + input + output + effects)
 ```
 
-The canonical ID is used for **versioning**: only one Active version of a stage may exist
-per `canonical_id` at any time. When a new version of a stage with the same canonical ID
+The signature ID is used for **versioning**: only one Active version of a stage may exist
+per `signature_id` at any time. When a new version of a stage with the same signature ID
 is registered via `noether stage add`, the system auto-deprecates the previous Active
 version and sets its `successor_id` to the new stage.
 
 This means:
 
-- **Same interface, new implementation** produces a new `StageId` but the same `canonical_id`.
+- **Same interface, new implementation** produces a new `StageId` but the same `signature_id`.
 - The old version is automatically deprecated with a pointer to the new one.
 - Composition graphs referencing the old `StageId` still resolve (deprecated stages remain
   executable) but agents are guided toward the successor via search ranking.
+
+Per [`STABILITY.md`](../../STABILITY.md), `signature_id` is **stable across the 1.x
+line**: a bugfix that changes `implementation_hash` changes `StageId` but never
+`signature_id`. This is the identity that graphs should pin by default, so they
+pick up implementation fixes automatically.
+
+> **Naming note.** Prior to v0.6.0 this field was called `canonical_id` and the
+> type was `CanonicalId`. Both the old name (as a JSON field alias and a
+> deprecated type alias) and the new one are accepted in v0.6.x; the old
+> names are removed in v0.7.0.

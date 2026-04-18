@@ -1,5 +1,5 @@
 use crate::effects::EffectSet;
-use crate::stage::schema::{CanonicalId, StageId, StageSignature};
+use crate::stage::schema::{SignatureId, StageId, StageSignature};
 use crate::types::NType;
 use sha2::{Digest, Sha256};
 
@@ -31,17 +31,19 @@ pub fn compute_stage_id(sig: &StageSignature) -> Result<StageId, serde_json::Err
     Ok(StageId(hex::encode(hash)))
 }
 
-/// Compute the canonical identity from name + input + output + effects.
+/// Compute the signature identity from name + input + output + effects.
 ///
-/// This hash captures *what* a stage does (its interface contract) without
-/// the implementation. Two stages with the same canonical ID are considered
-/// versions of the same concept — only one should be Active at a time.
-pub fn compute_canonical_id(
+/// This hash captures *what* a stage does (its interface contract)
+/// without the implementation. Two stages with the same
+/// [`SignatureId`] are considered versions of the same concept — only
+/// one should be Active at a time. Per `STABILITY.md`, signature IDs
+/// are stable across the 1.x line even as implementations are bugfixed.
+pub fn compute_signature_id(
     name: &str,
     input: &NType,
     output: &NType,
     effects: &EffectSet,
-) -> Result<CanonicalId, serde_json::Error> {
+) -> Result<SignatureId, serde_json::Error> {
     let canonical = serde_json::json!({
         "name": name,
         "input": input,
@@ -50,7 +52,19 @@ pub fn compute_canonical_id(
     });
     let bytes = serde_jcs::to_vec(&canonical)?;
     let hash = Sha256::digest(&bytes);
-    Ok(CanonicalId(hex::encode(hash)))
+    Ok(SignatureId(hex::encode(hash)))
+}
+
+/// Deprecated name for [`compute_signature_id`]. Kept for back-compat
+/// through v0.6.x; removed in v0.7.0.
+#[deprecated(since = "0.6.0", note = "renamed to compute_signature_id")]
+pub fn compute_canonical_id(
+    name: &str,
+    input: &NType,
+    output: &NType,
+    effects: &EffectSet,
+) -> Result<SignatureId, serde_json::Error> {
+    compute_signature_id(name, input, output, effects)
 }
 
 #[cfg(test)]
@@ -169,26 +183,26 @@ mod tests {
     }
 
     #[test]
-    fn canonical_id_ignores_implementation() {
+    fn signature_id_ignores_implementation() {
         let effects = EffectSet::pure();
-        let id1 = compute_canonical_id("my_stage", &NType::Text, &NType::Number, &effects).unwrap();
-        let id2 = compute_canonical_id("my_stage", &NType::Text, &NType::Number, &effects).unwrap();
+        let id1 = compute_signature_id("my_stage", &NType::Text, &NType::Number, &effects).unwrap();
+        let id2 = compute_signature_id("my_stage", &NType::Text, &NType::Number, &effects).unwrap();
         assert_eq!(id1, id2);
     }
 
     #[test]
-    fn canonical_id_differs_by_name() {
+    fn signature_id_differs_by_name() {
         let effects = EffectSet::pure();
-        let id1 = compute_canonical_id("stage_a", &NType::Text, &NType::Number, &effects).unwrap();
-        let id2 = compute_canonical_id("stage_b", &NType::Text, &NType::Number, &effects).unwrap();
+        let id1 = compute_signature_id("stage_a", &NType::Text, &NType::Number, &effects).unwrap();
+        let id2 = compute_signature_id("stage_b", &NType::Text, &NType::Number, &effects).unwrap();
         assert_ne!(id1, id2);
     }
 
     #[test]
-    fn canonical_id_differs_by_type() {
+    fn signature_id_differs_by_type() {
         let effects = EffectSet::pure();
-        let id1 = compute_canonical_id("my_stage", &NType::Text, &NType::Number, &effects).unwrap();
-        let id2 = compute_canonical_id("my_stage", &NType::Text, &NType::Text, &effects).unwrap();
+        let id1 = compute_signature_id("my_stage", &NType::Text, &NType::Number, &effects).unwrap();
+        let id2 = compute_signature_id("my_stage", &NType::Text, &NType::Text, &effects).unwrap();
         assert_ne!(id1, id2);
     }
 }

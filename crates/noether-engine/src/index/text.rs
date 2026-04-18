@@ -40,7 +40,7 @@ mod tests {
     fn test_stage() -> Stage {
         Stage {
             id: StageId("test".into()),
-            canonical_id: None,
+            signature_id: None,
             signature: StageSignature {
                 input: NType::Text,
                 output: NType::Number,

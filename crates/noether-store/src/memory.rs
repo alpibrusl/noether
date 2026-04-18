@@ -124,7 +124,7 @@ mod tests {
     fn make_stage(id: &str) -> Stage {
         Stage {
             id: StageId(id.into()),
-            canonical_id: None,
+            signature_id: None,
             signature: StageSignature {
                 input: NType::Text,
                 output: NType::Number,
@@ -214,6 +214,49 @@ mod tests {
                 },
             )
             .unwrap();
+    }
+
+    #[test]
+    fn get_by_signature_returns_active_impl() {
+        use noether_core::stage::SignatureId;
+        let mut store = MemoryStore::new();
+        let mut stage = make_stage("impl_a");
+        stage.signature_id = Some(SignatureId("sig_one".into()));
+        store.put(stage).unwrap();
+
+        let found = store.get_by_signature(&SignatureId("sig_one".into()));
+        assert!(found.is_some(), "stage pinned by signature should resolve");
+        assert_eq!(found.unwrap().id, StageId("impl_a".into()));
+
+        assert!(store
+            .get_by_signature(&SignatureId("sig_missing".into()))
+            .is_none());
+    }
+
+    #[test]
+    fn get_by_signature_skips_deprecated() {
+        use noether_core::stage::SignatureId;
+        let mut store = MemoryStore::new();
+        // Old implementation of "sig" goes Active, new Active stage becomes successor.
+        let mut old = make_stage("impl_old");
+        old.signature_id = Some(SignatureId("sig".into()));
+        store.put(old).unwrap();
+        let mut new = make_stage("impl_new");
+        new.signature_id = Some(SignatureId("sig".into()));
+        store.put(new).unwrap();
+
+        // Deprecate old → new. Resolver should return new.
+        store
+            .update_lifecycle(
+                &StageId("impl_old".into()),
+                StageLifecycle::Deprecated {
+                    successor_id: StageId("impl_new".into()),
+                },
+            )
+            .unwrap();
+
+        let found = store.get_by_signature(&SignatureId("sig".into())).unwrap();
+        assert_eq!(found.id, StageId("impl_new".into()));
     }
 
     #[test]

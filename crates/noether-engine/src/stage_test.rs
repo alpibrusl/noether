@@ -214,7 +214,7 @@ mod tests {
     fn make_stage(effects: EffectSet, examples: Vec<Example>) -> Stage {
         Stage {
             id: StageId("test-stage".into()),
-            canonical_id: None,
+            signature_id: None,
             signature: StageSignature {
                 input: NType::Any,
                 output: NType::Any,

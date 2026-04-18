@@ -46,7 +46,7 @@ fn full_stage_round_trip() {
     // 5. Build the full Stage
     let stage = Stage {
         id: stage_id.clone(),
-        canonical_id: None,
+        signature_id: None,
         signature: sig,
         capabilities: BTreeSet::from([Capability::Network, Capability::Llm]),
         cost: CostEstimate {

@@ -293,7 +293,7 @@ mod tests {
         };
         Stage {
             id: StageId(id.into()),
-            canonical_id: None,
+            signature_id: None,
             signature: StageSignature {
                 input: NType::Any,
                 output: NType::Any,

@@ -106,9 +106,13 @@
           "type": "string",
           "description": "SHA-256 content hash of the stage signature (64 hex chars)"
         },
+        "signature_id": {
+          "type": ["string", "null"],
+          "description": "SHA-256 of (name + input + output + effects). Stable across 1.x per STABILITY.md — a bugfix that changes `implementation_hash` changes `id` but not `signature_id`, so graphs pinned by signature keep working. Auto-computed by the builder."
+        },
         "canonical_id": {
           "type": ["string", "null"],
-          "description": "SHA-256 of (name + input + output + effects). Identifies the concept regardless of implementation. Auto-computed by the builder; used for versioning and dedup."
+          "description": "Deprecated alias for `signature_id` — accepted on deserialisation for v0.5.x back-compat; removed in v0.7.0."
         },
         "signature": {
           "type": "object",
