@@ -957,6 +957,170 @@ pub fn cmd_test(
     }
 }
 
+/// Verify a stage's Ed25519 signature and/or its declarative
+/// properties against examples.
+///
+/// With `id_prefix`, check just the matching stage; otherwise walk
+/// every Active stage. `check_signatures` and `check_properties`
+/// control which checks run — at least one should be true.
+///
+/// Emits an ACLI error envelope (not ok) when any stage fails, so
+/// agents branching on `ok: true` reliably catch violations.
+pub fn cmd_verify(
+    store: &dyn StageStore,
+    id_prefix: Option<&str>,
+    check_signatures: bool,
+    check_properties: bool,
+) {
+    use noether_core::stage::{verify_stage_signature, CheckPropertiesError};
+
+    let stages: Vec<&Stage> = if let Some(prefix) = id_prefix {
+        let matches: Vec<&Stage> = store
+            .list(None)
+            .into_iter()
+            .filter(|s| s.id.0.starts_with(prefix))
+            .collect();
+        match matches.len() {
+            0 => {
+                eprintln!(
+                    "{}",
+                    acli_error(&format!("no stage matches prefix '{prefix}'"))
+                );
+                std::process::exit(1);
+            }
+            1 => matches,
+            _ => {
+                eprintln!(
+                    "{}",
+                    acli_error(&format!(
+                        "prefix '{prefix}' is ambiguous — {} matches",
+                        matches.len()
+                    ))
+                );
+                std::process::exit(1);
+            }
+        }
+    } else {
+        store.list(Some(&StageLifecycle::Active))
+    };
+
+    let mut passed = 0usize;
+    let mut failed = 0usize;
+    let mut skipped = 0usize;
+    let mut entries: Vec<serde_json::Value> = Vec::with_capacity(stages.len());
+
+    for stage in &stages {
+        let short_id = &stage.id.0[..8.min(stage.id.0.len())];
+        let mut failures: Vec<serde_json::Value> = Vec::new();
+        let mut skip_reasons: Vec<&'static str> = Vec::new();
+        let mut ran_something = false;
+
+        // ── Ed25519 signature check ─────────────────────────────────
+        if check_signatures {
+            match (&stage.ed25519_signature, &stage.signer_public_key) {
+                (Some(sig_hex), Some(pub_hex)) => {
+                    ran_something = true;
+                    match verify_stage_signature(&stage.id, sig_hex, pub_hex) {
+                        Ok(true) => {}
+                        Ok(false) => failures.push(json!({
+                            "check": "signature",
+                            "violation": "Ed25519 signature does not match stage ID",
+                        })),
+                        Err(e) => failures.push(json!({
+                            "check": "signature",
+                            "violation": format!("signature verify error: {e}"),
+                        })),
+                    }
+                }
+                _ => skip_reasons.push("no signature"),
+            }
+        }
+
+        // ── Declarative properties check ────────────────────────────
+        if check_properties {
+            if stage.properties.is_empty() {
+                skip_reasons.push("no properties declared");
+            } else {
+                ran_something = true;
+                match stage.check_properties() {
+                    Ok(()) => {}
+                    Err(CheckPropertiesError::NoExamples { count }) => failures.push(json!({
+                        "check": "property",
+                        "violation": format!(
+                            "stage declares {count} properties but has no examples"
+                        ),
+                    })),
+                    Err(CheckPropertiesError::Violations(violations)) => {
+                        for (example_idx, v) in violations {
+                            failures.push(json!({
+                                "check": "property",
+                                "example_index": example_idx,
+                                "violation": v.to_string(),
+                            }));
+                        }
+                    }
+                }
+            }
+        }
+
+        let status = if !ran_something {
+            skipped += 1;
+            "skipped"
+        } else if failures.is_empty() {
+            passed += 1;
+            "passed"
+        } else {
+            failed += 1;
+            "failed"
+        };
+
+        let mut details = json!({
+            "examples": stage.examples.len(),
+            "properties": stage.properties.len(),
+        });
+        if !failures.is_empty() {
+            details["violations"] = json!(failures);
+        }
+        if !skip_reasons.is_empty() {
+            details["skip_reasons"] = json!(skip_reasons);
+        }
+
+        entries.push(json!({
+            "id": short_id,
+            "description": stage.description.clone(),
+            "status": status,
+            "details": details,
+        }));
+    }
+
+    let payload = json!({
+        "total": stages.len(),
+        "passed": passed,
+        "failed": failed,
+        "skipped": skipped,
+        "stages": entries,
+    });
+
+    if failed > 0 {
+        // ACLI envelope mismatch fix: emit acli_error on failure so
+        // agents branching on `ok: true` can't miss violations.
+        eprintln!(
+            "{}",
+            acli_error(&format!(
+                "{} of {} stages failed verification",
+                failed,
+                stages.len()
+            ))
+        );
+        // Still print the full report on stdout so the agent has
+        // the structured data.
+        println!("{}", acli_ok(payload));
+        std::process::exit(1);
+    }
+
+    println!("{}", acli_ok(payload));
+}
+
 pub fn cmd_search(store: &dyn StageStore, index: &SemanticIndex, query: &str, tag: Option<&str>) {
     let results = match index.search_filtered(query, 20, tag) {
         Ok(r) => r,

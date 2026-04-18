@@ -85,8 +85,62 @@ pub fn build_command_tree() -> CommandTree {
         .add_argument("hash", "string", "The stage hash", true)
         .idempotent(true);
 
+    let stage_activate = CommandInfo::new("activate", "Promote a Draft stage to Active")
+        .add_argument("hash", "string", "The stage hash or prefix", true);
+
+    let stage_test = CommandInfo::new(
+        "test",
+        "Verify a stage's implementation against its declared examples",
+    )
+    .add_argument(
+        "hash",
+        "string",
+        "Optional stage hash or prefix; omit to test every Active stage",
+        false,
+    )
+    .idempotent(true);
+
+    let stage_verify = CommandInfo::new(
+        "verify",
+        "Verify a stage's Ed25519 signature and its declarative properties against examples",
+    )
+    .add_argument(
+        "hash",
+        "string",
+        "Optional stage hash or prefix; omit to verify every Active stage",
+        false,
+    )
+    .add_option(
+        "signatures",
+        "bool",
+        "Check Ed25519 signatures only (default: check both)",
+        None,
+    )
+    .add_option(
+        "properties",
+        "bool",
+        "Check declarative properties only (default: check both)",
+        None,
+    )
+    .idempotent(true);
+
+    let stage_sync = CommandInfo::new(
+        "sync",
+        "Bulk-import all *.json stage specs from a directory",
+    )
+    .add_argument("directory", "path", "Directory of stage spec JSONs", true);
+
     let mut stage_cmd = CommandInfo::new("stage", "Stage management commands");
-    stage_cmd.subcommands = vec![stage_search, stage_add, stage_list, stage_get];
+    stage_cmd.subcommands = vec![
+        stage_search,
+        stage_add,
+        stage_sync,
+        stage_list,
+        stage_get,
+        stage_activate,
+        stage_test,
+        stage_verify,
+    ];
     tree.add_command(stage_cmd);
 
     // Store commands

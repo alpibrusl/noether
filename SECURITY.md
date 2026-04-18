@@ -104,8 +104,10 @@ its trust model is documented in [`noether-cloud/SECURITY.md`](https://github.co
 ## Signing
 
 Stages may carry an Ed25519 signature over their canonical signature
-bytes. `noether stage verify <id>` checks the signature against the
-declared pubkey. See `noether-core/src/stage/signing.rs` for details.
+bytes. `noether stage verify <id> --signatures` checks the signature
+against the declared pubkey. See `noether-core/src/stage/signing.rs`
+for details. Without `--signatures` the `verify` command checks both
+signatures and declarative properties (M2+ — see STABILITY.md).
 
 Signing proves who signed the stage and that its signature bytes have not
 been tampered with. It does **not** prove the implementation does what the

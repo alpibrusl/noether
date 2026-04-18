@@ -192,6 +192,25 @@ enum StageCommands {
         /// is tested.
         hash: Option<String>,
     },
+    /// Verify a stage's Ed25519 signature and/or its declarative
+    /// properties against examples. Complements `stage test`, which
+    /// executes each example through the runtime.
+    ///
+    /// By default both checks run. `--signatures` restricts to
+    /// signature verification only; `--properties` restricts to
+    /// property checking only. Passing both flags is equivalent to
+    /// passing neither (all checks run).
+    Verify {
+        /// Optional stage hash or prefix. If omitted, every Active
+        /// stage in the store is verified.
+        hash: Option<String>,
+        /// Only check Ed25519 signatures.
+        #[arg(long)]
+        signatures: bool,
+        /// Only check declarative properties.
+        #[arg(long)]
+        properties: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -526,6 +545,26 @@ fn main() {
                 StageCommands::Test { hash } => {
                     let executor = commands::executor_builder::build_executor(store.as_ref());
                     commands::stage::cmd_test(store.as_ref(), &executor, hash.as_deref());
+                }
+                StageCommands::Verify {
+                    hash,
+                    signatures,
+                    properties,
+                } => {
+                    // Both-or-neither flag: if the caller passed neither or
+                    // both, run all checks; otherwise restrict to the one
+                    // they asked for.
+                    let (run_sigs, run_props) = match (signatures, properties) {
+                        (false, false) | (true, true) => (true, true),
+                        (true, false) => (true, false),
+                        (false, true) => (false, true),
+                    };
+                    commands::stage::cmd_verify(
+                        store.as_ref(),
+                        hash.as_deref(),
+                        run_sigs,
+                        run_props,
+                    );
                 }
             }
         }
