@@ -49,7 +49,7 @@ Noether is **not** a workflow orchestrator, request-response framework, or AI ag
 
 ### Project status
 
-**One active maintainer, best-effort response times.** See [`SECURITY.md`](./SECURITY.md) for the trust model and [`docs/roadmap.md`](./docs/roadmap.md) for what ships vs. what's planned. Not suitable for deployments that require vendor SLAs.
+**One active maintainer, best-effort response times.** See [`SECURITY.md`](./SECURITY.md) for the trust model, [`STABILITY.md`](./STABILITY.md) for what's stable across 1.x (draft — target: 1.0), and [`docs/roadmap.md`](./docs/roadmap.md) for what ships vs. what's planned. Not suitable for deployments that require vendor SLAs.
 
 ---
 
