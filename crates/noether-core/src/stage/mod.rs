@@ -14,8 +14,8 @@ pub use property::{Property, PropertyViolation};
 #[allow(deprecated)]
 pub use schema::CanonicalId;
 pub use schema::{
-    CostEstimate, Example, ImplementationId, SignatureId, Stage, StageId, StageLifecycle,
-    StageSignature,
+    CheckPropertiesError, CostEstimate, Example, ImplementationId, SignatureId, Stage, StageId,
+    StageLifecycle, StageSignature,
 };
 pub use signing::{sign_stage_id, verify_stage_signature, SigningError};
 pub use spec::{normalize_type, parse_simple_spec};

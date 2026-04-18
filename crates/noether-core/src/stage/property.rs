@@ -38,6 +38,13 @@
 use serde::{Deserialize, Serialize};
 
 /// A declarative property claim on a stage.
+///
+/// The wire format is a tagged union on the `"kind"` field. Unknown
+/// kinds deserialise into [`Property::Unknown`] so a 1.0 reader can
+/// still load a graph written against 1.1 (forward compatibility).
+/// Readers that can't evaluate an unknown property should skip it
+/// with a warning; they must not treat "couldn't parse" as "property
+/// holds".
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Property {
@@ -62,6 +69,17 @@ pub enum Property {
         min: Option<f64>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         max: Option<f64>,
+    },
+    /// A property kind this reader doesn't know how to evaluate.
+    /// Produced by the deserialiser for forward compatibility when a
+    /// future minor release adds a new `kind` variant; the original
+    /// `kind` string is preserved so callers can report which kind
+    /// was skipped.
+    #[serde(untagged)]
+    Unknown {
+        /// The raw JSON object for the unknown property.
+        #[serde(flatten)]
+        raw: serde_json::Value,
     },
 }
 
@@ -97,23 +115,179 @@ pub enum PropertyViolation {
     AboveMax { path: String, actual: f64, max: f64 },
 }
 
+/// Why a property failed static validation against a stage's declared
+/// input/output types.
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+pub enum PropertyTypeError {
+    #[error(
+        "property field `{path}` is malformed: first segment must be \
+         `input` or `output` (got: `{reason}`)"
+    )]
+    BadPath { path: String, reason: String },
+
+    #[error(
+        "property field `{path}` is not reachable in the stage's declared \
+         {side} type `{declared_type}`"
+    )]
+    FieldNotInType {
+        path: String,
+        side: &'static str,
+        declared_type: String,
+    },
+
+    #[error(
+        "property `{path}` requires a numeric field but the declared \
+         type at that path is `{declared_type}`"
+    )]
+    RangeOnNonNumber { path: String, declared_type: String },
+}
+
 impl Property {
     /// The field path this property constrains. Used by callers that
     /// want to group properties by target field for reporting.
+    /// Returns an empty string for [`Property::Unknown`] since the
+    /// reader doesn't know how to interpret it.
     pub fn field(&self) -> &str {
         match self {
             Property::SetMember { field, .. } | Property::Range { field, .. } => field,
+            Property::Unknown { .. } => "",
+        }
+    }
+
+    /// True if this is an `Unknown` variant — the reader doesn't know
+    /// how to evaluate the property. Callers that aggregate results
+    /// should treat these as skips, not passes or failures.
+    pub fn is_unknown(&self) -> bool {
+        matches!(self, Property::Unknown { .. })
+    }
+
+    /// Validate that this property's field path is reachable in the
+    /// declared `input`/`output` types, and (for `Range`) that the
+    /// target field is numeric.
+    ///
+    /// Called at stage-registration time so bogus property declarations
+    /// (e.g. `Range { field: "output.color" }` on a Text-typed stage)
+    /// fail early, not only on first violating example.
+    ///
+    /// [`Property::Unknown`] short-circuits to `Ok(())` — the reader
+    /// can't validate a kind it doesn't know.
+    pub fn validate_against_types(
+        &self,
+        input_type: &crate::types::NType,
+        output_type: &crate::types::NType,
+    ) -> Result<(), PropertyTypeError> {
+        if self.is_unknown() {
+            return Ok(());
+        }
+        use crate::types::NType;
+        let path = self.field();
+        let mut parts = path.split('.');
+        let (root, side_label) = match parts.next() {
+            Some("input") => (input_type, "input"),
+            Some("output") => (output_type, "output"),
+            Some(other) => {
+                return Err(PropertyTypeError::BadPath {
+                    path: path.to_string(),
+                    reason: format!("first segment must be `input` or `output`, got `{other}`"),
+                });
+            }
+            None => {
+                return Err(PropertyTypeError::BadPath {
+                    path: path.to_string(),
+                    reason: "empty path".into(),
+                });
+            }
+        };
+
+        // Walk into the type. Any field that descends through `Any`
+        // or a Union keeps the claim alive (we can't prove absence),
+        // so we short-circuit. For Record / Map / List, descend; for
+        // primitives, the remaining path must be empty.
+        let mut cursor: &NType = root;
+        for segment in parts {
+            cursor = match cursor {
+                NType::Any => {
+                    // Can't prove the field is absent under Any; accept.
+                    return self.validate_terminal(path, &NType::Any);
+                }
+                NType::Record(fields) => match fields.get(segment) {
+                    Some(t) => t,
+                    None => {
+                        return Err(PropertyTypeError::FieldNotInType {
+                            path: path.to_string(),
+                            side: side_label,
+                            declared_type: format!("{root:?}"),
+                        });
+                    }
+                },
+                _ => {
+                    // Can't descend into a non-record type.
+                    return Err(PropertyTypeError::FieldNotInType {
+                        path: path.to_string(),
+                        side: side_label,
+                        declared_type: format!("{root:?}"),
+                    });
+                }
+            };
+        }
+
+        self.validate_terminal(path, cursor)
+    }
+
+    fn validate_terminal(
+        &self,
+        path: &str,
+        terminal: &crate::types::NType,
+    ) -> Result<(), PropertyTypeError> {
+        use crate::types::NType;
+        match self {
+            // Unknown: the reader can't validate a property kind it
+            // doesn't recognise. Skip rather than error — the property
+            // may be fine under a future reader.
+            Property::Unknown { .. } => Ok(()),
+            // SetMember accepts anything — JSON-value equality is type-blind.
+            Property::SetMember { .. } => Ok(()),
+            // Range needs a Number (or Any / Union containing Number —
+            // we're permissive here).
+            Property::Range { .. } => match terminal {
+                NType::Number | NType::Any => Ok(()),
+                NType::Union(variants) => {
+                    if variants
+                        .iter()
+                        .any(|v| matches!(v, NType::Number | NType::Any))
+                    {
+                        Ok(())
+                    } else {
+                        Err(PropertyTypeError::RangeOnNonNumber {
+                            path: path.to_string(),
+                            declared_type: format!("{terminal:?}"),
+                        })
+                    }
+                }
+                other => Err(PropertyTypeError::RangeOnNonNumber {
+                    path: path.to_string(),
+                    declared_type: format!("{other:?}"),
+                }),
+            },
         }
     }
 
     /// Check whether the property holds for the given `input` /
     /// `output` pair. Returns `Ok(())` on success, a
     /// [`PropertyViolation`] describing exactly what broke on failure.
+    ///
+    /// [`Property::Unknown`] variants return `Ok(())` — a reader that
+    /// doesn't know how to evaluate a property must not treat that
+    /// as a failure. Callers that want to surface "X skipped because
+    /// unknown kind" should check [`Property::is_unknown`] separately.
     pub fn check(
         &self,
         input: &serde_json::Value,
         output: &serde_json::Value,
     ) -> Result<(), PropertyViolation> {
+        if let Property::Unknown { .. } = self {
+            return Ok(());
+        }
         let path = self.field();
         let value = resolve_path(path, input, output)?;
         match self {
@@ -128,6 +302,7 @@ impl Property {
                     })
                 }
             }
+            Property::Unknown { .. } => unreachable!("handled above"),
             Property::Range { min, max, .. } => {
                 let n = value
                     .as_f64()
@@ -350,6 +525,26 @@ mod tests {
     }
 
     #[test]
+    fn unknown_kind_deserialises_into_unknown_variant() {
+        // Forward-compat: a 1.0 reader must not choke on a 1.1 property
+        // kind it doesn't recognise.
+        let future_json = json!({
+            "kind": "regex_match",
+            "field": "output.id",
+            "pattern": "^[A-Z0-9]+$"
+        });
+        let p: Property = serde_json::from_value(future_json.clone()).unwrap();
+        assert!(p.is_unknown(), "expected Unknown, got {p:?}");
+        // Evaluation: skip, not fail.
+        let result = p.check(&json!({}), &json!({"id": "ABC123"}));
+        assert!(result.is_ok());
+        // Type validation: skip, not fail.
+        let vresult =
+            p.validate_against_types(&crate::types::NType::Any, &crate::types::NType::Any);
+        assert!(vresult.is_ok());
+    }
+
+    #[test]
     fn property_json_shape_is_tagged_snake_case() {
         let p = severity_prop();
         let v: serde_json::Value = serde_json::to_value(&p).unwrap();
@@ -358,5 +553,113 @@ mod tests {
         let r = percent_prop();
         let v: serde_json::Value = serde_json::to_value(&r).unwrap();
         assert_eq!(v["kind"], json!("range"));
+    }
+
+    // ── validate_against_types tests ────────────────────────────────
+
+    use crate::types::NType;
+    use std::collections::BTreeMap as BMap;
+
+    fn record(fields: Vec<(&str, NType)>) -> NType {
+        NType::Record(
+            fields
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect::<BMap<_, _>>(),
+        )
+    }
+
+    #[test]
+    fn range_on_numeric_output_field_validates() {
+        let p = Property::Range {
+            field: "output.soc".into(),
+            min: Some(0.0),
+            max: Some(100.0),
+        };
+        let out = record(vec![("soc", NType::Number)]);
+        assert!(p.validate_against_types(&NType::Any, &out).is_ok());
+    }
+
+    #[test]
+    fn range_on_text_field_rejected() {
+        // The motivating case from the review: Range on a Text field
+        // must not silently pass.
+        let p = Property::Range {
+            field: "output.severity".into(),
+            min: Some(0.0),
+            max: Some(1.0),
+        };
+        let out = record(vec![("severity", NType::Text)]);
+        let err = p.validate_against_types(&NType::Any, &out).unwrap_err();
+        assert!(matches!(err, PropertyTypeError::RangeOnNonNumber { .. }));
+    }
+
+    #[test]
+    fn set_member_accepts_any_terminal_type() {
+        let p = Property::SetMember {
+            field: "output.severity".into(),
+            set: vec![json!("HIGH"), json!("LOW")],
+        };
+        let out = record(vec![("severity", NType::Text)]);
+        assert!(p.validate_against_types(&NType::Any, &out).is_ok());
+    }
+
+    #[test]
+    fn missing_field_rejected() {
+        let p = Property::SetMember {
+            field: "output.missing".into(),
+            set: vec![json!(1)],
+        };
+        let out = record(vec![("present", NType::Number)]);
+        let err = p.validate_against_types(&NType::Any, &out).unwrap_err();
+        assert!(matches!(err, PropertyTypeError::FieldNotInType { .. }));
+    }
+
+    #[test]
+    fn bad_root_segment_rejected() {
+        let p = Property::SetMember {
+            field: "neither.foo".into(),
+            set: vec![json!(1)],
+        };
+        let err = p
+            .validate_against_types(&NType::Any, &NType::Any)
+            .unwrap_err();
+        assert!(matches!(err, PropertyTypeError::BadPath { .. }));
+    }
+
+    #[test]
+    fn any_field_accepts_arbitrary_path() {
+        // Can't prove absence under Any — we defer to runtime.
+        let p = Property::Range {
+            field: "output.deeply.nested.thing".into(),
+            min: Some(0.0),
+            max: None,
+        };
+        assert!(p.validate_against_types(&NType::Any, &NType::Any).is_ok());
+    }
+
+    #[test]
+    fn range_on_number_union_accepts() {
+        // output type is Number | Null — Range is still valid because
+        // at runtime a non-null value must be numeric.
+        let p = Property::Range {
+            field: "output".into(),
+            min: Some(0.0),
+            max: None,
+        };
+        let union = NType::union(vec![NType::Number, NType::Null]);
+        assert!(p.validate_against_types(&NType::Any, &union).is_ok());
+    }
+
+    #[test]
+    fn nested_path_walks_into_records() {
+        let p = Property::Range {
+            field: "output.battery.soc".into(),
+            min: Some(0.0),
+            max: Some(100.0),
+        };
+        let battery = record(vec![("soc", NType::Number)]);
+        let out = record(vec![("battery", battery)]);
+        assert!(p.validate_against_types(&NType::Any, &out).is_ok());
     }
 }

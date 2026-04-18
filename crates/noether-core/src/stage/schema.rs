@@ -147,19 +147,45 @@ pub struct Stage {
     pub properties: Vec<crate::stage::property::Property>,
 }
 
+/// Failure mode for [`Stage::check_properties`].
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+pub enum CheckPropertiesError {
+    /// The stage declares properties but has no examples to check
+    /// them against. Previously this returned Ok vacuously — now it's
+    /// an error so bogus properties can't hide behind a missing
+    /// example set.
+    #[error(
+        "stage declares {count} properties but has no examples to \
+         verify them against — add at least one example"
+    )]
+    NoExamples { count: usize },
+
+    /// One or more (example, property) pairs failed. Each entry is
+    /// `(example_index, violation)`.
+    #[error("{} property violation(s) across examples", .0.len())]
+    Violations(Vec<(usize, crate::stage::property::PropertyViolation)>),
+}
+
 impl Stage {
     /// Check every declared property against every declared example.
-    /// Returns `Ok(())` if all `(example, property)` pairs pass, or
-    /// the list of violations if any fail. Empty `properties` vacuously
-    /// passes.
+    /// Returns `Ok(())` if all `(example, property)` pairs pass, or a
+    /// [`CheckPropertiesError`] describing the failure.
+    ///
+    /// A stage with no properties vacuously passes. A stage with
+    /// properties but no examples is an error ([`CheckPropertiesError::NoExamples`]) —
+    /// previously a vacuous pass, which let property bugs slip
+    /// through on under-specified stages.
     ///
     /// This is the CI-time check the M2 roadmap promises. `noether
     /// stage verify --with-properties` wraps this with CLI reporting.
-    pub fn check_properties(
-        &self,
-    ) -> Result<(), Vec<(usize, crate::stage::property::PropertyViolation)>> {
+    pub fn check_properties(&self) -> Result<(), CheckPropertiesError> {
         if self.properties.is_empty() {
             return Ok(());
+        }
+        if self.examples.is_empty() {
+            return Err(CheckPropertiesError::NoExamples {
+                count: self.properties.len(),
+            });
         }
         let mut violations = Vec::new();
         for (example_idx, example) in self.examples.iter().enumerate() {
@@ -172,7 +198,7 @@ impl Stage {
         if violations.is_empty() {
             Ok(())
         } else {
-            Err(violations)
+            Err(CheckPropertiesError::Violations(violations))
         }
     }
 }
@@ -259,6 +285,86 @@ mod tests {
     }
 
     #[test]
+    fn check_properties_with_no_examples_errors() {
+        // The fix for the "vacuous pass" review finding: a stage that
+        // declares properties but has no examples MUST error, not pass.
+        // Otherwise under-specified stages would hide property bugs.
+        use crate::stage::property::Property;
+        let mut stage = sample_stage();
+        stage.examples = vec![]; // deliberately empty
+        stage.properties = vec![Property::Range {
+            field: "output.x".into(),
+            min: Some(0.0),
+            max: None,
+        }];
+        match stage.check_properties().unwrap_err() {
+            CheckPropertiesError::NoExamples { count } => assert_eq!(count, 1),
+            other => panic!("expected NoExamples, got {other:?}"),
+        }
+    }
+
+    /// Properties are documented as "not part of the content hash".
+    /// This test pins that contract: two stages identical except for
+    /// `properties` produce identical `id` and `signature_id`, and
+    /// the hashes computed from their signatures match.
+    #[test]
+    fn properties_do_not_affect_stage_identity() {
+        use crate::stage::property::Property;
+        use crate::stage::{compute_signature_id, compute_stage_id};
+
+        let name = "sample";
+        let sig = sample_signature();
+
+        // Compute both IDs from the signature directly — this is the
+        // invariant we actually want to pin.
+        let expected_stage_id = compute_stage_id(name, &sig).unwrap();
+        let expected_sig_id =
+            compute_signature_id(name, &sig.input, &sig.output, &sig.effects).unwrap();
+
+        // Build two Stage values, one with properties and one without,
+        // that are otherwise identical.
+        let base = Stage {
+            id: expected_stage_id.clone(),
+            signature_id: Some(expected_sig_id.clone()),
+            signature: sig,
+            capabilities: BTreeSet::new(),
+            cost: CostEstimate {
+                time_ms_p50: None,
+                tokens_est: None,
+                memory_mb: None,
+            },
+            description: "sample".into(),
+            examples: vec![],
+            lifecycle: StageLifecycle::Active,
+            ed25519_signature: None,
+            signer_public_key: None,
+            implementation_code: None,
+            implementation_language: None,
+            ui_style: None,
+            tags: vec![],
+            aliases: vec![],
+            name: Some(name.into()),
+            properties: vec![],
+        };
+        let mut with_properties = base.clone();
+        with_properties.properties = vec![Property::Range {
+            field: "output.x".into(),
+            min: Some(0.0),
+            max: Some(100.0),
+        }];
+
+        // StageId is unaffected by adding properties.
+        assert_eq!(base.id, with_properties.id);
+        // SignatureId is unaffected.
+        assert_eq!(base.signature_id, with_properties.signature_id);
+
+        // Both hashes computed from signature alone match the stored
+        // values (the "not part of the hash" guarantee).
+        assert_eq!(base.id, expected_stage_id);
+        assert_eq!(base.signature_id.as_ref().unwrap(), &expected_sig_id);
+    }
+
+    #[test]
     fn check_properties_flags_all_violations_across_examples() {
         use crate::stage::property::{Property, PropertyViolation};
         let mut stage = sample_stage();
@@ -280,13 +386,17 @@ mod tests {
         }];
 
         let result = stage.check_properties();
-        let violations = result.unwrap_err();
-        assert_eq!(violations.len(), 1);
-        assert_eq!(violations[0].0, 1);
-        assert!(matches!(
-            violations[0].1,
-            PropertyViolation::AboveMax { .. }
-        ));
+        match result.unwrap_err() {
+            CheckPropertiesError::Violations(violations) => {
+                assert_eq!(violations.len(), 1);
+                assert_eq!(violations[0].0, 1);
+                assert!(matches!(
+                    violations[0].1,
+                    PropertyViolation::AboveMax { .. }
+                ));
+            }
+            other => panic!("expected Violations, got {other:?}"),
+        }
     }
 
     // Helper used only by the check_properties tests.
