@@ -98,7 +98,11 @@ fn execute_node<E: StageExecutor + Sync>(
     cache: &mut Option<&mut PureStageCache>,
 ) -> Result<Value, ExecutionError> {
     match node {
-        CompositionNode::Stage { id, config } => {
+        CompositionNode::Stage {
+            id,
+            pinning: _, // resolved upstream by checker / planner
+            config,
+        } => {
             let merged = if let Some(cfg) = config {
                 let mut obj = match input {
                     Value::Object(map) => map.clone(),
@@ -448,6 +452,7 @@ mod tests {
     fn stage(id: &str) -> CompositionNode {
         CompositionNode::Stage {
             id: StageId(id.into()),
+            pinning: crate::lagrange::Pinning::Signature,
             config: None,
         }
     }

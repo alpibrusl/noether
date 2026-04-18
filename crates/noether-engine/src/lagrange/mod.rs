@@ -1,7 +1,7 @@
 mod ast;
 pub mod canonical;
 
-pub use ast::{collect_stage_ids, CompositionGraph, CompositionNode};
+pub use ast::{collect_stage_ids, resolve_stage_ref, CompositionGraph, CompositionNode, Pinning};
 pub use canonical::canonicalise;
 
 use noether_core::stage::{Stage, StageId};
@@ -243,6 +243,7 @@ mod tests {
             "test",
             CompositionNode::Stage {
                 id: StageId("abc".into()),
+                pinning: Pinning::Signature,
                 config: None,
             },
         );
@@ -294,6 +295,7 @@ mod tests {
 
         let mut node = CompositionNode::Stage {
             id: StageId("volvo_map".into()),
+            pinning: Pinning::Signature,
             config: None,
         };
         resolve_stage_prefixes(&mut node, &store).unwrap();
@@ -359,6 +361,7 @@ mod tests {
 
         let mut node = CompositionNode::Stage {
             id: StageId("shared".into()),
+            pinning: Pinning::Signature,
             config: None,
         };
         resolve_stage_prefixes(&mut node, &store).unwrap();
@@ -374,6 +377,7 @@ mod tests {
             "test",
             CompositionNode::Stage {
                 id: StageId("abc".into()),
+                pinning: Pinning::Signature,
                 config: None,
             },
         );

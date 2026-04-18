@@ -4,6 +4,7 @@ use noether_engine::executor::mock::MockExecutor;
 use noether_engine::executor::runner::run_composition;
 use noether_engine::lagrange::{
     compute_composition_id, parse_graph, serialize_graph, CompositionGraph, CompositionNode,
+    Pinning,
 };
 use noether_engine::planner::plan_graph;
 use noether_engine::trace::TraceStatus;
@@ -33,6 +34,7 @@ fn find_stage_id(store: &MemoryStore, description_contains: &str) -> String {
 fn stage(id: &str) -> CompositionNode {
     CompositionNode::Stage {
         id: noether_core::stage::StageId(id.into()),
+        pinning: Pinning::Signature,
         config: None,
     }
 }

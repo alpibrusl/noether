@@ -192,7 +192,7 @@ impl<E: StageExecutor + Sync> StageExecutor for BudgetedExecutor<E> {
 mod tests {
     use super::*;
     use crate::executor::mock::MockExecutor;
-    use crate::lagrange::CompositionNode;
+    use crate::lagrange::{CompositionNode, Pinning};
     use noether_core::effects::{Effect, EffectSet};
     use noether_core::stage::{CostEstimate, Stage, StageId, StageLifecycle, StageSignature};
     use noether_core::types::NType;
@@ -316,10 +316,12 @@ mod tests {
             stages: vec![
                 CompositionNode::Stage {
                     id: StageId("s1".into()),
+                    pinning: Pinning::Signature,
                     config: None,
                 },
                 CompositionNode::Stage {
                     id: StageId("s2".into()),
+                    pinning: Pinning::Signature,
                     config: None,
                 },
             ],
@@ -365,6 +367,7 @@ mod tests {
 
         let node = CompositionNode::Stage {
             id: StageId("free".into()),
+            pinning: Pinning::Signature,
             config: None,
         };
         let map = build_cost_map(&node, &store);

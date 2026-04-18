@@ -1,4 +1,4 @@
-use crate::lagrange::CompositionNode;
+use crate::lagrange::{CompositionNode, Pinning};
 use noether_core::capability::Capability;
 use noether_core::effects::{Effect, EffectKind, EffectSet};
 use noether_core::stage::StageId;
@@ -799,8 +799,12 @@ fn check_node(
     errors: &mut Vec<GraphTypeError>,
 ) -> Option<ResolvedType> {
     match node {
-        CompositionNode::Stage { id, config } => {
-            let resolved = check_stage(id, store, errors)?;
+        CompositionNode::Stage {
+            id,
+            pinning,
+            config,
+        } => {
+            let resolved = check_stage(id, *pinning, store, errors)?;
             // When config provides fields, reduce the effective input type
             if let Some(cfg) = config {
                 if !cfg.is_empty() {
@@ -955,15 +959,16 @@ fn check_let(
 
 fn check_stage(
     id: &StageId,
+    pinning: Pinning,
     store: &(impl StageStore + ?Sized),
     errors: &mut Vec<GraphTypeError>,
 ) -> Option<ResolvedType> {
-    match store.get(id) {
-        Ok(Some(stage)) => Some(ResolvedType {
+    match crate::lagrange::resolve_stage_ref(id, pinning, store) {
+        Some(stage) => Some(ResolvedType {
             input: stage.signature.input.clone(),
             output: stage.signature.output.clone(),
         }),
-        _ => {
+        None => {
             errors.push(GraphTypeError::StageNotFound { id: id.clone() });
             None
         }
@@ -1253,6 +1258,7 @@ mod tests {
     fn stage(id: &str) -> CompositionNode {
         CompositionNode::Stage {
             id: StageId(id.into()),
+            pinning: Pinning::Signature,
             config: None,
         }
     }
@@ -1417,6 +1423,7 @@ mod tests {
                 },
                 CompositionNode::Stage {
                     id: StageId("num_render".into()),
+                    pinning: Pinning::Signature,
                     config: None,
                 },
             ],
@@ -1439,6 +1446,7 @@ mod tests {
                 },
                 CompositionNode::Stage {
                     id: StageId("text_to_num".into()),
+                    pinning: Pinning::Signature,
                     config: None,
                 },
             ],
@@ -1466,6 +1474,7 @@ mod tests {
         store.put(stage.clone()).unwrap();
         let node = CompositionNode::Stage {
             id: StageId("pure1".into()),
+            pinning: Pinning::Signature,
             config: None,
         };
         let effects = infer_effects(&node, &store);
@@ -1489,10 +1498,12 @@ mod tests {
             stages: vec![
                 CompositionNode::Stage {
                     id: StageId("a".into()),
+                    pinning: Pinning::Signature,
                     config: None,
                 },
                 CompositionNode::Stage {
                     id: StageId("b".into()),
+                    pinning: Pinning::Signature,
                     config: None,
                 },
             ],
@@ -1520,6 +1531,7 @@ mod tests {
         let store = MemoryStore::new();
         let node = CompositionNode::Stage {
             id: StageId("missing".into()),
+            pinning: Pinning::Signature,
             config: None,
         };
         let effects = infer_effects(&node, &store);
@@ -1539,6 +1551,7 @@ mod tests {
             .unwrap();
         let node = CompositionNode::Stage {
             id: StageId("net".into()),
+            pinning: Pinning::Signature,
             config: None,
         };
         let policy = EffectPolicy::allow_all();
@@ -1556,6 +1569,7 @@ mod tests {
             .unwrap();
         let node = CompositionNode::Stage {
             id: StageId("net".into()),
+            pinning: Pinning::Signature,
             config: None,
         };
         let policy = EffectPolicy::restrict([EffectKind::Pure]);
@@ -1577,6 +1591,7 @@ mod tests {
             .unwrap();
         let node = CompositionNode::Stage {
             id: StageId("llm".into()),
+            pinning: Pinning::Signature,
             config: None,
         };
         let policy = EffectPolicy::restrict([EffectKind::Llm]);

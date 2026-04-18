@@ -243,6 +243,7 @@ mod tests {
     fn stage(id: &str) -> CompositionNode {
         CompositionNode::Stage {
             id: StageId(id.into()),
+            pinning: crate::lagrange::Pinning::Signature,
             config: None,
         }
     }

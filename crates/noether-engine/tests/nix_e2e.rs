@@ -89,7 +89,7 @@ fn nix_e2e_synthesized_stage_survives_store_roundtrip() {
     use noether_core::types::NType;
     use noether_engine::executor::composite::CompositeExecutor;
     use noether_engine::executor::runner::run_composition;
-    use noether_engine::lagrange::{CompositionGraph, CompositionNode};
+    use noether_engine::lagrange::{CompositionGraph, CompositionNode, Pinning};
     use noether_store::{JsonFileStore, StageStore};
     use serde_json::json;
 
@@ -147,6 +147,7 @@ fn nix_e2e_synthesized_stage_survives_store_roundtrip() {
         "double a number",
         CompositionNode::Stage {
             id: stage_id.clone(),
+            pinning: Pinning::Signature,
             config: None,
         },
     );

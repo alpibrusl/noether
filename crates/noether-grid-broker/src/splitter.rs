@@ -333,6 +333,7 @@ mod tests {
         let store = store_with(vec![make_stage("pure", None)]);
         let node = CompositionNode::Stage {
             id: StageId("pure".into()),
+            pinning: noether_engine::lagrange::Pinning::Signature,
             config: None,
         };
         let out = split_graph(&node, &store, |_| {
@@ -348,6 +349,7 @@ mod tests {
         let store = store_with(vec![make_stage("call_llm", Some("claude-opus"))]);
         let node = CompositionNode::Stage {
             id: StageId("call_llm".into()),
+            pinning: noether_engine::lagrange::Pinning::Signature,
             config: None,
         };
         let out = split_graph(&node, &store, |_| {
@@ -373,10 +375,12 @@ mod tests {
             stages: vec![
                 CompositionNode::Stage {
                     id: StageId("pure".into()),
+                    pinning: noether_engine::lagrange::Pinning::Signature,
                     config: None,
                 },
                 CompositionNode::Stage {
                     id: StageId("call_llm".into()),
+                    pinning: noether_engine::lagrange::Pinning::Signature,
                     config: None,
                 },
             ],
@@ -399,6 +403,7 @@ mod tests {
         let store = MemoryStore::new();
         let node = CompositionNode::Stage {
             id: StageId("ghost".into()),
+            pinning: noether_engine::lagrange::Pinning::Signature,
             config: None,
         };
         let out = split_graph(&node, &store, |_| {
@@ -414,6 +419,7 @@ mod tests {
         let store = store_with(vec![make_stage("bare_llm", Some("unknown"))]);
         let node = CompositionNode::Stage {
             id: StageId("bare_llm".into()),
+            pinning: noether_engine::lagrange::Pinning::Signature,
             config: None,
         };
         let worker = crate::state::WorkerEntry {
@@ -451,14 +457,17 @@ mod tests {
             stages: vec![
                 CompositionNode::Stage {
                     id: StageId("a".into()),
+                    pinning: noether_engine::lagrange::Pinning::Signature,
                     config: None,
                 },
                 CompositionNode::Stage {
                     id: StageId("b".into()),
+                    pinning: noether_engine::lagrange::Pinning::Signature,
                     config: None,
                 },
                 CompositionNode::Stage {
                     id: StageId("c".into()),
+                    pinning: noether_engine::lagrange::Pinning::Signature,
                     config: None,
                 },
             ],

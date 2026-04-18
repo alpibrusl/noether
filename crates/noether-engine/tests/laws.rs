@@ -13,7 +13,7 @@
 
 use noether_core::stage::StageId;
 use noether_engine::lagrange::{
-    canonicalise, compute_composition_id, CompositionGraph, CompositionNode,
+    canonicalise, compute_composition_id, CompositionGraph, CompositionNode, Pinning,
 };
 use proptest::prelude::*;
 use std::collections::BTreeMap;
@@ -27,7 +27,11 @@ fn stage_id() -> impl Strategy<Value = StageId> {
 }
 
 fn stage() -> impl Strategy<Value = CompositionNode> {
-    stage_id().prop_map(|id| CompositionNode::Stage { id, config: None })
+    stage_id().prop_map(|id| CompositionNode::Stage {
+        id,
+        pinning: Pinning::Signature,
+        config: None,
+    })
 }
 
 /// Build a Sequential from a vec of stage IDs.
@@ -37,6 +41,7 @@ fn sequential_of(ids: Vec<&str>) -> CompositionNode {
             .into_iter()
             .map(|s| CompositionNode::Stage {
                 id: StageId(s.into()),
+                pinning: Pinning::Signature,
                 config: None,
             })
             .collect(),
@@ -46,6 +51,7 @@ fn sequential_of(ids: Vec<&str>) -> CompositionNode {
 fn st(id: &str) -> CompositionNode {
     CompositionNode::Stage {
         id: StageId(id.into()),
+        pinning: Pinning::Signature,
         config: None,
     }
 }
