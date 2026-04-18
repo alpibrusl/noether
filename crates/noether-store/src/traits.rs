@@ -79,10 +79,35 @@ pub trait StageStore {
     /// returns the stage with the lexicographically-smallest
     /// implementation ID. A "first match" would be nondeterministic
     /// under HashMap-backed stores.
+    ///
+    /// Callers that need to distinguish the "zero matches" and "many
+    /// matches" cases should use [`active_stages_with_signature`] and
+    /// inspect the length.
     fn get_by_signature(&self, signature_id: &SignatureId) -> Option<&Stage> {
         self.list(Some(&StageLifecycle::Active))
             .into_iter()
             .filter(|s| s.signature_id.as_ref() == Some(signature_id))
             .min_by(|a, b| a.id.0.cmp(&b.id.0))
+    }
+
+    /// Return every Active stage whose `signature_id` matches.
+    /// Ordered lexicographically by implementation ID so iteration is
+    /// stable across HashMap-backed stores.
+    ///
+    /// This is the diagnostic surface: a well-behaved store should
+    /// return at most one entry here. A call that returns more is a
+    /// signal that the "≤1 Active per signature" invariant has been
+    /// broken — typically by a direct `store.put` + lifecycle change
+    /// that bypassed the `stage add` deprecation path. The resolver
+    /// uses this helper to warn on multi-match rather than silently
+    /// picking one.
+    fn active_stages_with_signature(&self, signature_id: &SignatureId) -> Vec<&Stage> {
+        let mut matches: Vec<&Stage> = self
+            .list(Some(&StageLifecycle::Active))
+            .into_iter()
+            .filter(|s| s.signature_id.as_ref() == Some(signature_id))
+            .collect();
+        matches.sort_by(|a, b| a.id.0.cmp(&b.id.0));
+        matches
     }
 }
