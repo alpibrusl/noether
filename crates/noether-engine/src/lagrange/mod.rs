@@ -1,8 +1,10 @@
 mod ast;
 pub mod canonical;
+pub mod resolver;
 
 pub use ast::{collect_stage_ids, resolve_stage_ref, CompositionGraph, CompositionNode, Pinning};
 pub use canonical::canonicalise;
+pub use resolver::{resolve_pinning, ResolutionError, Rewrite};
 
 use noether_core::stage::{Stage, StageId};
 use noether_store::StageStore;

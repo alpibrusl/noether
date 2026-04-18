@@ -6,7 +6,9 @@ use noether_engine::checker::{
 };
 use noether_engine::executor::budget::{build_cost_map, BudgetedExecutor};
 use noether_engine::executor::runner::run_composition;
-use noether_engine::lagrange::{compute_composition_id, parse_graph, resolve_stage_prefixes};
+use noether_engine::lagrange::{
+    compute_composition_id, parse_graph, resolve_pinning, resolve_stage_prefixes,
+};
 use noether_engine::planner::plan_graph;
 use noether_engine::trace::JsonFileTraceStore;
 use noether_store::StageStore;
@@ -57,7 +59,29 @@ pub fn cmd_run(
         std::process::exit(1);
     }
 
-    // 1b. Resolve deprecated stages — rewrite any stage IDs that point to
+    // 1b. Resolve pinning — rewrite every `Stage { pinning: Signature, id: <sig> }`
+    //     node to carry the concrete implementation ID instead. Subsequent
+    //     passes (effect inference, capability check, Ed25519 verify, planner,
+    //     budget) all look up stages via `store.get(id)` and assume `id` is an
+    //     implementation hash. Without this pass, signature-pinned graphs would
+    //     type-check but fail in those downstream passes.
+    let pinning_rewrites = match resolve_pinning(&mut graph.root, store) {
+        Ok(rws) => rws,
+        Err(e) => {
+            eprintln!("{}", acli_error(&format!("pinning resolution: {e}")));
+            std::process::exit(1);
+        }
+    };
+    for rw in &pinning_rewrites {
+        eprintln!(
+            "Info: {:?}-pinned stage {} resolved to {}",
+            rw.pinning,
+            &rw.before[..8.min(rw.before.len())],
+            &rw.after[..8.min(rw.after.len())]
+        );
+    }
+
+    // 1c. Resolve deprecated stages — rewrite any stage IDs that point to
     //     deprecated stages, following the successor_id chain.
     let rewrites = resolve_deprecated_stages(&mut graph.root, store);
     if !rewrites.is_empty() {
