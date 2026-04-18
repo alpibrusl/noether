@@ -358,6 +358,9 @@ mod tests {
                 StageLifecycle::Active,
             ))
             .unwrap();
+        // Putting a second Active stage with the same signature_id
+        // auto-deprecates impl_old — see M2.3 invariant enforcement in
+        // MemoryStore::put.
         store
             .put(make_stage(
                 "impl_new",
@@ -365,14 +368,14 @@ mod tests {
                 StageLifecycle::Active,
             ))
             .unwrap();
-        store
-            .update_lifecycle(
-                &StageId("impl_old".into()),
-                StageLifecycle::Deprecated {
-                    successor_id: StageId("impl_new".into()),
-                },
-            )
-            .unwrap();
+        assert!(matches!(
+            store
+                .get(&StageId("impl_old".into()))
+                .unwrap()
+                .unwrap()
+                .lifecycle,
+            StageLifecycle::Deprecated { .. }
+        ));
 
         let mut node = CompositionNode::Stage {
             id: StageId("impl_old".into()),
@@ -600,10 +603,11 @@ mod tests {
 
     #[test]
     fn multi_active_signature_emits_warning() {
-        // Two Active stages with the same signature_id — an invariant
-        // violation the store alone can't catch without enforcement
-        // (tracked as follow-up; today the `stage add` CLI prevents it).
-        // resolve_pinning's job is to surface it.
+        // The store-level "≤1 Active per signature" invariant (M2.3)
+        // auto-deprecates duplicate Actives at `put` time, so the
+        // resolver's warning path isn't reachable through normal
+        // `put` sequences anymore. To exercise it, bypass `put` and
+        // mutate the internal HashMap directly (tests-only).
         let mut store = MemoryStore::new();
         store
             .put(make_stage(
@@ -612,13 +616,10 @@ mod tests {
                 StageLifecycle::Active,
             ))
             .unwrap();
-        store
-            .put(make_stage(
-                "impl_b",
-                Some("shared_sig"),
-                StageLifecycle::Active,
-            ))
-            .unwrap();
+        // Inject a second Active duplicate without going through put/upsert,
+        // emulating a violated invariant (e.g., a corrupted file store).
+        let extra = make_stage("impl_b", Some("shared_sig"), StageLifecycle::Active);
+        store.inject_raw_for_testing(extra);
 
         let mut node = CompositionNode::Stage {
             id: StageId("shared_sig".into()),

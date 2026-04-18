@@ -55,6 +55,26 @@ impl JsonFileStore {
         self.stages.is_empty()
     }
 
+    /// Same invariant helper as MemoryStore — see there for rationale.
+    fn duplicate_active_ids_for(&self, incoming: &Stage) -> Vec<StageId> {
+        if !matches!(incoming.lifecycle, StageLifecycle::Active) {
+            return Vec::new();
+        }
+        let sig = match incoming.signature_id.as_ref() {
+            Some(s) => s,
+            None => return Vec::new(),
+        };
+        self.stages
+            .values()
+            .filter(|s| {
+                s.id != incoming.id
+                    && matches!(s.lifecycle, StageLifecycle::Active)
+                    && s.signature_id.as_ref() == Some(sig)
+            })
+            .map(|s| s.id.clone())
+            .collect()
+    }
+
     /// Persist current state to disk.
     fn save(&self) -> Result<(), StoreError> {
         if let Some(parent) = self.path.parent() {
@@ -81,14 +101,35 @@ impl StageStore for JsonFileStore {
         if self.stages.contains_key(&id.0) {
             return Err(StoreError::AlreadyExists(id));
         }
+        // M2.3 invariant: auto-deprecate existing Actives with the
+        // same signature_id. See MemoryStore::put for rationale.
+        let duplicates = self.duplicate_active_ids_for(&stage);
         self.stages.insert(id.0.clone(), stage);
+        for old_id in duplicates {
+            if let Some(existing) = self.stages.get_mut(&old_id.0) {
+                existing.lifecycle = StageLifecycle::Deprecated {
+                    successor_id: id.clone(),
+                };
+            }
+        }
         self.save()?;
         Ok(id)
     }
 
     fn upsert(&mut self, stage: Stage) -> Result<StageId, StoreError> {
         let id = stage.id.clone();
+        let duplicates = self.duplicate_active_ids_for(&stage);
         self.stages.insert(id.0.clone(), stage);
+        for old_id in duplicates {
+            if old_id == id {
+                continue;
+            }
+            if let Some(existing) = self.stages.get_mut(&old_id.0) {
+                existing.lifecycle = StageLifecycle::Deprecated {
+                    successor_id: id.clone(),
+                };
+            }
+        }
         self.save()?;
         Ok(id)
     }
@@ -135,7 +176,35 @@ impl StageStore for JsonFileStore {
             }
         }
 
+        // M2.3 invariant: promoting to Active deprecates any other
+        // Active stage with the same signature_id.
+        let duplicates: Vec<StageId> = if matches!(lifecycle, StageLifecycle::Active) {
+            let sig = current.signature_id.clone();
+            match sig {
+                Some(sig) => self
+                    .stages
+                    .values()
+                    .filter(|s| {
+                        s.id != *id
+                            && matches!(s.lifecycle, StageLifecycle::Active)
+                            && s.signature_id.as_ref() == Some(&sig)
+                    })
+                    .map(|s| s.id.clone())
+                    .collect(),
+                None => Vec::new(),
+            }
+        } else {
+            Vec::new()
+        };
+
         self.stages.get_mut(&id.0).unwrap().lifecycle = lifecycle;
+        for old_id in duplicates {
+            if let Some(existing) = self.stages.get_mut(&old_id.0) {
+                existing.lifecycle = StageLifecycle::Deprecated {
+                    successor_id: id.clone(),
+                };
+            }
+        }
         self.save()?;
         Ok(())
     }

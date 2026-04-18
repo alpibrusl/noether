@@ -21,6 +21,40 @@ impl MemoryStore {
     pub fn is_empty(&self) -> bool {
         self.stages.is_empty()
     }
+
+    /// Test-only escape hatch: insert a stage without the
+    /// invariant-enforcement path. Exists so tests can set up
+    /// deliberately-broken store states (e.g. two Active stages with
+    /// the same `signature_id`) that can't be created through the
+    /// public API. Do NOT use from production code.
+    #[doc(hidden)]
+    pub fn inject_raw_for_testing(&mut self, stage: Stage) {
+        self.stages.insert(stage.id.0.clone(), stage);
+    }
+
+    /// For an incoming stage being put into the store, return the list
+    /// of existing Active stage IDs that share its `signature_id`.
+    /// Empty when the incoming stage isn't Active, has no
+    /// `signature_id`, or has no duplicates. Used by put/upsert to
+    /// enforce the "≤1 Active per signature" invariant.
+    fn duplicate_active_ids_for(&self, incoming: &Stage) -> Vec<StageId> {
+        if !matches!(incoming.lifecycle, StageLifecycle::Active) {
+            return Vec::new();
+        }
+        let sig = match incoming.signature_id.as_ref() {
+            Some(s) => s,
+            None => return Vec::new(),
+        };
+        self.stages
+            .values()
+            .filter(|s| {
+                s.id != incoming.id
+                    && matches!(s.lifecycle, StageLifecycle::Active)
+                    && s.signature_id.as_ref() == Some(sig)
+            })
+            .map(|s| s.id.clone())
+            .collect()
+    }
 }
 
 impl StageStore for MemoryStore {
@@ -29,13 +63,47 @@ impl StageStore for MemoryStore {
         if self.stages.contains_key(&id.0) {
             return Err(StoreError::AlreadyExists(id));
         }
+
+        // M2.3 invariant: at most one Active stage per signature_id.
+        // If the incoming stage is Active and shares a signature_id with
+        // other Active stages, auto-deprecate them with the new stage as
+        // the successor. This enforces the constraint the resolver's
+        // `get_by_signature` assumes — previously only the `stage add`
+        // CLI path did this check; direct library `put` could violate
+        // it silently.
+        let duplicates = self.duplicate_active_ids_for(&stage);
+
         self.stages.insert(id.0.clone(), stage);
+
+        // Deprecate duplicates by direct mutation. Skipping
+        // validate_transition is intentional: Active → Deprecated is
+        // always valid, and the successor (just-inserted new stage)
+        // is already in the store.
+        for old_id in duplicates {
+            if let Some(existing) = self.stages.get_mut(&old_id.0) {
+                existing.lifecycle = StageLifecycle::Deprecated {
+                    successor_id: id.clone(),
+                };
+            }
+        }
+
         Ok(id)
     }
 
     fn upsert(&mut self, stage: Stage) -> Result<StageId, StoreError> {
         let id = stage.id.clone();
+        let duplicates = self.duplicate_active_ids_for(&stage);
         self.stages.insert(id.0.clone(), stage);
+        for old_id in duplicates {
+            if old_id == id {
+                continue; // the upsert replaced this stage itself
+            }
+            if let Some(existing) = self.stages.get_mut(&old_id.0) {
+                existing.lifecycle = StageLifecycle::Deprecated {
+                    successor_id: id.clone(),
+                };
+            }
+        }
         Ok(id)
     }
 
@@ -81,8 +149,37 @@ impl StageStore for MemoryStore {
             }
         }
 
+        // M2.3 invariant: when promoting to Active, check whether any
+        // other Active stage shares this one's signature_id and
+        // auto-deprecate it.
+        let duplicates: Vec<StageId> = if matches!(lifecycle, StageLifecycle::Active) {
+            let sig = current.signature_id.clone();
+            match sig {
+                Some(sig) => self
+                    .stages
+                    .values()
+                    .filter(|s| {
+                        s.id != *id
+                            && matches!(s.lifecycle, StageLifecycle::Active)
+                            && s.signature_id.as_ref() == Some(&sig)
+                    })
+                    .map(|s| s.id.clone())
+                    .collect(),
+                None => Vec::new(),
+            }
+        } else {
+            Vec::new()
+        };
+
         // Now safe to mutate
         self.stages.get_mut(&id.0).unwrap().lifecycle = lifecycle;
+        for old_id in duplicates {
+            if let Some(existing) = self.stages.get_mut(&old_id.0) {
+                existing.lifecycle = StageLifecycle::Deprecated {
+                    successor_id: id.clone(),
+                };
+            }
+        }
         Ok(())
     }
 
@@ -238,7 +335,9 @@ mod tests {
     fn get_by_signature_skips_deprecated() {
         use noether_core::stage::SignatureId;
         let mut store = MemoryStore::new();
-        // Old implementation of "sig" goes Active, new Active stage becomes successor.
+        // Old implementation of "sig" goes Active, new Active stage
+        // becomes successor. The M2.3 invariant enforcement in
+        // MemoryStore::put auto-deprecates the old one.
         let mut old = make_stage("impl_old");
         old.signature_id = Some(SignatureId("sig".into()));
         store.put(old).unwrap();
@@ -246,18 +345,98 @@ mod tests {
         new.signature_id = Some(SignatureId("sig".into()));
         store.put(new).unwrap();
 
-        // Deprecate old → new. Resolver should return new.
-        store
-            .update_lifecycle(
-                &StageId("impl_old".into()),
-                StageLifecycle::Deprecated {
-                    successor_id: StageId("impl_new".into()),
-                },
-            )
-            .unwrap();
+        // old should already be Deprecated — no manual update_lifecycle
+        // needed.
+        assert!(matches!(
+            store
+                .get(&StageId("impl_old".into()))
+                .unwrap()
+                .unwrap()
+                .lifecycle,
+            StageLifecycle::Deprecated { .. }
+        ));
 
         let found = store.get_by_signature(&SignatureId("sig".into())).unwrap();
         assert_eq!(found.id, StageId("impl_new".into()));
+    }
+
+    #[test]
+    fn put_enforces_one_active_per_signature() {
+        use noether_core::stage::SignatureId;
+        let mut store = MemoryStore::new();
+        let mut a = make_stage("impl_a");
+        a.signature_id = Some(SignatureId("sig".into()));
+        let mut b = make_stage("impl_b");
+        b.signature_id = Some(SignatureId("sig".into()));
+
+        store.put(a).unwrap();
+        store.put(b).unwrap();
+
+        // impl_a must have been auto-deprecated with impl_b as successor.
+        let stored_a = store.get(&StageId("impl_a".into())).unwrap().unwrap();
+        match &stored_a.lifecycle {
+            StageLifecycle::Deprecated { successor_id } => {
+                assert_eq!(successor_id.0, "impl_b");
+            }
+            other => panic!("expected Deprecated, got {other:?}"),
+        }
+
+        // impl_b stays Active.
+        let stored_b = store.get(&StageId("impl_b".into())).unwrap().unwrap();
+        assert!(matches!(stored_b.lifecycle, StageLifecycle::Active));
+    }
+
+    #[test]
+    fn put_draft_does_not_trigger_deprecation() {
+        // Only an Active incoming stage should auto-deprecate. A Draft
+        // put must leave existing Actives alone.
+        use noether_core::stage::SignatureId;
+        let mut store = MemoryStore::new();
+        let mut active = make_stage("impl_active");
+        active.signature_id = Some(SignatureId("sig".into()));
+        let mut draft = make_stage("impl_draft");
+        draft.signature_id = Some(SignatureId("sig".into()));
+        draft.lifecycle = StageLifecycle::Draft;
+
+        store.put(active).unwrap();
+        store.put(draft).unwrap();
+
+        let stored = store.get(&StageId("impl_active".into())).unwrap().unwrap();
+        assert!(
+            matches!(stored.lifecycle, StageLifecycle::Active),
+            "draft put must not deprecate existing Active"
+        );
+    }
+
+    #[test]
+    fn update_lifecycle_to_active_deprecates_existing() {
+        // Promoting a Draft to Active must also trigger the invariant
+        // check, not just put.
+        use noether_core::stage::SignatureId;
+        let mut store = MemoryStore::new();
+        let mut existing = make_stage("impl_existing");
+        existing.signature_id = Some(SignatureId("sig".into()));
+        let mut draft = make_stage("impl_new");
+        draft.signature_id = Some(SignatureId("sig".into()));
+        draft.lifecycle = StageLifecycle::Draft;
+
+        store.put(existing).unwrap();
+        store.put(draft).unwrap();
+
+        // Promote draft → Active.
+        store
+            .update_lifecycle(&StageId("impl_new".into()), StageLifecycle::Active)
+            .unwrap();
+
+        let stored_existing = store
+            .get(&StageId("impl_existing".into()))
+            .unwrap()
+            .unwrap();
+        assert!(
+            matches!(stored_existing.lifecycle, StageLifecycle::Deprecated { .. }),
+            "existing Active must be auto-deprecated when another stage \
+             with the same signature is promoted to Active"
+        );
     }
 
     #[test]
