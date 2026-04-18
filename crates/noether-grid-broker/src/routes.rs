@@ -170,7 +170,7 @@ pub async fn submit_job(
     state.metrics.jobs_submitted_total.inc();
     // Parse the graph. Invalid JSON → 400 immediately; the graph wouldn't
     // run anyway and we want a clear error before any worker bookkeeping.
-    let graph = match noether_engine::lagrange::parse_graph(&spec.graph.to_string()) {
+    let mut graph = match noether_engine::lagrange::parse_graph(&spec.graph.to_string()) {
         Ok(g) => g,
         Err(e) => {
             return (
@@ -181,13 +181,26 @@ pub async fn submit_job(
         }
     };
 
-    // Look up the graph's required LLM models from the broker's stage
-    // catalogue. If the catalogue doesn't know a stage, the splitter
-    // leaves it alone — no model requirement is contributed.
+    // Resolve pinning. The splitter and model-inference walks both
+    // look stages up by implementation ID; signature-pinned refs
+    // would silently be left alone. Run this once up front so the
+    // rest of the pipeline sees concrete impls. Errors (unknown
+    // signature, missing impl) are client-facing 400s, not 5xx.
     let stages_snapshot = {
         let lock = state.stages.lock().await;
         clone_store(&lock)
     };
+    if let Err(e) = noether_engine::lagrange::resolve_pinning(&mut graph.root, &stages_snapshot) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": format!("pinning resolution: {e}")})),
+        )
+            .into_response();
+    }
+
+    // Look up the graph's required LLM models from the broker's stage
+    // catalogue. If the catalogue doesn't know a stage, the splitter
+    // leaves it alone — no model requirement is contributed.
     let models = splitter::required_llm_models(&graph.root, &stages_snapshot);
 
     // Pre-flight pool capacity. With graph splitting we don't pick a

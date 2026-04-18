@@ -180,7 +180,7 @@ async fn run_job(job: &ScheduledJob, config: &SchedulerConfig) {
         }
     };
 
-    let graph = match parse_graph(&graph_json) {
+    let mut graph = match parse_graph(&graph_json) {
         Ok(g) => g,
         Err(e) => {
             error!("Job {} — invalid graph JSON: {}", job.name, e);
@@ -247,7 +247,16 @@ async fn run_job(job: &ScheduledJob, config: &SchedulerConfig) {
         use noether_engine::llm::LlmConfig;
 
         let inline = InlineExecutor::from_store(store.as_ref());
+        // composition_id from the pre-resolution graph — stable across
+        // store changes, per #28.
         let cid = compute_composition_id(&graph).unwrap_or_else(|_| "unknown".into());
+        // Resolve pinning against the store snapshot. Signature-pinned
+        // refs rewrite to concrete implementation IDs; without this the
+        // run would fail inside the executor's store.get() call.
+        if let Err(e) = noether_engine::lagrange::resolve_pinning(&mut graph.root, store.as_ref()) {
+            error!("Job {} — pinning resolution failed: {e}", job.name);
+            return;
+        }
         let job_input = job.input.clone().unwrap_or(serde_json::Value::Null);
 
         let result = if llm_name != "mock" {

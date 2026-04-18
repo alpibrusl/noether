@@ -41,6 +41,16 @@ pub struct SplitResult {
 /// chosen worker (or a refusal that aborts the whole rewrite). Tests
 /// can pass a deterministic picker; the production caller wires it to
 /// the routing module.
+///
+/// # Pre-condition — pinning must be resolved
+///
+/// `node` must already have been normalised via
+/// [`noether_engine::lagrange::resolve_pinning`] so every `Stage`
+/// reference holds a concrete implementation ID. The splitter looks
+/// stages up via `store.get(id)`; signature-pinned references (where
+/// `id` is a `SignatureId`) would miss and silently leave the node
+/// unrewritten. Callers that invoke the splitter directly on a user-
+/// authored graph should resolve pinning first.
 pub fn split_graph<F>(
     node: &CompositionNode,
     stages: &MemoryStore,

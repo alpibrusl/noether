@@ -26,7 +26,7 @@ use crate::output::{acli_error, acli_error_hints, acli_ok};
 use noether_core::stage::{Stage, StageId};
 use noether_core::stdlib::load_stdlib;
 use noether_engine::checker::{check_graph, verify_signatures};
-use noether_engine::lagrange::{collect_stage_ids, parse_graph};
+use noether_engine::lagrange::{collect_stage_ids, parse_graph, resolve_pinning};
 use noether_store::StageStore;
 use std::collections::HashSet;
 use std::path::Path;
@@ -47,13 +47,21 @@ pub fn cmd_build_browser(store: &dyn StageStore, opts: BuildOptions<'_>) {
             std::process::exit(1);
         }
     };
-    let graph = match parse_graph(&graph_json) {
+    let mut graph = match parse_graph(&graph_json) {
         Ok(g) => g,
         Err(e) => {
             eprintln!("{}", acli_error(&format!("Invalid graph JSON: {e}")));
             std::process::exit(1);
         }
     };
+
+    // ── 1a. Resolve pinning ──────────────────────────────────────────────────
+    // Same rationale as `noether run`: rewrite signature-pinned refs so
+    // downstream passes see concrete impl IDs.
+    if let Err(e) = resolve_pinning(&mut graph.root, store) {
+        eprintln!("{}", acli_error(&format!("Pinning resolution: {e}")));
+        std::process::exit(1);
+    }
 
     // ── 2. Type-check ─────────────────────────────────────────────────────────
     match check_graph(&graph.root, store) {

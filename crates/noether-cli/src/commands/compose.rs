@@ -7,7 +7,9 @@ use noether_engine::checker::{
 use noether_engine::composition_cache::CompositionCache;
 use noether_engine::executor::runner::run_composition;
 use noether_engine::index::SemanticIndex;
-use noether_engine::lagrange::{compute_composition_id, serialize_graph, CompositionGraph};
+use noether_engine::lagrange::{
+    compute_composition_id, resolve_pinning, serialize_graph, CompositionGraph,
+};
 use noether_engine::llm::{LlmConfig, LlmProvider};
 use noether_engine::planner::plan_graph;
 use noether_store::StageStore;
@@ -46,6 +48,15 @@ pub fn cmd_compose(
                 "Cache hit (model: {}, composed: {}s ago). Use --force to recompose.",
                 cached.model, age_secs,
             );
+            // Resolve pinning on a local clone so downstream passes see
+            // concrete impl IDs. composition_id is computed from the
+            // pre-resolution graph (inside emit_result), so rewrites
+            // don't affect the hashed identity.
+            let mut cached_graph = cached.graph.clone();
+            if let Err(e) = resolve_pinning(&mut cached_graph.root, store) {
+                eprintln!("{}", acli_error(&format!("Pinning resolution: {e}")));
+                std::process::exit(1);
+            }
             emit_result(
                 store,
                 EmitCtx {
@@ -56,7 +67,7 @@ pub fn cmd_compose(
                     cache_age_secs: age_secs,
                     attempts: 0,
                     synthesized: &[],
-                    graph: &cached.graph.clone(),
+                    graph: &cached_graph,
                     policy: opts.policy,
                     budget_cents: opts.budget_cents,
                 },
@@ -86,7 +97,12 @@ pub fn cmd_compose(
         cache.insert(problem, result.graph.clone(), opts.model);
     }
 
-    let (graph, synthesized, attempts) = (result.graph, result.synthesized, result.attempts);
+    let (mut graph, synthesized, attempts) = (result.graph, result.synthesized, result.attempts);
+    // Resolve pinning on the fresh graph before downstream passes run.
+    if let Err(e) = resolve_pinning(&mut graph.root, store) {
+        eprintln!("{}", acli_error(&format!("Pinning resolution: {e}")));
+        std::process::exit(1);
+    }
     emit_result(
         store,
         EmitCtx {

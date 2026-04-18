@@ -14,7 +14,7 @@
 use noether_core::stage::{Stage, StageId};
 use noether_core::stdlib::load_stdlib;
 use noether_engine::checker::{check_graph, verify_signatures};
-use noether_engine::lagrange::{collect_stage_ids, parse_graph};
+use noether_engine::lagrange::{collect_stage_ids, parse_graph, resolve_pinning};
 use noether_store::StageStore;
 use std::collections::HashSet;
 use std::path::Path;
@@ -60,13 +60,43 @@ pub fn cmd_build(store: &dyn StageStore, opts: BuildOptions<'_>) {
             std::process::exit(1);
         }
     };
-    let graph = match parse_graph(&graph_json) {
+    let mut graph = match parse_graph(&graph_json) {
         Ok(g) => g,
         Err(e) => {
             eprintln!("{}", acli_error(&format!("Invalid graph JSON: {e}")));
             std::process::exit(1);
         }
     };
+
+    // ── 1a. Resolve pinning ──────────────────────────────────────────────────
+    // Rewrite signature-pinned refs to concrete implementation IDs so every
+    // downstream pass (type-check, signature verify, planner, cost map) sees
+    // impl hashes and can use `store.get` directly. Without this, a graph
+    // that declares `pinning: "signature"` would type-check but fail at
+    // subsequent passes. Same logic as `noether run`.
+    let resolution = match resolve_pinning(&mut graph.root, store) {
+        Ok(rep) => rep,
+        Err(e) => {
+            eprintln!("{}", acli_error(&format!("Pinning resolution: {e}")));
+            std::process::exit(1);
+        }
+    };
+    for rw in &resolution.rewrites {
+        eprintln!(
+            "Info: {:?}-pinned stage {} resolved to {}",
+            rw.pinning,
+            &rw.before[..8.min(rw.before.len())],
+            &rw.after[..8.min(rw.after.len())]
+        );
+    }
+    for w in &resolution.warnings {
+        eprintln!(
+            "Warning: signature {} has {} Active implementations — deterministically picked {}",
+            &w.signature_id[..8.min(w.signature_id.len())],
+            w.active_implementation_ids.len(),
+            &w.chosen[..8.min(w.chosen.len())],
+        );
+    }
 
     // ── 2. Type-check ─────────────────────────────────────────────────────────
     match check_graph(&graph.root, store) {
