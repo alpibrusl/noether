@@ -50,6 +50,18 @@ pub fn cmd_run(
         }
     };
 
+    // Composition identity comes from the **pre-resolution canonical form** —
+    // the graph as authored, after structural canonicalisation but before any
+    // store-dependent rewrite. Hashing after resolve_pinning /
+    // resolve_deprecated would make the same source graph produce different
+    // composition IDs on different days (as Active implementations change),
+    // which contradicts the M1 "canonical form is identity" contract.
+    //
+    // Trace correlation against specific implementations uses `execution_id`
+    // on the trace record (computed after resolution, not yet wired — see
+    // #28 follow-up).
+    let composition_id = compute_composition_id(&graph).unwrap_or_else(|_| "unknown".into());
+
     // 1a. Resolve stage ID prefixes against the store. Hand-authored graphs
     //     can use the 8-char prefixes that `noether stage list` prints; the
     //     resolver expands them to full SHA-256 IDs (or fails clearly if
@@ -65,19 +77,35 @@ pub fn cmd_run(
     //     budget) all look up stages via `store.get(id)` and assume `id` is an
     //     implementation hash. Without this pass, signature-pinned graphs would
     //     type-check but fail in those downstream passes.
-    let pinning_rewrites = match resolve_pinning(&mut graph.root, store) {
-        Ok(rws) => rws,
+    let resolution_report = match resolve_pinning(&mut graph.root, store) {
+        Ok(rep) => rep,
         Err(e) => {
             eprintln!("{}", acli_error(&format!("pinning resolution: {e}")));
             std::process::exit(1);
         }
     };
-    for rw in &pinning_rewrites {
+    for rw in &resolution_report.rewrites {
         eprintln!(
             "Info: {:?}-pinned stage {} resolved to {}",
             rw.pinning,
             &rw.before[..8.min(rw.before.len())],
             &rw.after[..8.min(rw.after.len())]
+        );
+    }
+    for w in &resolution_report.warnings {
+        eprintln!(
+            "Warning: signature {} has {} Active implementations ({}) — \
+             picked {} deterministically, but the store's ≤1-Active-per-\
+             signature invariant is violated. Deprecate the duplicates \
+             via `noether stage activate` / `noether store retro`.",
+            &w.signature_id[..8.min(w.signature_id.len())],
+            w.active_implementation_ids.len(),
+            w.active_implementation_ids
+                .iter()
+                .map(|id| id[..8.min(id.len())].to_string())
+                .collect::<Vec<_>>()
+                .join(", "),
+            &w.chosen[..8.min(w.chosen.len())],
         );
     }
 
@@ -93,8 +121,6 @@ pub fn cmd_run(
             );
         }
     }
-
-    let composition_id = compute_composition_id(&graph).unwrap_or_else(|_| "unknown".into());
 
     // 2. Type check
     let type_result = check_graph(&graph.root, store);

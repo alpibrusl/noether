@@ -75,20 +75,33 @@ pub enum ResolutionError {
 /// field to a concrete, in-store [`StageId`]. See the module doc for
 /// rationale and invariants.
 ///
-/// Returns the list of rewrites performed (for logging / diff output)
-/// on success, or the first [`ResolutionError`] on failure. The graph
-/// is left partially-rewritten on error; callers that want atomic
-/// behaviour should clone before calling.
+/// Returns the list of rewrites and diagnostics performed on success,
+/// or the first [`ResolutionError`] on failure. The graph is left
+/// partially-rewritten on error; callers that want atomic behaviour
+/// should clone before calling.
 pub fn resolve_pinning<S>(
     node: &mut CompositionNode,
     store: &S,
-) -> Result<Vec<Rewrite>, ResolutionError>
+) -> Result<ResolutionReport, ResolutionError>
 where
     S: StageStore + ?Sized,
 {
-    let mut rewrites = Vec::new();
-    resolve_recursive(node, store, &mut rewrites)?;
-    Ok(rewrites)
+    let mut report = ResolutionReport::default();
+    resolve_recursive(node, store, &mut report)?;
+    Ok(report)
+}
+
+/// Output of a successful [`resolve_pinning`] pass.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ResolutionReport {
+    /// One entry per Stage node whose `id` was changed by the pass.
+    pub rewrites: Vec<Rewrite>,
+    /// One entry per signature-pinned node where more than one Active
+    /// implementation matched — a "≤1 Active per signature" invariant
+    /// violation the CLI surfaces to the user. The pass still picks a
+    /// deterministic winner via [`noether_store::StageStore::get_by_signature`];
+    /// the warning exists so the user notices and fixes the store.
+    pub warnings: Vec<MultiActiveWarning>,
 }
 
 /// Record of one rewrite the pass performed. Useful for tracing:
@@ -100,10 +113,19 @@ pub struct Rewrite {
     pub pinning: Pinning,
 }
 
+/// Diagnostic raised when a signature-pinned ref matches more than
+/// one Active implementation. See [`ResolutionReport::warnings`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct MultiActiveWarning {
+    pub signature_id: String,
+    pub active_implementation_ids: Vec<String>,
+    pub chosen: String,
+}
+
 fn resolve_recursive<S>(
     node: &mut CompositionNode,
     store: &S,
-    rewrites: &mut Vec<Rewrite>,
+    report: &mut ResolutionReport,
 ) -> Result<(), ResolutionError>
 where
     S: StageStore + ?Sized,
@@ -111,9 +133,22 @@ where
     match node {
         CompositionNode::Stage { id, pinning, .. } => {
             let before = id.0.clone();
+            // Diagnostic check for signature pinning: emit a warning if
+            // more than one Active impl matches.
+            if matches!(*pinning, Pinning::Signature) {
+                let sig = SignatureId(id.0.clone());
+                let matches = store.active_stages_with_signature(&sig);
+                if matches.len() > 1 {
+                    report.warnings.push(MultiActiveWarning {
+                        signature_id: id.0.clone(),
+                        active_implementation_ids: matches.iter().map(|s| s.id.0.clone()).collect(),
+                        chosen: matches[0].id.0.clone(),
+                    });
+                }
+            }
             let resolved = resolve_single(id, *pinning, store)?;
             if resolved.0 != before {
-                rewrites.push(Rewrite {
+                report.rewrites.push(Rewrite {
                     before,
                     after: resolved.0.clone(),
                     pinning: *pinning,
@@ -127,13 +162,13 @@ where
         CompositionNode::RemoteStage { .. } | CompositionNode::Const { .. } => Ok(()),
         CompositionNode::Sequential { stages } => {
             for s in stages {
-                resolve_recursive(s, store, rewrites)?;
+                resolve_recursive(s, store, report)?;
             }
             Ok(())
         }
         CompositionNode::Parallel { branches } => {
             for b in branches.values_mut() {
-                resolve_recursive(b, store, rewrites)?;
+                resolve_recursive(b, store, report)?;
             }
             Ok(())
         }
@@ -142,31 +177,31 @@ where
             if_true,
             if_false,
         } => {
-            resolve_recursive(predicate, store, rewrites)?;
-            resolve_recursive(if_true, store, rewrites)?;
-            resolve_recursive(if_false, store, rewrites)?;
+            resolve_recursive(predicate, store, report)?;
+            resolve_recursive(if_true, store, report)?;
+            resolve_recursive(if_false, store, report)?;
             Ok(())
         }
         CompositionNode::Fanout { source, targets } => {
-            resolve_recursive(source, store, rewrites)?;
+            resolve_recursive(source, store, report)?;
             for t in targets {
-                resolve_recursive(t, store, rewrites)?;
+                resolve_recursive(t, store, report)?;
             }
             Ok(())
         }
         CompositionNode::Merge { sources, target } => {
             for s in sources {
-                resolve_recursive(s, store, rewrites)?;
+                resolve_recursive(s, store, report)?;
             }
-            resolve_recursive(target, store, rewrites)?;
+            resolve_recursive(target, store, report)?;
             Ok(())
         }
-        CompositionNode::Retry { stage, .. } => resolve_recursive(stage, store, rewrites),
+        CompositionNode::Retry { stage, .. } => resolve_recursive(stage, store, report),
         CompositionNode::Let { bindings, body } => {
             for b in bindings.values_mut() {
-                resolve_recursive(b, store, rewrites)?;
+                resolve_recursive(b, store, report)?;
             }
-            resolve_recursive(body, store, rewrites)
+            resolve_recursive(body, store, report)
         }
     }
 }
@@ -267,7 +302,7 @@ mod tests {
             pinning: Pinning::Signature,
             config: None,
         };
-        let rewrites = resolve_pinning(&mut node, &store).unwrap();
+        let report = resolve_pinning(&mut node, &store).unwrap();
 
         match &node {
             CompositionNode::Stage { id, pinning, .. } => {
@@ -277,9 +312,9 @@ mod tests {
             }
             _ => panic!("expected Stage"),
         }
-        assert_eq!(rewrites.len(), 1);
-        assert_eq!(rewrites[0].before, "sig_xyz");
-        assert_eq!(rewrites[0].after, "impl_abc");
+        assert_eq!(report.rewrites.len(), 1);
+        assert_eq!(report.rewrites[0].before, "sig_xyz");
+        assert_eq!(report.rewrites[0].after, "impl_abc");
     }
 
     #[test]
@@ -291,10 +326,10 @@ mod tests {
             pinning: Pinning::Both,
             config: None,
         };
-        let rewrites = resolve_pinning(&mut node, &store).unwrap();
+        let report = resolve_pinning(&mut node, &store).unwrap();
 
         // No rewrite — it already held a valid impl_id.
-        assert!(rewrites.is_empty());
+        assert!(report.rewrites.is_empty());
     }
 
     #[test]
@@ -376,9 +411,9 @@ mod tests {
             pinning: Pinning::Signature,
             config: None,
         };
-        let rewrites = resolve_pinning(&mut node, &store).unwrap();
+        let report = resolve_pinning(&mut node, &store).unwrap();
         // No rewrite needed — the id already pointed at the right stage.
-        assert!(rewrites.is_empty());
+        assert!(report.rewrites.is_empty());
     }
 
     #[test]
@@ -399,8 +434,8 @@ mod tests {
                 },
             ],
         };
-        let rewrites = resolve_pinning(&mut node, &store).unwrap();
-        assert_eq!(rewrites.len(), 2);
+        let report = resolve_pinning(&mut node, &store).unwrap();
+        assert_eq!(report.rewrites.len(), 2);
     }
 
     #[test]
@@ -425,8 +460,92 @@ mod tests {
             },
         );
         let mut node = CompositionNode::Parallel { branches };
-        let rewrites = resolve_pinning(&mut node, &store).unwrap();
-        assert_eq!(rewrites.len(), 2);
+        let report = resolve_pinning(&mut node, &store).unwrap();
+        assert_eq!(report.rewrites.len(), 2);
+    }
+
+    #[test]
+    fn walks_into_branch_predicate_and_arms() {
+        let store = store_with_impl("impl_abc", "sig_xyz");
+        let sig = || CompositionNode::Stage {
+            id: StageId("sig_xyz".into()),
+            pinning: Pinning::Signature,
+            config: None,
+        };
+        let mut node = CompositionNode::Branch {
+            predicate: Box::new(sig()),
+            if_true: Box::new(sig()),
+            if_false: Box::new(sig()),
+        };
+        let report = resolve_pinning(&mut node, &store).unwrap();
+        assert_eq!(report.rewrites.len(), 3);
+    }
+
+    #[test]
+    fn walks_into_fanout_source_and_targets() {
+        let store = store_with_impl("impl_abc", "sig_xyz");
+        let sig = || CompositionNode::Stage {
+            id: StageId("sig_xyz".into()),
+            pinning: Pinning::Signature,
+            config: None,
+        };
+        let mut node = CompositionNode::Fanout {
+            source: Box::new(sig()),
+            targets: vec![sig(), sig(), sig()],
+        };
+        let report = resolve_pinning(&mut node, &store).unwrap();
+        assert_eq!(report.rewrites.len(), 4);
+    }
+
+    #[test]
+    fn walks_into_merge_sources_and_target() {
+        let store = store_with_impl("impl_abc", "sig_xyz");
+        let sig = || CompositionNode::Stage {
+            id: StageId("sig_xyz".into()),
+            pinning: Pinning::Signature,
+            config: None,
+        };
+        let mut node = CompositionNode::Merge {
+            sources: vec![sig(), sig()],
+            target: Box::new(sig()),
+        };
+        let report = resolve_pinning(&mut node, &store).unwrap();
+        assert_eq!(report.rewrites.len(), 3);
+    }
+
+    #[test]
+    fn walks_into_let_bindings_and_body() {
+        let store = store_with_impl("impl_abc", "sig_xyz");
+        let sig = || CompositionNode::Stage {
+            id: StageId("sig_xyz".into()),
+            pinning: Pinning::Signature,
+            config: None,
+        };
+        let mut bindings = BTreeMap::new();
+        bindings.insert("a".into(), sig());
+        bindings.insert("b".into(), sig());
+        let mut node = CompositionNode::Let {
+            bindings,
+            body: Box::new(sig()),
+        };
+        let report = resolve_pinning(&mut node, &store).unwrap();
+        assert_eq!(report.rewrites.len(), 3);
+    }
+
+    #[test]
+    fn walks_into_retry_inner_stage() {
+        let store = store_with_impl("impl_abc", "sig_xyz");
+        let mut node = CompositionNode::Retry {
+            stage: Box::new(CompositionNode::Stage {
+                id: StageId("sig_xyz".into()),
+                pinning: Pinning::Signature,
+                config: None,
+            }),
+            max_attempts: 3,
+            delay_ms: None,
+        };
+        let report = resolve_pinning(&mut node, &store).unwrap();
+        assert_eq!(report.rewrites.len(), 1);
     }
 
     #[test]
@@ -472,10 +591,46 @@ mod tests {
         };
         let first = resolve_pinning(&mut node, &store).unwrap();
         let second = resolve_pinning(&mut node, &store).unwrap();
-        assert_eq!(first.len(), 1);
+        assert_eq!(first.rewrites.len(), 1);
         // Second pass is a no-op — the id is already an impl_id that
         // the store has, and the signature-lookup fallback finds the
         // same stage.
-        assert!(second.is_empty());
+        assert!(second.rewrites.is_empty());
+    }
+
+    #[test]
+    fn multi_active_signature_emits_warning() {
+        // Two Active stages with the same signature_id — an invariant
+        // violation the store alone can't catch without enforcement
+        // (tracked as follow-up; today the `stage add` CLI prevents it).
+        // resolve_pinning's job is to surface it.
+        let mut store = MemoryStore::new();
+        store
+            .put(make_stage(
+                "impl_a",
+                Some("shared_sig"),
+                StageLifecycle::Active,
+            ))
+            .unwrap();
+        store
+            .put(make_stage(
+                "impl_b",
+                Some("shared_sig"),
+                StageLifecycle::Active,
+            ))
+            .unwrap();
+
+        let mut node = CompositionNode::Stage {
+            id: StageId("shared_sig".into()),
+            pinning: Pinning::Signature,
+            config: None,
+        };
+        let report = resolve_pinning(&mut node, &store).unwrap();
+        assert_eq!(report.warnings.len(), 1);
+        let w = &report.warnings[0];
+        assert_eq!(w.signature_id, "shared_sig");
+        assert_eq!(w.active_implementation_ids.len(), 2);
+        // Deterministic pick: lexicographically smallest impl id.
+        assert_eq!(w.chosen, "impl_a");
     }
 }
