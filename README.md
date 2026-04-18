@@ -38,6 +38,19 @@ Good fit: **typed ETL pipelines, analytics DAGs, data-normalisation across provi
 
 Noether is **not** a workflow orchestrator, request-response framework, or AI agent runtime. Agents and services use Noether; they are not written in it.
 
+### When Noether is *not* the right tool
+
+- **You need request/response with SLAs, autoscaling, or sticky sessions.** Use a regular service framework (axum, FastAPI, …). Noether doesn't serve traffic; it runs graphs and returns.
+- **You want a real sandbox for untrusted code.** The Nix-pinned runtime is a reproducibility boundary, not an isolation boundary. If you need to execute code you didn't write, wrap the executor in bwrap/firejail/nsjail yourself — or wait until Noether ships opt-in isolation.
+- **You're scheduling 30 jobs a day across Airflow/Prefect/Dagster-style DAGs with UI ops + lineage + alerting.** Those tools are mature here and Noether has no UI.
+- **Your pipeline only runs once.** The content-addressing + verification overhead is there so the *second* run is free. If there is no second run, a plain script is simpler.
+- **Your inputs aren't JSON-typable.** Noether's type system is structural over JSON. Streaming video, arbitrary binary, live-network protocols — doable, but you'll fight the model.
+- **You need multi-tenant cloud isolation out of the box.** The private `noether-cloud` service has it; the open-source `noether` CLI is single-tenant by design.
+
+### Project status
+
+**One active maintainer, best-effort response times.** See [`SECURITY.md`](./SECURITY.md) for the trust model and [`docs/roadmap.md`](./docs/roadmap.md) for what ships vs. what's planned. Not suitable for deployments that require vendor SLAs.
+
 ---
 
 ## Install
