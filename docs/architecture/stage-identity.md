@@ -9,29 +9,39 @@ This is the most important design decision in the system.
 
 ## How a stage ID is computed
 
-A `StageId` is the hex-encoded SHA-256 of the canonical JSON serialisation of the
-stage's `StageSignature`:
+A `StageId` (also called `ImplementationId` from M2 onwards) is the
+hex-encoded SHA-256 of the JCS-canonicalised JSON of the stage's name
+plus the fields of its `StageSignature`. The hash **nests**
+`SignatureId`: changing the name, input, output, effects, OR
+implementation_hash changes the `StageId`. Changing only the
+implementation_hash changes the `StageId` but not the `SignatureId`.
 
 ```
-StageId = SHA-256(canonical_json(StageSignature))
-
-StageSignature = {
-    input:               NType,   // structural input type
-    output:              NType,   // structural output type
-    effects:             BTreeSet<Effect>,
-    implementation_hash: String   // SHA-256 of the implementation code
-}
+StageId = SHA-256(JCS({
+    name:                 String,
+    input:                NType,
+    output:               NType,
+    effects:              EffectSet,
+    implementation_hash:  String,
+}))
 ```
 
-The canonical JSON uses `BTreeMap`/`BTreeSet` everywhere — keys are sorted,
-output is deterministic across all platforms and compiler versions.
+The canonical JSON uses RFC 8785 JCS — keys sorted lexicographically,
+no insignificant whitespace, deterministic across all platforms.
 
 The Rust code:
 
 ```rust
-pub fn compute_stage_id(sig: &StageSignature) -> Result<StageId, _> {
-    let json = serde_json::to_string(sig)?;       // BTreeMap → sorted keys
-    let hash = Sha256::digest(json.as_bytes());
+pub fn compute_stage_id(name: &str, sig: &StageSignature) -> Result<StageId, _> {
+    let canonical = serde_json::json!({
+        "name": name,
+        "input": sig.input,
+        "output": sig.output,
+        "effects": sig.effects,
+        "implementation_hash": sig.implementation_hash,
+    });
+    let bytes = serde_jcs::to_vec(&canonical)?;
+    let hash = Sha256::digest(&bytes);
     Ok(StageId(hex::encode(hash)))
 }
 ```
@@ -40,14 +50,21 @@ pub fn compute_stage_id(sig: &StageSignature) -> Result<StageId, _> {
 
 ## What this means
 
-### Names are metadata, not identity
+### Name is in the signature; description and other metadata are not
+
+From M2 (v0.6.0) onwards, `name` is part of both `SignatureId` and
+`StageId`. Renaming a stage produces a different `StageId` — a
+deliberate, auditable break rather than a silent collision.
+
+Description, examples, cost, tags, and aliases are **not** part of
+the hash. Updating a description or adding an alias never changes
+the stage ID.
 
 ```bash
-# Two stages with different descriptions but identical signatures get the same ID.
-# Renaming a stage does not change its ID.
 noether stage get 39731ebb
+# "name":        "http_get_request"
 # "description": "Make an HTTP GET request"
-# id: 39731ebb   ← determined by types + effects + impl_hash, not the name
+# id: 39731ebb   ← determined by name + types + effects + impl_hash
 ```
 
 ### Changing behaviour changes the ID

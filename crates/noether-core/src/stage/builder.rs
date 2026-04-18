@@ -172,7 +172,7 @@ impl StageBuilder {
             implementation_hash: impl_hash,
         };
 
-        let id = compute_stage_id(&signature)?;
+        let id = compute_stage_id(name, &signature)?;
         let sig_hex = sign_stage_id(&id, signing_key);
         let pub_hex = hex::encode(signing_key.verifying_key().to_bytes());
 
@@ -226,7 +226,7 @@ impl StageBuilder {
             implementation_hash,
         };
 
-        let id = compute_stage_id(&signature)?;
+        let id = compute_stage_id(&name, &signature)?;
         let sig_hex = sign_stage_id(&id, signing_key);
         let pub_hex = hex::encode(signing_key.verifying_key().to_bytes());
 
@@ -273,7 +273,7 @@ impl StageBuilder {
             implementation_hash,
         };
 
-        let id = compute_stage_id(&signature)?;
+        let id = compute_stage_id(&name, &signature)?;
 
         Ok(Stage {
             id,

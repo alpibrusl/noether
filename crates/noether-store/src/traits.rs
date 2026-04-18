@@ -68,18 +68,21 @@ pub trait StageStore {
             .collect()
     }
 
-    /// Look up the Active stage for a given [`SignatureId`]. This is the
-    /// M2 "resolve signature to latest implementation" pathway: a graph
-    /// that pins a stage by `signature_id` gets whichever implementation
-    /// is Active today.
+    /// Look up the Active stage for a given [`SignatureId`]. This is
+    /// the M2 "resolve signature to latest implementation" pathway: a
+    /// graph that pins a stage by `signature_id` gets whichever
+    /// implementation is Active today.
     ///
-    /// Returns the first Active stage with a matching `signature_id`.
-    /// If multiple Active stages share a signature, this returns an
-    /// arbitrary one — stores should ensure at most one Active stage
-    /// per signature via the `stage add` deprecation path.
+    /// **Determinism.** When multiple Active stages share a signature
+    /// (which a well-behaved store prevents via the `stage add`
+    /// deprecation path, but which can happen transiently), this
+    /// returns the stage with the lexicographically-smallest
+    /// implementation ID. A "first match" would be nondeterministic
+    /// under HashMap-backed stores.
     fn get_by_signature(&self, signature_id: &SignatureId) -> Option<&Stage> {
         self.list(Some(&StageLifecycle::Active))
             .into_iter()
-            .find(|s| s.signature_id.as_ref() == Some(signature_id))
+            .filter(|s| s.signature_id.as_ref() == Some(signature_id))
+            .min_by(|a, b| a.id.0.cmp(&b.id.0))
     }
 }

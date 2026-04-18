@@ -190,8 +190,8 @@ proptest! {
             effects: EffectSet::pure(),
             implementation_hash: impl_hash,
         };
-        let id1 = compute_stage_id(&sig).unwrap();
-        let id2 = compute_stage_id(&sig).unwrap();
+        let id1 = compute_stage_id("test", &sig).unwrap();
+        let id2 = compute_stage_id("test", &sig).unwrap();
         prop_assert_eq!(id1, id2);
     }
 }

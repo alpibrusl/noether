@@ -24,15 +24,11 @@ fn err(name: &str, message: impl Into<String>) -> ExecutionError {
 /// `signature` JSON (the Noether content-addressing invariant).
 pub fn verify_stage_content_hash(input: &Value) -> Result<Value, ExecutionError> {
     let stage_id = input["id"].as_str().unwrap_or("");
+    let name = input["name"].as_str().unwrap_or("");
 
-    // Re-hashing must go through the StageSignature struct, NOT through the
-    // raw JSON Value. serde_json::to_string on a Value emits map keys in
-    // alphabetical order, while serde_json::to_vec on a struct emits them in
-    // struct field-declaration order (input, output, effects,
-    // implementation_hash). The two serialisations produce different bytes
-    // and therefore different SHA-256 digests — which is precisely the
-    // "content hash mismatch" bug clients hit when the JSON they POST has
-    // any field order other than the struct's own.
+    // Re-hashing goes through the name + StageSignature struct, NOT through
+    // the raw JSON Value. JCS (via compute_stage_id) produces stable bytes
+    // for any field order in the input JSON.
     let sig: StageSignature = serde_json::from_value(input["signature"].clone()).map_err(|e| {
         err(
             "verify_stage_content_hash",
@@ -40,7 +36,7 @@ pub fn verify_stage_content_hash(input: &Value) -> Result<Value, ExecutionError>
         )
     })?;
 
-    let computed = compute_stage_id(&sig)
+    let computed = compute_stage_id(name, &sig)
         .map_err(|e| {
             err(
                 "verify_stage_content_hash",
@@ -183,21 +179,34 @@ mod tests {
     /// order (effects, implementation_hash, input, output) must validate.
     /// The earlier implementation re-serialised the raw JSON Value, which
     /// emitted alphabetically sorted keys, while clients hash the
-    /// StageSignature struct (input, output, effects, implementation_hash).
-    /// The two byte sequences differ — and used to produce different IDs.
+    /// StageSignature struct. JCS guarantees bytes-stable canonicalisation
+    /// regardless of input key order — this test pins that.
     #[test]
     fn content_hash_check_is_field_order_independent() {
-        // JCS-canonicalised id for the signature below. Under RFC 8785 the
-        // bytes are identical regardless of the order keys appear in the
-        // source JSON, so this id stays valid whether the client emitted
-        // {input,output,effects,impl_hash} or alphabetical (as here).
+        // Build the signature, derive the expected id, then feed both
+        // into the validator. A hardcoded id would have to be updated
+        // every time the hash format changes (M2 added `name` to the
+        // stage-id hash, for example); deriving keeps the test focused
+        // on the JCS property.
+        let signature = noether_core::stage::StageSignature {
+            input: noether_core::types::NType::Text,
+            output: noether_core::types::NType::Number,
+            effects: noether_core::effects::EffectSet::pure(),
+            implementation_hash: "abcd".into(),
+        };
+        let name = "validation_round_trip";
+        let expected_id = compute_stage_id(name, &signature).unwrap().0;
+
+        // Construct the input JSON with keys in a non-struct order —
+        // alphabetical, in fact — to exercise the canonicalisation path.
         let raw = serde_json::json!({
-            "id": "279804424b7e12b55ec2ed135d9f0c62b1af95b9b1a937895fe69da0f5a42c38",
+            "id": expected_id,
+            "name": name,
             "signature": {
-                "effects": {"effects": [{"effect": "Fallible"}]},
-                "implementation_hash": "1eb75086add21d5ea28d2cf6c79a5c08a40e322517958ad328f19ce4f9d46658",
-                "input":  {"kind": "Record", "value": {"manifest": {"kind": "Record", "value": {"apiVersion": {"kind": "Text"}, "name": {"kind": "Text"}}}}},
-                "output": {"kind": "Record", "value": {"errors": {"kind": "List", "value": {"kind": "Text"}}, "hash": {"kind": "Text"}, "name": {"kind": "Text"}, "valid": {"kind": "Bool"}, "version": {"kind": "Text"}}}
+                "effects":             {"effects": [{"effect": "Pure"}]},
+                "implementation_hash": "abcd",
+                "input":               {"kind": "Text"},
+                "output":              {"kind": "Number"},
             }
         });
         let result = verify_stage_content_hash(&raw).unwrap();

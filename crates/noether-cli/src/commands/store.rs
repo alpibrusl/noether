@@ -199,8 +199,10 @@ pub fn cmd_migrate_effects(store: &mut dyn StageStore, llm: &dyn LlmProvider, dr
         // We keep all metadata identical except the effects field in the signature.
         let mut new_stage = stage.clone();
         new_stage.signature.effects = inferred;
-        // Recompute ID for the new signature.
-        match noether_core::stage::compute_stage_id(&new_stage.signature) {
+        // Recompute ID for the new signature. The name is an identity-
+        // determining field per M2, so pass the existing name along.
+        let name = new_stage.name.clone().unwrap_or_default();
+        match noether_core::stage::compute_stage_id(&name, &new_stage.signature) {
             Ok(new_id) => {
                 new_stage.id = new_id.clone();
                 // Re-sign with the same signer key if present — we can't do that
