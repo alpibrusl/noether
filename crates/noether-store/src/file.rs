@@ -1,3 +1,6 @@
+use crate::invariant::{
+    duplicate_active_ids_for, duplicate_active_ids_for_incoming, log_auto_deprecation,
+};
 use crate::lifecycle::validate_transition;
 use crate::traits::{StageStore, StoreError, StoreStats};
 use noether_core::stage::{Stage, StageId, StageLifecycle};
@@ -56,6 +59,12 @@ impl JsonFileStore {
     }
 
     /// Persist current state to disk.
+    //
+    // NOTE(atomicity): `fs::write` truncates then writes — a mid-write
+    // crash can leave `path` empty or half-written. Future hardening:
+    // write to `<path>.tmp` and rename in place. Acceptable today
+    // because JsonFileStore is a developer-facing local registry, not a
+    // hot production path. Track via PR follow-up.
     fn save(&self) -> Result<(), StoreError> {
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent).map_err(|e| StoreError::IoError {
@@ -81,14 +90,40 @@ impl StageStore for JsonFileStore {
         if self.stages.contains_key(&id.0) {
             return Err(StoreError::AlreadyExists(id));
         }
+        // M2.3 invariant: auto-deprecate existing Actives with the
+        // same signature_id. See MemoryStore::put for rationale.
+        let duplicates = duplicate_active_ids_for_incoming(&self.stages, &stage);
+        let signature_id = stage.signature_id.clone();
         self.stages.insert(id.0.clone(), stage);
+        for old_id in &duplicates {
+            if let Some(existing) = self.stages.get_mut(&old_id.0) {
+                existing.lifecycle = StageLifecycle::Deprecated {
+                    successor_id: id.clone(),
+                };
+            }
+        }
+        log_auto_deprecation(&duplicates, &id, signature_id.as_ref());
         self.save()?;
         Ok(id)
     }
 
     fn upsert(&mut self, stage: Stage) -> Result<StageId, StoreError> {
         let id = stage.id.clone();
+        let duplicates = duplicate_active_ids_for_incoming(&self.stages, &stage);
+        let signature_id = stage.signature_id.clone();
         self.stages.insert(id.0.clone(), stage);
+        let actually_deprecated: Vec<StageId> = duplicates
+            .into_iter()
+            .filter(|old_id| *old_id != id)
+            .collect();
+        for old_id in &actually_deprecated {
+            if let Some(existing) = self.stages.get_mut(&old_id.0) {
+                existing.lifecycle = StageLifecycle::Deprecated {
+                    successor_id: id.clone(),
+                };
+            }
+        }
+        log_auto_deprecation(&actually_deprecated, &id, signature_id.as_ref());
         self.save()?;
         Ok(id)
     }
@@ -135,7 +170,27 @@ impl StageStore for JsonFileStore {
             }
         }
 
+        // M2.3 invariant: promoting to Active deprecates any other
+        // Active stage with the same signature_id.
+        let (duplicates, signature_id) = if matches!(lifecycle, StageLifecycle::Active) {
+            let sig = current.signature_id.clone();
+            (
+                duplicate_active_ids_for(&self.stages, id, sig.as_ref()),
+                sig,
+            )
+        } else {
+            (Vec::new(), None)
+        };
+
         self.stages.get_mut(&id.0).unwrap().lifecycle = lifecycle;
+        for old_id in &duplicates {
+            if let Some(existing) = self.stages.get_mut(&old_id.0) {
+                existing.lifecycle = StageLifecycle::Deprecated {
+                    successor_id: id.clone(),
+                };
+            }
+        }
+        log_auto_deprecation(&duplicates, id, signature_id.as_ref());
         self.save()?;
         Ok(())
     }
@@ -251,6 +306,40 @@ mod tests {
             let store = JsonFileStore::open(&path).unwrap();
             let stage = store.get(&StageId("old".into())).unwrap().unwrap();
             assert!(matches!(stage.lifecycle, StageLifecycle::Deprecated { .. }));
+        }
+    }
+
+    #[test]
+    fn auto_deprecation_persists_across_reload() {
+        // Put two Active stages with the same signature through
+        // JsonFileStore; after reopening the file, the first must be
+        // Deprecated with the second as successor. Guards against a
+        // save() that writes stale state or forgets the deprecation.
+        use noether_core::stage::SignatureId;
+        let tmp = NamedTempFile::new().unwrap();
+        let path = tmp.path().to_path_buf();
+
+        {
+            let mut store = JsonFileStore::open(&path).unwrap();
+            let mut a = make_stage("impl_a");
+            a.signature_id = Some(SignatureId("sig".into()));
+            let mut b = make_stage("impl_b");
+            b.signature_id = Some(SignatureId("sig".into()));
+            store.put(a).unwrap();
+            store.put(b).unwrap();
+        }
+
+        {
+            let store = JsonFileStore::open(&path).unwrap();
+            let stored_a = store.get(&StageId("impl_a".into())).unwrap().unwrap();
+            match &stored_a.lifecycle {
+                StageLifecycle::Deprecated { successor_id } => {
+                    assert_eq!(successor_id.0, "impl_b");
+                }
+                other => panic!("expected Deprecated on reload, got {other:?}"),
+            }
+            let stored_b = store.get(&StageId("impl_b".into())).unwrap().unwrap();
+            assert!(matches!(stored_b.lifecycle, StageLifecycle::Active));
         }
     }
 
