@@ -127,6 +127,26 @@ pub enum ValidationError {
         min: usize,
         got: usize,
     },
+    /// A property in the stage's `properties` array deserialised into
+    /// [`Property::Unknown`] with a `kind` string that names a
+    /// variant this reader DOES know about. That signals a user typo
+    /// inside a known property kind (e.g. `allowed: ["bolean"]`
+    /// inside a `field_type_in`) rather than a genuinely unknown
+    /// future kind. Rejecting at ingest prevents the typo'd property
+    /// from silently becoming a no-op check.
+    ///
+    /// See [`Property::shadowed_known_kind`] for the detection
+    /// semantics.
+    ///
+    /// [`Property::Unknown`]: crate::stage::property::Property::Unknown
+    /// [`Property::shadowed_known_kind`]: crate::stage::property::Property::shadowed_known_kind
+    ShadowedKnownKind {
+        /// Position in the stage's `properties` array.
+        index: usize,
+        /// The known-kind string that the malformed property
+        /// reported (e.g. `"field_type_in"`).
+        kind: String,
+    },
 }
 
 impl fmt::Display for ValidationError {
@@ -153,6 +173,13 @@ impl fmt::Display for ValidationError {
             ValidationError::TooFewExamples { min, got } => {
                 write!(f, "too few examples: need at least {min}, got {got}")
             }
+            ValidationError::ShadowedKnownKind { index, kind } => write!(
+                f,
+                "property[{index}]: looks like a `{kind}` but failed to \
+                 deserialise into that variant (likely a typo in one of \
+                 its fields). Fix the property — registering it as-is \
+                 would silently drop the check at runtime."
+            ),
         }
     }
 }
@@ -166,6 +193,20 @@ pub fn validate_stage(stage: &Stage, min_examples: usize) -> ValidationResult {
             min: min_examples,
             got: stage.examples.len(),
         });
+    }
+
+    // Reject properties that came out as `Property::Unknown` but name
+    // a known kind — see ValidationError::ShadowedKnownKind. Running
+    // before example-type-checking keeps the error message close to
+    // "your property JSON is malformed" rather than burying it under
+    // an output-type mismatch.
+    for (i, prop) in stage.properties.iter().enumerate() {
+        if let Some(kind) = prop.shadowed_known_kind() {
+            errors.push(ValidationError::ShadowedKnownKind {
+                index: i,
+                kind: kind.to_string(),
+            });
+        }
     }
 
     for (i, example) in stage.examples.iter().enumerate() {
@@ -301,5 +342,75 @@ mod tests {
         let t = infer_type(&vnode);
         // Should be a Record, not VNode (VNode requires an explicit hint)
         assert!(matches!(t, NType::Record(_)));
+    }
+
+    #[test]
+    fn validate_stage_rejects_shadowed_known_kind() {
+        // End-to-end: a stage spec with a typo inside a known
+        // property kind (e.g. `allowed: ["bolean"]` in a
+        // `field_type_in`) deserialises as `Property::Unknown` via
+        // serde's untagged fallback. `validate_stage` must surface
+        // that as a ShadowedKnownKind error so ingest (stage add,
+        // validate_spec) rejects it.
+        use crate::effects::EffectSet;
+        use crate::stage::property::Property;
+        use crate::stage::schema::{
+            CostEstimate, Example, Stage, StageId, StageLifecycle, StageSignature,
+        };
+        use std::collections::BTreeSet;
+
+        // Hand-construct the Unknown shape serde would produce for
+        // a shadowed typo — round-tripping through JSON keeps this
+        // test honest about what a real ingest path sees.
+        let typo_json = json!({
+            "kind": "field_type_in",
+            "field": "output.x",
+            "allowed": ["bolean"]
+        });
+        let typo: Property = serde_json::from_value(typo_json).unwrap();
+        assert!(matches!(typo, Property::Unknown { .. }));
+        assert_eq!(typo.shadowed_known_kind(), Some("field_type_in"));
+
+        let stage = Stage {
+            id: StageId("abc".into()),
+            signature_id: None,
+            signature: StageSignature {
+                input: NType::Text,
+                output: NType::Text,
+                effects: EffectSet::pure(),
+                implementation_hash: "h".into(),
+            },
+            capabilities: BTreeSet::new(),
+            cost: CostEstimate {
+                time_ms_p50: None,
+                tokens_est: None,
+                memory_mb: None,
+            },
+            description: "t".into(),
+            examples: vec![Example {
+                input: json!("x"),
+                output: json!("x"),
+            }],
+            lifecycle: StageLifecycle::Active,
+            ed25519_signature: None,
+            signer_public_key: None,
+            implementation_code: None,
+            implementation_language: None,
+            ui_style: None,
+            tags: vec![],
+            aliases: vec![],
+            name: None,
+            properties: vec![typo],
+        };
+
+        let result = validate_stage(&stage, 0);
+        assert!(
+            result.errors.iter().any(|e| matches!(
+                e,
+                ValidationError::ShadowedKnownKind { kind, .. } if kind == "field_type_in"
+            )),
+            "expected ShadowedKnownKind error, got: {:?}",
+            result.errors
+        );
     }
 }

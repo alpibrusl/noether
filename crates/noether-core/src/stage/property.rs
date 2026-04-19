@@ -147,6 +147,12 @@ pub enum Property {
     ///
     /// Added in M2.5 to express length-preservation invariants
     /// (`text_reverse`, `text_upper`, `map`, etc.).
+    ///
+    /// **Cross-kind comparisons are allowed but rarely useful.**
+    /// `FieldLengthEq { left: array, right: string }` compares the
+    /// array's element count against the string's code-point count
+    /// — mechanically defined, but almost never what an author
+    /// means. Prefer paths of the same JSON kind.
     FieldLengthEq {
         left_field: String,
         right_field: String,
@@ -750,29 +756,24 @@ fn check_subset(
                 })
             }
         }
-        // Cross-type or scalar subject/super: not a meaningful subset check.
-        (_, _) => Err(PropertyViolation::NotCollectionForSubset {
-            path: if matches!(
+        // Cross-type or scalar subject/super: not a meaningful
+        // subset check. Blame whichever side is *not* a collection
+        // (array / object / string) so the error points the operator
+        // at the malformed field rather than the well-formed one.
+        (_, _) => {
+            let subject_is_collection = matches!(
                 subject,
                 serde_json::Value::Array(_)
                     | serde_json::Value::Object(_)
                     | serde_json::Value::String(_)
-            ) {
-                super_path.to_string()
+            );
+            let (path, actual) = if subject_is_collection {
+                (super_path.to_string(), superset.clone())
             } else {
-                subject_path.to_string()
-            },
-            actual: if matches!(
-                subject,
-                serde_json::Value::Array(_)
-                    | serde_json::Value::Object(_)
-                    | serde_json::Value::String(_)
-            ) {
-                superset.clone()
-            } else {
-                subject.clone()
-            },
-        }),
+                (subject_path.to_string(), subject.clone())
+            };
+            Err(PropertyViolation::NotCollectionForSubset { path, actual })
+        }
     }
 }
 
@@ -1247,6 +1248,34 @@ mod tests {
             None,
             "truly unknown kinds must not be flagged as shadowing"
         );
+    }
+
+    #[test]
+    fn field_type_in_empty_allowlist_always_fails() {
+        // Edge case: an empty `allowed` list is vacuously unsatisfiable.
+        // Pins the intended behavior so a future refactor can't
+        // silently short-circuit `allowed.is_empty() => Ok(())`.
+        let p = Property::FieldTypeIn {
+            field: "output".into(),
+            allowed: vec![],
+        };
+        let err = p.check(&json!(null), &json!("x")).unwrap_err();
+        assert!(matches!(err, PropertyViolation::TypeNotInAllowed { .. }));
+    }
+
+    #[test]
+    fn subset_of_empty_subject_is_vacuously_true() {
+        // Every side is a subset of anything when the subject is
+        // empty — trivially true for arrays, objects, and strings.
+        // Protects against a refactor that accidentally special-cases
+        // empty inputs as violations.
+        let p = Property::SubsetOf {
+            subject_field: "output".into(),
+            super_field: "input".into(),
+        };
+        assert!(p.check(&json!([1, 2, 3]), &json!([])).is_ok());
+        assert!(p.check(&json!({"a": 1, "b": 2}), &json!({})).is_ok());
+        assert!(p.check(&json!("abc"), &json!("")).is_ok());
     }
 
     #[test]
