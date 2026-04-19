@@ -1,5 +1,6 @@
 mod async_traits;
 mod file;
+mod invariant;
 mod lifecycle;
 mod memory;
 mod traits;
