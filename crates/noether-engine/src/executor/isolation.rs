@@ -13,6 +13,6 @@
 //! authoritative source.
 
 pub use noether_isolation::{
-    build_bwrap_command, find_bwrap, IsolationBackend, IsolationError, IsolationPolicy, NOBODY_GID,
-    NOBODY_UID, TRUSTED_BWRAP_PATHS,
+    build_bwrap_command, find_bwrap, IsolationBackend, IsolationError, IsolationPolicy, RoBind,
+    NOBODY_GID, NOBODY_UID, TRUSTED_BWRAP_PATHS,
 };

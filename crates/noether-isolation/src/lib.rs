@@ -139,6 +139,35 @@ pub enum IsolationError {
     BackendUnavailable { backend: String, reason: String },
 }
 
+/// A single read-only bind mount. Named-struct rather than a tuple
+/// so the JSON wire format stays readable for non-Rust consumers:
+/// `{"host": "/nix/store", "sandbox": "/nix/store"}` instead of the
+/// earlier `["/nix/store", "/nix/store"]`. The latter was terser but
+/// gave external language bindings no schema hint about which path
+/// was which.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RoBind {
+    /// Host-side path. Must exist; `bwrap` will fail otherwise.
+    pub host: PathBuf,
+    /// Path inside the sandbox where the host dir/file appears.
+    pub sandbox: PathBuf,
+}
+
+impl RoBind {
+    pub fn new(host: impl Into<PathBuf>, sandbox: impl Into<PathBuf>) -> Self {
+        Self {
+            host: host.into(),
+            sandbox: sandbox.into(),
+        }
+    }
+}
+
+impl From<(PathBuf, PathBuf)> for RoBind {
+    fn from((host, sandbox): (PathBuf, PathBuf)) -> Self {
+        Self { host, sandbox }
+    }
+}
+
 /// What the sandbox does and doesn't let a stage reach.
 ///
 /// Derived from a stage's `EffectSet` via
@@ -149,10 +178,9 @@ pub enum IsolationError {
 /// `noether-sandbox` binary) can exchange policies over IPC.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IsolationPolicy {
-    /// Read-only bind mounts: `(host_path, sandbox_path)`. Always
-    /// includes `/nix/store` so Nix-pinned runtimes resolve inside
-    /// the sandbox.
-    pub ro_binds: Vec<(PathBuf, PathBuf)>,
+    /// Read-only bind mounts. Always includes `/nix/store` so
+    /// Nix-pinned runtimes resolve inside the sandbox.
+    pub ro_binds: Vec<RoBind>,
     /// Scratch directory strategy for `/work` inside the sandbox.
     ///
     /// - `None` (recommended, and the default from [`Self::from_effects`])
@@ -186,7 +214,7 @@ impl IsolationPolicy {
     pub fn from_effects(effects: &EffectSet) -> Self {
         let has_network = effects.iter().any(|e| matches!(e, Effect::Network));
         Self {
-            ro_binds: vec![(PathBuf::from("/nix/store"), PathBuf::from("/nix/store"))],
+            ro_binds: vec![RoBind::new("/nix/store", "/nix/store")],
             work_host: None,
             network: has_network,
             env_allowlist: vec![
@@ -295,8 +323,8 @@ pub fn build_bwrap_command(
         }
     }
 
-    for (host, sandbox) in &policy.ro_binds {
-        c.arg("--ro-bind").arg(host).arg(sandbox);
+    for bind in &policy.ro_binds {
+        c.arg("--ro-bind").arg(&bind.host).arg(&bind.sandbox);
     }
 
     match &policy.work_host {
@@ -443,13 +471,13 @@ mod tests {
     #[test]
     fn policy_always_binds_nix_store() {
         let policy = IsolationPolicy::from_effects(&EffectSet::pure());
-        let (host, sandbox) = policy
+        let bind = policy
             .ro_binds
             .iter()
-            .find(|(_, s)| s == Path::new("/nix/store"))
+            .find(|b| b.sandbox == Path::new("/nix/store"))
             .expect("nix store bind is missing");
-        assert_eq!(host, Path::new("/nix/store"));
-        assert_eq!(sandbox, Path::new("/nix/store"));
+        assert_eq!(bind.host, Path::new("/nix/store"));
+        assert_eq!(bind.sandbox, Path::new("/nix/store"));
     }
 
     #[test]
