@@ -18,7 +18,7 @@
 //!
 //! ```json
 //! {
-//!   "ro_binds": [["/nix/store", "/nix/store"]],
+//!   "ro_binds": [{"host": "/nix/store", "sandbox": "/nix/store"}],
 //!   "network": true,
 //!   "env_allowlist": ["PATH", "LANG", "RUST_LOG"]
 //! }

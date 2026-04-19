@@ -26,17 +26,19 @@ Dependency footprint: `noether-core` (for `Effect` / `EffectSet`), `serde`, `thi
 
 ### Added — `noether-sandbox` binary
 
-Thin glue binary (~150 LOC) for non-Rust callers:
+Thin glue binary (~300 LOC including parser tests) for non-Rust callers:
 
 ```bash
-echo '{"ro_binds":[["/nix/store","/nix/store"]], "network":true, "env_allowlist":["PATH","LANG"]}' \
+echo '{"ro_binds":[{"host":"/nix/store","sandbox":"/nix/store"}], "network":true, "env_allowlist":["PATH","LANG"]}' \
   | noether-sandbox -- claude-code -p "hello"
 ```
 
-- Reads an `IsolationPolicy` as JSON on stdin (empty stdin → default pure-effect policy).
+- Reads an `IsolationPolicy` as JSON on stdin or from `--policy-file <path>` (file variant leaves stdin free for the child). Empty stdin → default pure-effect policy.
 - `--isolate=auto|bwrap|none` flag mirrors the `noether run` CLI; also reads `NOETHER_ISOLATION` env.
-- Propagates the child's exit code verbatim.
-- stdin / stdout / stderr pass through to the sandboxed child.
+- `--require-isolation` / `NOETHER_REQUIRE_ISOLATION=1` turns `auto → none` fallback into a hard exit (parity with `noether run --require-isolation`).
+- Exit code: child's exit for normal termination; `128 + signum` for signal-death (bash/zsh convention so automation can detect SIGTERM/SIGKILL/etc.); `2` for argument or policy errors; `127` for spawn failure.
+- 1 MiB cap on stdin policy size — use `--policy-file` for larger policies.
+- stdin (when not consumed for the policy) / stdout / stderr pass through to the sandboxed child.
 
 Intended for Python / Node / Go / shell callers (notably agentspec — tracked in [#36](https://github.com/alpibrusl/noether/issues/36)) that want to delegate to noether's sandbox without embedding a Rust toolchain.
 
@@ -46,14 +48,13 @@ Wire format:
 
 ```json
 {
-  "ro_binds": [["/nix/store", "/nix/store"]],
-  "work_host": null,
+  "ro_binds": [{"host": "/nix/store", "sandbox": "/nix/store"}],
   "network": false,
   "env_allowlist": ["PATH", "HOME", "USER", "LANG", "LC_ALL", "LC_CTYPE", "NIX_PATH", "NIX_SSL_CERT_FILE", "SSL_CERT_FILE", "NOETHER_LOG_LEVEL", "RUST_LOG"]
 }
 ```
 
-Round-trip pinned by a test. `work_host: null` is the same as omitting the field (sandbox-private tmpfs).
+`ro_binds` entries are `{host, sandbox}` records (not tuples) so language bindings can map them to native record types. `work_host` is omitted when unset (sandbox-private tmpfs at `/work` — the default). Round-trip pinned by a test.
 
 ## 0.7.0 — 2026-04-19
 
