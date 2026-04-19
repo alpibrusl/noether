@@ -37,7 +37,7 @@
     "property": {
       "type": "object",
       "description": "Declarative property the stage claims to satisfy for every (input, output) pair. See crates/noether-core/src/stage/property.rs for semantics.",
-      "required": ["kind", "field"],
+      "required": ["kind"],
       "oneOf": [
         {
           "properties": {
@@ -55,6 +55,49 @@
             "max": { "type": "number", "description": "Inclusive upper bound. Omit for unbounded." }
           },
           "required": ["kind", "field"]
+        },
+        {
+          "properties": {
+            "kind": { "const": "field_length_eq" },
+            "left_field": { "type": "string" },
+            "right_field": { "type": "string" }
+          },
+          "required": ["kind", "left_field", "right_field"]
+        },
+        {
+          "properties": {
+            "kind": { "const": "field_length_max" },
+            "subject_field": { "type": "string" },
+            "bound_field": { "type": "string" }
+          },
+          "required": ["kind", "subject_field", "bound_field"]
+        },
+        {
+          "properties": {
+            "kind": { "const": "subset_of" },
+            "subject_field": { "type": "string" },
+            "super_field": { "type": "string" }
+          },
+          "required": ["kind", "subject_field", "super_field"]
+        },
+        {
+          "properties": {
+            "kind": { "const": "equals" },
+            "left_field": { "type": "string" },
+            "right_field": { "type": "string" }
+          },
+          "required": ["kind", "left_field", "right_field"]
+        },
+        {
+          "properties": {
+            "kind": { "const": "field_type_in" },
+            "field": { "type": "string" },
+            "allowed": {
+              "type": "array",
+              "items": { "enum": ["null", "bool", "number", "string", "array", "object"] }
+            }
+          },
+          "required": ["kind", "field", "allowed"]
         }
       ]
     },
