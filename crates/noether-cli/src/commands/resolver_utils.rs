@@ -1,17 +1,11 @@
-//! Shared graph-resolution preamble for every CLI entry point that
-//! ingests a Lagrange graph.
+//! Shared CLI-side graph-resolution preamble.
 //!
-//! The pass is split into two steps by necessity:
-//!
-//! * [`resolve_pinning`] — signature/canonical → concrete implementation
-//!   rewrites, surfacing invariant-violation warnings from the store.
-//! * [`resolve_deprecated_stages`] — follow `successor_id` chains so
-//!   graphs that still reference retired implementations keep running.
-//!
-//! Both used to live inline in `run.rs`. PR #32 extended resolution to
-//! `compose`, `serve`, `build`, `build_browser`, scheduler, broker, and
-//! grid-worker. Duplicating the diagnostic boilerplate at every site
-//! would drift — hence this helper.
+//! Thin wrapper around the two engine-level passes —
+//! [`resolve_pinning`] and [`resolve_deprecated_stages`] — that adds
+//! stderr diagnostic emission in the shape CLI users expect. Broker
+//! and worker crates call the engine passes directly and route
+//! diagnostics through `tracing` instead; this module serves only
+//! the CLI binary's stderr audience.
 //!
 //! `CompositionId` must be computed *before* calling
 //! [`resolve_and_emit_diagnostics`]: the M1 "canonical form is identity"
@@ -20,8 +14,9 @@
 //! observe unstable IDs whenever the store's Active implementation
 //! changes.
 
-use noether_core::stage::{StageId, StageLifecycle};
-use noether_engine::lagrange::{resolve_pinning, CompositionGraph, CompositionNode};
+use noether_engine::lagrange::{
+    resolve_deprecated_stages, resolve_pinning, ChainEvent, CompositionGraph,
+};
 use noether_store::StageStore;
 
 /// Run the post-parse resolution passes on `graph` and print any
@@ -59,100 +54,45 @@ pub fn resolve_and_emit_diagnostics(
         );
     }
 
-    let rewrites = resolve_deprecated_stages(&mut graph.root, store);
-    for (old, new) in &rewrites {
+    let dep_report = resolve_deprecated_stages(&mut graph.root, store);
+    for rw in &dep_report.rewrites {
         eprintln!(
             "Warning: stage {} is deprecated → resolved to successor {}",
-            short(&old.0),
-            short(&new.0),
+            short(&rw.from.0),
+            short(&rw.to.0),
         );
+    }
+    for event in &dep_report.events {
+        match event {
+            ChainEvent::CycleDetected { stage } => {
+                eprintln!(
+                    "Warning: deprecation cycle detected at stage {} — \
+                     the graph keeps the last distinct id before the \
+                     cycle; the store has corrupt deprecation data \
+                     and should be repaired.",
+                    short(&stage.0)
+                );
+            }
+            ChainEvent::MaxHopsExceeded { stage } => {
+                eprintln!(
+                    "Warning: deprecation chain at stage {} exceeded \
+                     the {}-hop cap — execution continues with the \
+                     chain truncated, but the chain should be flattened \
+                     in the store.",
+                    short(&stage.0),
+                    noether_engine::lagrange::MAX_DEPRECATION_HOPS,
+                );
+            }
+        }
     }
     Ok(())
 }
 
+/// Return the first 8 bytes of `id`, guarding against UTF-8
+/// boundaries even though stage ids are hex in practice. `str::get`
+/// returns `None` when the byte index falls mid-codepoint.
 fn short(id: &str) -> &str {
-    &id[..8.min(id.len())]
-}
-
-/// Walk the composition graph and replace any deprecated stage IDs with
-/// their successor, following the chain (up to 10 hops to prevent cycles).
-///
-/// `pub(crate)`: this is a CLI-shaped helper today, but the transform
-/// itself (follow `successor_id` chains over a `CompositionNode`) is a
-/// graph concern. If another crate needs it, the right move is to
-/// migrate it down to `noether-engine::lagrange` next to `resolve_pinning`
-/// rather than widen the CLI-crate surface.
-pub(crate) fn resolve_deprecated_stages(
-    node: &mut CompositionNode,
-    store: &dyn StageStore,
-) -> Vec<(StageId, StageId)> {
-    let mut rewrites = Vec::new();
-
-    match node {
-        CompositionNode::Stage { id, .. } => {
-            let mut current = id.clone();
-            for _ in 0..10 {
-                match store.get(&current) {
-                    Ok(Some(stage)) => {
-                        if let StageLifecycle::Deprecated { successor_id } = &stage.lifecycle {
-                            let old = current.clone();
-                            current = successor_id.clone();
-                            rewrites.push((old, current.clone()));
-                        } else {
-                            break;
-                        }
-                    }
-                    _ => break,
-                }
-            }
-            if current != *id {
-                *id = current;
-            }
-        }
-        CompositionNode::Sequential { stages } => {
-            for s in stages {
-                rewrites.extend(resolve_deprecated_stages(s, store));
-            }
-        }
-        CompositionNode::Parallel { branches } => {
-            for (_, branch) in branches.iter_mut() {
-                rewrites.extend(resolve_deprecated_stages(branch, store));
-            }
-        }
-        CompositionNode::Branch {
-            predicate,
-            if_true,
-            if_false,
-        } => {
-            rewrites.extend(resolve_deprecated_stages(predicate, store));
-            rewrites.extend(resolve_deprecated_stages(if_true, store));
-            rewrites.extend(resolve_deprecated_stages(if_false, store));
-        }
-        CompositionNode::Retry { stage, .. } => {
-            rewrites.extend(resolve_deprecated_stages(stage, store));
-        }
-        CompositionNode::Fanout { source, targets } => {
-            rewrites.extend(resolve_deprecated_stages(source, store));
-            for t in targets {
-                rewrites.extend(resolve_deprecated_stages(t, store));
-            }
-        }
-        CompositionNode::Merge { sources, target } => {
-            for s in sources {
-                rewrites.extend(resolve_deprecated_stages(s, store));
-            }
-            rewrites.extend(resolve_deprecated_stages(target, store));
-        }
-        CompositionNode::Const { .. } | CompositionNode::RemoteStage { .. } => {}
-        CompositionNode::Let { bindings, body } => {
-            for b in bindings.values_mut() {
-                rewrites.extend(resolve_deprecated_stages(b, store));
-            }
-            rewrites.extend(resolve_deprecated_stages(body, store));
-        }
-    }
-
-    rewrites
+    id.get(..8).unwrap_or(id)
 }
 
 #[cfg(test)]
@@ -160,10 +100,11 @@ mod tests {
     use super::*;
     use noether_core::effects::EffectSet;
     use noether_core::stage::{
-        compute_signature_id, compute_stage_id, CostEstimate, SignatureId, Stage, StageSignature,
+        compute_signature_id, compute_stage_id, CostEstimate, SignatureId, Stage, StageId,
+        StageLifecycle, StageSignature,
     };
     use noether_core::types::NType;
-    use noether_engine::lagrange::{CompositionGraph, CompositionNode, Pinning};
+    use noether_engine::lagrange::{CompositionNode, Pinning};
     use noether_store::MemoryStore;
     use std::collections::BTreeSet;
 
@@ -237,55 +178,9 @@ mod tests {
     }
 
     #[test]
-    fn resolve_deprecated_follows_successor() {
-        // old stage lives in store as Deprecated pointing at new's id.
-        // Graph references old; walker must rewrite to new.
-        let mut store = MemoryStore::new();
-        let new_stage = make_stage("newer", "impl_new", StageLifecycle::Active);
-        let new_id = new_stage.id.clone();
-        store.put(new_stage).unwrap();
-        let old_stage = Stage {
-            // Manually stamp Deprecated lifecycle — we can't go through
-            // `update_lifecycle(Draft→Deprecated)` without a real Draft.
-            lifecycle: StageLifecycle::Deprecated {
-                successor_id: new_id.clone(),
-            },
-            ..make_stage("older", "impl_old", StageLifecycle::Active)
-        };
-        let old_id = old_stage.id.clone();
-        // Store lifecycle is Draft → Active → Deprecated. Walk it.
-        let mut draft = old_stage.clone();
-        draft.lifecycle = StageLifecycle::Draft;
-        store.put(draft).unwrap();
-        store
-            .update_lifecycle(&old_id, StageLifecycle::Active)
-            .unwrap();
-        store
-            .update_lifecycle(
-                &old_id,
-                StageLifecycle::Deprecated {
-                    successor_id: new_id.clone(),
-                },
-            )
-            .unwrap();
-
-        let mut root = CompositionNode::Stage {
-            id: old_id.clone(),
-            pinning: Pinning::Both,
-            config: None,
-        };
-        let rewrites = resolve_deprecated_stages(&mut root, &store);
-        assert_eq!(rewrites, vec![(old_id, new_id.clone())]);
-        match root {
-            CompositionNode::Stage { id, .. } => assert_eq!(id, new_id),
-            _ => unreachable!(),
-        }
-    }
-
-    #[test]
     fn composition_id_is_unstable_across_resolution() {
-        // This test is the regression guard for the compose.rs timing
-        // fix: if a caller computes `composition_id` AFTER
+        // Regression guard for the compose.rs timing fix: if a
+        // caller computes `composition_id` AFTER
         // `resolve_and_emit_diagnostics`, the same source graph will
         // produce different ids as the store's Active impl rotates.
         // The M1/#28 contract says the id must reflect the graph as
@@ -326,24 +221,18 @@ mod tests {
     }
 
     #[test]
-    fn resolve_deprecated_is_noop_on_active_stage() {
-        // Regression guard: a graph referencing an Active stage must
-        // not be mutated by the deprecation walker.
-        let mut store = MemoryStore::new();
-        let stage = make_stage("active", "impl_a", StageLifecycle::Active);
-        let id = stage.id.clone();
-        store.put(stage).unwrap();
-
-        let mut root = CompositionNode::Stage {
-            id: id.clone(),
-            pinning: Pinning::Both,
-            config: None,
-        };
-        let rewrites = resolve_deprecated_stages(&mut root, &store);
-        assert!(rewrites.is_empty());
-        match root {
-            CompositionNode::Stage { id: out, .. } => assert_eq!(out, id),
-            _ => unreachable!(),
-        }
+    fn short_does_not_panic_on_non_ascii() {
+        // Nit from the round-1 review: the old implementation used a
+        // byte-index slice which could panic mid-codepoint. Stage ids
+        // are hex in practice, but making the helper UTF-8 safe
+        // removes a class of potential bugs.
+        assert_eq!(super::short("abcdefghij"), "abcdefgh");
+        assert_eq!(super::short("abc"), "abc");
+        assert_eq!(super::short(""), "");
+        // Mixed-codepoint input: the 8-byte boundary falls inside
+        // the é (U+00E9, two UTF-8 bytes). `str::get` returns None
+        // there so we fall back to the full string rather than
+        // panicking.
+        assert_eq!(super::short("abcdefgé"), "abcdefgé");
     }
 }

@@ -1,9 +1,14 @@
 mod ast;
 pub mod canonical;
+pub mod deprecation;
 pub mod resolver;
 
 pub use ast::{collect_stage_ids, resolve_stage_ref, CompositionGraph, CompositionNode, Pinning};
 pub use canonical::canonicalise;
+pub use deprecation::{
+    resolve_deprecated_stages, ChainEvent, DeprecationReport, DeprecationRewrite,
+    MAX_DEPRECATION_HOPS,
+};
 pub use resolver::{resolve_pinning, ResolutionError, Rewrite};
 
 use noether_core::stage::{Stage, StageId};

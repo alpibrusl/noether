@@ -52,8 +52,19 @@ pub fn cmd_compose(
             // Compute the id now, then let resolve_and_emit_diagnostics
             // rewrite the graph for downstream passes.
             let mut cached_graph = cached.graph.clone();
-            let composition_id =
-                compute_composition_id(&cached_graph).unwrap_or_else(|_| "unknown".into());
+            let composition_id = match compute_composition_id(&cached_graph) {
+                Ok(id) => id,
+                Err(e) => {
+                    // Cached graph somehow broke hashing. Loud failure
+                    // beats an "unknown" envelope that gives the
+                    // operator no breadcrumb to the cause.
+                    eprintln!(
+                        "{}",
+                        acli_error(&format!("failed to hash cached composition graph: {e}"))
+                    );
+                    std::process::exit(1);
+                }
+            };
             if let Err(msg) = resolve_and_emit_diagnostics(&mut cached_graph, store) {
                 eprintln!("{}", acli_error(&msg));
                 std::process::exit(1);
@@ -102,7 +113,16 @@ pub fn cmd_compose(
     let (mut graph, synthesized, attempts) = (result.graph, result.synthesized, result.attempts);
     // Composition identity from the pre-resolution graph — see the
     // cached branch above for the contract rationale.
-    let composition_id = compute_composition_id(&graph).unwrap_or_else(|_| "unknown".into());
+    let composition_id = match compute_composition_id(&graph) {
+        Ok(id) => id,
+        Err(e) => {
+            eprintln!(
+                "{}",
+                acli_error(&format!("failed to hash composition graph: {e}"))
+            );
+            std::process::exit(1);
+        }
+    };
     if let Err(msg) = resolve_and_emit_diagnostics(&mut graph, store) {
         eprintln!("{}", acli_error(&msg));
         std::process::exit(1);

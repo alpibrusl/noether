@@ -198,6 +198,45 @@ pub async fn submit_job(
             .into_response();
     }
 
+    // Follow deprecation chains too. Without this pass, a
+    // broker-submitted graph referencing a `Deprecated { successor_id }`
+    // stage would resolve pinning fine and then dispatch to the
+    // now-retired implementation on a worker, rather than being
+    // silently forwarded to the successor the way the CLI does. The
+    // broker logs through `tracing` (not stderr), so we surface
+    // rewrites and anomalies as structured events instead of
+    // reusing the CLI's `resolve_and_emit_diagnostics` helper.
+    let dep_report =
+        noether_engine::lagrange::resolve_deprecated_stages(&mut graph.root, &stages_snapshot);
+    for rw in &dep_report.rewrites {
+        tracing::info!(
+            from = %rw.from.0,
+            to = %rw.to.0,
+            "resolved deprecated stage to successor"
+        );
+    }
+    for event in &dep_report.events {
+        match event {
+            noether_engine::lagrange::ChainEvent::CycleDetected { stage } => {
+                tracing::warn!(
+                    stage_id = %stage.0,
+                    "deprecation cycle detected — store has corrupt \
+                     deprecation data; graph dispatched against the \
+                     last distinct id before the cycle"
+                );
+            }
+            noether_engine::lagrange::ChainEvent::MaxHopsExceeded { stage } => {
+                tracing::warn!(
+                    stage_id = %stage.0,
+                    cap = noether_engine::lagrange::MAX_DEPRECATION_HOPS,
+                    "deprecation chain exceeded hop cap — dispatched \
+                     against the truncated id; chain should be \
+                     flattened in the store"
+                );
+            }
+        }
+    }
+
     // Look up the graph's required LLM models from the broker's stage
     // catalogue. If the catalogue doesn't know a stage, the splitter
     // leaves it alone — no model requirement is contributed.
