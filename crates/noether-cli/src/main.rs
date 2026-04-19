@@ -32,6 +32,19 @@ enum Commands {
     Introspect,
     /// Show version information
     Version,
+    /// AI-agent documentation. Emits playbooks from `docs/agents/`
+    /// as structured JSON so an agent can query by intent keyword
+    /// instead of parsing prose. Human-facing narrative lives in
+    /// docs/architecture.md — this subcommand is for the
+    /// machine-readable path.
+    AgentDocs {
+        /// Playbook key (e.g. `compose-a-graph`). When omitted,
+        /// lists available playbooks.
+        key: Option<String>,
+        /// Search by substring. Matches title + intent + body.
+        #[arg(long, short = 's')]
+        search: Option<String>,
+    },
     /// Stage management commands
     Stage {
         #[command(subcommand)]
@@ -520,6 +533,9 @@ fn main() {
                     "version": env!("CARGO_PKG_VERSION")
                 }))
             );
+        }
+        Commands::AgentDocs { key, search } => {
+            commands::agent_docs::cmd_agent_docs(key.as_deref(), search.as_deref());
         }
         Commands::Stage { command } => {
             let mut store = build_store(registry);
