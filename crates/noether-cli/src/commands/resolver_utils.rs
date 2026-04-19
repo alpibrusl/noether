@@ -76,7 +76,13 @@ fn short(id: &str) -> &str {
 
 /// Walk the composition graph and replace any deprecated stage IDs with
 /// their successor, following the chain (up to 10 hops to prevent cycles).
-pub fn resolve_deprecated_stages(
+///
+/// `pub(crate)`: this is a CLI-shaped helper today, but the transform
+/// itself (follow `successor_id` chains over a `CompositionNode`) is a
+/// graph concern. If another crate needs it, the right move is to
+/// migrate it down to `noether-engine::lagrange` next to `resolve_pinning`
+/// rather than widen the CLI-crate surface.
+pub(crate) fn resolve_deprecated_stages(
     node: &mut CompositionNode,
     store: &dyn StageStore,
 ) -> Vec<(StageId, StageId)> {

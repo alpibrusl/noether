@@ -480,6 +480,13 @@ async fn run_graph(store: &JsonFileStore, req: ExecuteRequest) -> JobResult {
     // canonical-form contract); grid-submitted graphs ride through
     // the resolver before dispatch so signature-pinned nodes reach
     // the executor with concrete impl ids.
+    //
+    // Invariant: `composition_id` is set from the pre-resolution
+    // graph and therefore stays populated even on `Failed` results —
+    // including failures surfaced by the resolver itself. A broker
+    // correlating runs across workers sees the same id for the same
+    // source graph regardless of which (possibly now-deprecated)
+    // implementation it resolved to on any given run.
     let composition_id = compute_composition_id(&graph).unwrap_or_else(|_| "unknown".into());
     if let Err(e) = resolve_pinning(&mut graph.root, store) {
         return JobResult {

@@ -146,6 +146,16 @@ struct EmitCtx<'a> {
 }
 
 fn emit_result(store: &mut dyn StageStore, ctx: EmitCtx<'_>) {
+    // Loud failure when a future caller forgets to populate
+    // `composition_id`. The field doc says the caller must supply it;
+    // a silent empty string in an ACLI envelope would be a nasty
+    // debugging experience.
+    debug_assert!(
+        !ctx.composition_id.is_empty(),
+        "EmitCtx::composition_id must be computed by the caller on \
+         the pre-resolution graph; see the cache-hit and fresh-compose \
+         paths in cmd_compose for the contract"
+    );
     let composition_id = ctx.composition_id.clone();
     let graph_json = serialize_graph(ctx.graph).unwrap_or_else(|_| "{}".into());
 
