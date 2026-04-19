@@ -197,24 +197,6 @@ impl NixExecutor {
         })
     }
 
-    /// Register an in-memory synthesized stage without re-querying the store.
-    ///
-    /// The registered stage has no declared effects; the isolation
-    /// policy therefore defaults to a pure/no-network sandbox. Callers
-    /// that need network or filesystem effects should add the stage via
-    /// the store (which carries the declared `EffectSet`) or use
-    /// [`Self::register_with_effects`].
-    pub fn register(&mut self, stage_id: &StageId, code: &str, language: &str) {
-        self.implementations.insert(
-            stage_id.0.clone(),
-            StageImpl {
-                code: code.into(),
-                language: language.into(),
-                effects: noether_core::effects::EffectSet::pure(),
-            },
-        );
-    }
-
     /// Clone the current config (minus the implementations map) for
     /// callers that want to rebuild with different knobs.
     pub fn config_snapshot(&self) -> NixConfig {
@@ -921,6 +903,35 @@ mod tests {
             config: NixConfig::default(),
             implementations: HashMap::new(),
         }
+    }
+
+    #[test]
+    fn register_with_effects_preserves_network_effect() {
+        // Regression guard on the synthesized-stage effects path.
+        // Pre-hardening, `register_synthesized` → `NixExecutor::register`
+        // dropped the declared effects and stamped `EffectSet::pure()`
+        // onto the stored `StageImpl`. A Network-effect stage ended
+        // up with a no-network sandbox and failed with DNS errors at
+        // runtime. The `register()` shim is gone; this test locks in
+        // that `register_with_effects` is the only registration path
+        // and that it threads the effects through verbatim.
+        use noether_core::effects::{Effect, EffectSet};
+        let mut exec = make_executor();
+        let id = StageId("sig_network".into());
+        let effects = EffectSet::new([Effect::Pure, Effect::Network]);
+        exec.register_with_effects(&id, "code", "python", effects.clone());
+        let stored = exec
+            .implementations
+            .get(&id.0)
+            .expect("stage should be registered");
+        assert_eq!(
+            stored.effects, effects,
+            "declared effects must survive register_with_effects"
+        );
+        assert!(
+            stored.effects.iter().any(|e| matches!(e, Effect::Network)),
+            "Network must be preserved so the sandbox opens the net ns"
+        );
     }
 
     #[test]

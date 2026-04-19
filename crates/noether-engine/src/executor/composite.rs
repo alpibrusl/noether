@@ -91,11 +91,22 @@ impl CompositeExecutor {
         self
     }
 
-    /// Register a freshly synthesized stage so it can be executed immediately
-    /// without reloading the store.
-    pub fn register_synthesized(&mut self, stage_id: &StageId, code: &str, language: &str) {
+    /// Register a freshly synthesized stage so it can be executed
+    /// immediately without reloading the store. The caller **must**
+    /// supply the stage's declared effects — the isolation policy is
+    /// derived from them, and silently defaulting to
+    /// [`EffectSet::pure`](noether_core::effects::EffectSet::pure)
+    /// would put a Network-effect stage into a no-network sandbox and
+    /// surface as an opaque DNS failure at runtime.
+    pub fn register_synthesized(
+        &mut self,
+        stage_id: &StageId,
+        code: &str,
+        language: &str,
+        effects: noether_core::effects::EffectSet,
+    ) {
         if let Some(nix) = &mut self.nix {
-            nix.register(stage_id, code, language);
+            nix.register_with_effects(stage_id, code, language, effects);
         }
     }
 

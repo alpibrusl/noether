@@ -44,6 +44,11 @@ pub struct SynthesisResult {
     pub implementation: String,
     /// Language of the generated code (e.g. "python").
     pub language: String,
+    /// Effects inferred for the synthesized stage. The executor uses
+    /// this to derive the correct isolation policy — dropping it here
+    /// meant synthesized Network stages ended up with a no-network
+    /// sandbox and failed opaquely at runtime.
+    pub effects: noether_core::effects::EffectSet,
     /// Number of LLM attempts needed to produce a valid implementation.
     pub attempts: u32,
     /// False when a stage with an identical signature was already in the store.
@@ -424,7 +429,7 @@ impl<'a> CompositionAgent<'a> {
                 .output(spec.output.clone())
                 .description(&spec.description)
                 .implementation_code(&syn_resp.implementation, &syn_resp.language)
-                .effects(inferred_effects);
+                .effects(inferred_effects.clone());
 
             for ex in &syn_resp.examples {
                 builder = builder.example(ex.input.clone(), ex.output.clone());
@@ -464,6 +469,7 @@ impl<'a> CompositionAgent<'a> {
                         stage_id: existing_id,
                         implementation: syn_resp.implementation,
                         language: syn_resp.language,
+                        effects: inferred_effects,
                         attempts: attempt,
                         is_new: false,
                     });
@@ -510,6 +516,7 @@ impl<'a> CompositionAgent<'a> {
                 stage_id,
                 implementation: syn_resp.implementation,
                 language: syn_resp.language,
+                effects: inferred_effects,
                 attempts: attempt,
                 is_new,
             });
