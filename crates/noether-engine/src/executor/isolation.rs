@@ -30,6 +30,17 @@
 //! `--cap-drop ALL`, UID/GID mapped to nobody, `--clearenv` with a
 //! short allowlist.
 //!
+//! ### TLS trust store — dual path
+//!
+//! When `network=true`, the sandbox binds `/etc/ssl/certs`
+//! (via `--ro-bind-try`) for non-Nix-aware clients that expect the
+//! system trust store (curl, openssl). Nix-built code uses
+//! `NIX_SSL_CERT_FILE` / `SSL_CERT_FILE` (both in the env
+//! allowlist) pointing into `/nix/store`, which is always bound.
+//! So TLS works whether the stage resolves certs through the
+//! filesystem path or the env-pointer path; NixOS hosts without
+//! `/etc/ssl/certs` fall through to the env path automatically.
+//!
 //! ### Filesystem effects — not yet expressible
 //!
 //! The v0.6 `Effect` enum has no `FsRead(path)` / `FsWrite(path)`

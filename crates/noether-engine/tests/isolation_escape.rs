@@ -157,10 +157,21 @@ except OSError as e:
     );
 }
 
-/// Counter-test: a stage declaring `Effect::Network` must get DNS.
-/// Tolerates an offline test host (the host itself may lack internet)
-/// but flags the specific errno pattern that indicates `--share-net`
-/// was dropped.
+/// Counter-test: a stage declaring `Effect::Network` must get DNS
+/// resolution. Two probes so the test is decisive regardless of
+/// whether the host itself has internet:
+///
+/// - `localhost` — resolves via `/etc/hosts`, which the sandbox
+///   binds when `network=true`. Works offline. If this fails, the
+///   `/etc/hosts` bind is broken or NSS is miswired.
+/// - `example.com` — resolves via `/etc/resolv.conf` + DNS. Requires
+///   real internet. Logs inconclusively when offline but never fails
+///   the test on that axis alone.
+///
+/// A round-1 version of this test hedged its ONLY probe as "maybe
+/// offline" — that reviewer-flagged hedge masked the worst case
+/// where a connected host still couldn't resolve because NSS had
+/// no config. The `localhost` probe closes that hole.
 #[test]
 fn network_allowed_when_effect_declared() {
     let Some((bwrap, python)) = skip_if_deps_missing() else {
@@ -169,18 +180,39 @@ fn network_allowed_when_effect_declared() {
     let policy = IsolationPolicy::from_effects(&EffectSet::new([Effect::Pure, Effect::Network]));
     let code = r#"
 import socket, json
-try:
-    socket.gethostbyname("example.com")
-    print(json.dumps({"resolved": True}))
-except OSError as e:
-    print(json.dumps({"resolved": False, "errno": e.errno, "msg": str(e)}))
+
+def resolve(host):
+    try:
+        socket.gethostbyname(host)
+        return {"ok": True}
+    except OSError as e:
+        return {"ok": False, "errno": e.errno, "msg": str(e)}
+
+print(json.dumps({
+    "localhost": resolve("localhost"),
+    "example_com": resolve("example.com"),
+}))
 "#;
     let result = run_attack(&bwrap, &python, &policy, code);
     assert_ran(&result);
-    if result.get("resolved") != Some(&json!(true)) {
+
+    // localhost MUST resolve — /etc/hosts is bound and doesn't
+    // require network. If this fails, the bind-mount wiring is
+    // broken regardless of host connectivity.
+    assert_eq!(
+        result.get("localhost").and_then(|v| v.get("ok")),
+        Some(&json!(true)),
+        "localhost failed to resolve inside sandbox — NSS config \
+         (/etc/hosts, /etc/nsswitch.conf) not correctly bound: {result}"
+    );
+
+    // example.com is best-effort: tolerates an offline test host,
+    // but logs so the operator can see what happened.
+    if result.get("example_com").and_then(|v| v.get("ok")) != Some(&json!(true)) {
         eprintln!(
-            "network_allowed_when_effect_declared: appears offline \
-             ({result}); test inconclusive — re-run on a connected host"
+            "network_allowed_when_effect_declared: example.com did not \
+             resolve — test host may be offline. localhost worked, so \
+             the sandbox's NSS wiring is verified. Result: {result}"
         );
     }
 }
