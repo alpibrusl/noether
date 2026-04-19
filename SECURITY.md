@@ -45,12 +45,28 @@ running any stage you did not write.
 subprocess in a sandbox. Phase 1 uses **bubblewrap** when available:
 
 - Fresh user, PID, mount, UTS, IPC, and cgroup namespaces.
-- Read-only bind of `/nix/store`; read-write bind of a per-invocation
-  scratch directory as `/work`. Nothing outside `/work` is writable.
+- UID and GID mapped to `nobody` (65534), so the stage can't observe
+  the invoking user's real UID and can't regain privileges via
+  `setuid(0)` — also blocked by `--cap-drop ALL`.
+- Read-only bind of `/nix/store`; a sandbox-private tmpfs as `/work`.
+  Nothing outside `/work` is writable, and the work dir leaves no
+  host-side residue.
 - Fresh network namespace unless the stage declares `Effect::Network`.
+  When network is enabled, `/etc/resolv.conf`, `/etc/hosts`,
+  `/etc/nsswitch.conf`, and `/etc/ssl/certs` are bound read-only (via
+  `--ro-bind-try`, which no-ops on systems that route those
+  differently, e.g. NixOS) so DNS and TLS actually work.
 - All Linux capabilities dropped.
+- New session (`--new-session`) so the stage can't signal the
+  invoking shell's process group.
 - Environment cleared; only an allowlist (`PATH`, `HOME`, `NIX_PATH`,
-  `NIX_SSL_CERT_FILE`, locale vars) is passed through.
+  `NIX_SSL_CERT_FILE`, locale vars, `RUST_LOG`) is passed through —
+  and `HOME` / `USER` are overridden to sandbox-consistent values
+  (`/work` and `nobody`) so processes that rely on them see a
+  coherent identity.
+- `--require-isolation` (and `NOETHER_REQUIRE_ISOLATION=1`) turns
+  the auto-fallback-to-none warning into a hard error — use in CI
+  and production.
 
 Phase 2 (v0.8) replaces the bwrap wrapper with direct `unshare` +
 Landlock + seccomp syscalls — same policy, ~10× lower startup cost, no
@@ -58,6 +74,14 @@ external binary. Design: `docs/roadmap/2026-04-18-stage-isolation.md`.
 
 `--isolate=none` restores legacy behaviour. It emits a loud warning
 unless `--unsafe-no-isolation` is also passed.
+
+**Caveat — nix must be installed under `/nix/store`.** The sandbox
+binds `/nix/store` and the noether cache dir only. A distro-packaged
+nix at `/usr/bin/nix` is dynamically linked against host libraries
+that aren't bound; rather than widen the bind set (which would
+re-expose suid binaries), the executor refuses to run under
+isolation in that case with a message pointing the operator at the
+upstream or Determinate nix installer.
 
 ### What this means in practice
 

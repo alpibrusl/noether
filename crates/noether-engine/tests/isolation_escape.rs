@@ -276,6 +276,97 @@ print(json.dumps({"uid": os.getuid(), "gid": os.getgid()}))
     );
 }
 
+/// A stage inside the sandbox must not be able to regain
+/// privileges. The combination `--unshare-user + --uid 65534 +
+/// --cap-drop ALL` is supposed to prevent `setuid(0)` and
+/// `chroot("/")` from succeeding. Future refactors that accidentally
+/// drop any one of those would pass the existing UID-observation
+/// test (which only asserts the CURRENT uid is 65534) but fail
+/// here — so this locks the capability-drop contract separately.
+#[test]
+fn cannot_escalate_to_root() {
+    let Some((bwrap, python)) = skip_if_deps_missing() else {
+        return;
+    };
+    let policy = IsolationPolicy::from_effects(&EffectSet::pure());
+    let code = r#"
+import os, json
+attempts = {}
+try:
+    os.setuid(0)
+    attempts["setuid_0"] = True
+except (PermissionError, OSError) as e:
+    attempts["setuid_0"] = False
+    attempts["setuid_error"] = type(e).__name__
+try:
+    os.setgid(0)
+    attempts["setgid_0"] = True
+except (PermissionError, OSError) as e:
+    attempts["setgid_0"] = False
+try:
+    os.chroot("/")
+    attempts["chroot"] = True
+except (PermissionError, OSError) as e:
+    attempts["chroot"] = False
+print(json.dumps(attempts))
+"#;
+    let result = run_attack(&bwrap, &python, &policy, code);
+    assert_ran(&result);
+    assert_eq!(
+        result.get("setuid_0"),
+        Some(&json!(false)),
+        "setuid(0) succeeded inside sandbox — capability drop misconfigured: {result}"
+    );
+    assert_eq!(
+        result.get("setgid_0"),
+        Some(&json!(false)),
+        "setgid(0) succeeded inside sandbox — capability drop misconfigured: {result}"
+    );
+    assert_eq!(
+        result.get("chroot"),
+        Some(&json!(false)),
+        "chroot succeeded inside sandbox — CAP_SYS_CHROOT not dropped: {result}"
+    );
+}
+
+/// Regression guard for the `--setenv` env-wiring bug discovered
+/// during review round 1. Setting `cmd.env("HOME", "/work")` on the
+/// outer `Command` was silently stripped by bwrap's `--clearenv`
+/// before the stage process ran; the fix was to emit `--setenv
+/// HOME /work` on the bwrap argv instead. A future refactor that
+/// reintroduces `cmd.env()` would pass the argv-shape unit tests
+/// (they don't inspect Command.get_envs) but would cause HOME to
+/// leak the host user's real home path here.
+///
+/// The sandbox-side HOME must always be `/work`, never the host
+/// user's `$HOME`.
+#[test]
+fn home_env_is_sandbox_consistent() {
+    let Some((bwrap, python)) = skip_if_deps_missing() else {
+        return;
+    };
+    let policy = IsolationPolicy::from_effects(&EffectSet::pure());
+    let code = r#"
+import os, json
+print(json.dumps({
+    "home": os.environ.get("HOME"),
+    "user": os.environ.get("USER"),
+}))
+"#;
+    let result = run_attack(&bwrap, &python, &policy, code);
+    assert_ran(&result);
+    assert_eq!(
+        result.get("home"),
+        Some(&json!("/work")),
+        "HOME inside sandbox leaked host value — `--setenv` wiring broken: {result}"
+    );
+    assert_eq!(
+        result.get("user"),
+        Some(&json!("nobody")),
+        "USER inside sandbox leaked host value: {result}"
+    );
+}
+
 /// `/work` is a sandbox-private tmpfs. Must start empty and be
 /// writable — regression guard against both state leakage and
 /// privilege misconfiguration.

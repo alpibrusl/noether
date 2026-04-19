@@ -105,9 +105,9 @@ impl IsolationBackend {
     }
 }
 
-/// Error from the isolation layer itself — policy misconfiguration,
-/// backend unavailable, bwrap spawn failure. Stage-body errors come
-/// back as the usual `ExecutionError` on the inner command.
+/// Error from the isolation layer itself — policy misconfiguration
+/// or backend unavailable. Stage-body errors come back as the usual
+/// `ExecutionError` on the inner command.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum IsolationError {
     #[error("isolation backend '{name}' is not recognised; expected one of: auto, bwrap, none")]
@@ -115,9 +115,6 @@ pub enum IsolationError {
 
     #[error("isolation backend '{backend}' is unavailable: {reason}")]
     BackendUnavailable { backend: String, reason: String },
-
-    #[error("failed to create work directory: {path} ({reason})")]
-    WorkDirCreate { path: String, reason: String },
 }
 
 /// What the sandbox does and doesn't let a stage reach.
@@ -173,10 +170,13 @@ impl IsolationPolicy {
                 "HOME".into(),
                 "USER".into(),
                 "LANG".into(),
+                "LC_ALL".into(),
+                "LC_CTYPE".into(),
                 "NIX_PATH".into(),
                 "NIX_SSL_CERT_FILE".into(),
                 "SSL_CERT_FILE".into(),
                 "NOETHER_LOG_LEVEL".into(),
+                "RUST_LOG".into(),
             ],
         }
     }
@@ -248,6 +248,27 @@ pub fn build_bwrap_command(
 
     if policy.network {
         c.arg("--share-net");
+        // `--share-net` re-enters the host network namespace but the
+        // sandbox rootfs is otherwise empty. glibc NSS resolves DNS
+        // through `/etc/resolv.conf`, `/etc/nsswitch.conf`, and
+        // `/etc/hosts`; without those, even a correctly networked
+        // sandbox can't resolve hostnames. `--ro-bind-try` is a
+        // no-op when the source is absent (e.g. NixOS systems that
+        // route DNS differently), so it's safe to emit regardless.
+        //
+        // `/etc/ssl/certs` covers non-Nix-aware clients (curl,
+        // openssl, etc.) that expect the system trust store.
+        // Nix-built code uses `NIX_SSL_CERT_FILE` / `SSL_CERT_FILE`
+        // (already in the env allowlist) to point into `/nix/store`,
+        // which is bound separately.
+        for etc_path in [
+            "/etc/resolv.conf",
+            "/etc/hosts",
+            "/etc/nsswitch.conf",
+            "/etc/ssl/certs",
+        ] {
+            c.arg("--ro-bind-try").arg(etc_path).arg(etc_path);
+        }
     }
 
     for (host, sandbox) in &policy.ro_binds {
@@ -344,14 +365,16 @@ static PATH_FALLBACK_WARNED: AtomicBool = AtomicBool::new(false);
 /// profile, then distro-packaged `/usr/bin`, then manual installs.
 ///
 /// A non-root attacker can't write to any of these on a standard
-/// system, so resolving through them short-circuits the `$PATH`
-/// planting vector.
+/// Linux system, so resolving through them short-circuits the
+/// `$PATH` planting vector. Linux-only: bwrap doesn't run on macOS
+/// or Windows, and typical macOS install paths (e.g. `/opt/homebrew`)
+/// are owned by the installing admin user, not root, so including
+/// them here would re-introduce the planting vector we're closing.
 pub(crate) const TRUSTED_BWRAP_PATHS: &[&str] = &[
     "/run/current-system/sw/bin/bwrap",
     "/nix/var/nix/profiles/default/bin/bwrap",
     "/usr/bin/bwrap",
     "/usr/local/bin/bwrap",
-    "/opt/homebrew/bin/bwrap",
 ];
 
 #[cfg(test)]
@@ -487,22 +510,22 @@ mod tests {
     }
 
     #[test]
-    fn trusted_bwrap_paths_are_all_root_owned_locations() {
-        // This is a compile-time contract check: every entry in
-        // TRUSTED_BWRAP_PATHS must point at a directory that is
-        // conventionally root-owned on mainstream Linux hosts. If
-        // someone adds a user-writable path here (e.g. `~/.local/bin`)
-        // they re-introduce the vector `find_bwrap` was written to
-        // close. Keep it literal and reviewable — no interpolation.
+    fn trusted_bwrap_paths_are_root_owned_on_linux() {
+        // Contract check: every entry in TRUSTED_BWRAP_PATHS must
+        // point at a directory that is conventionally root-owned on
+        // mainstream Linux hosts. If someone adds a user-writable
+        // path here (e.g. `~/.local/bin`, or `/opt/homebrew` which
+        // is admin-user-owned on macOS) they re-introduce the
+        // planting vector `find_bwrap` was written to close. bwrap
+        // is Linux-only, so macOS-adjacent paths don't belong in
+        // the list. Keep it literal and reviewable — no
+        // interpolation, no platform branching at runtime.
         for p in TRUSTED_BWRAP_PATHS {
             assert!(
-                p.starts_with("/run/")
-                    || p.starts_with("/nix/var/")
-                    || p.starts_with("/usr/")
-                    || p.starts_with("/opt/"),
-                "TRUSTED_BWRAP_PATHS entry '{p}' looks user-writable; \
-                 anything outside /run /nix/var /usr /opt is not a \
-                 standard root-owned location"
+                p.starts_with("/run/") || p.starts_with("/nix/var/") || p.starts_with("/usr/"),
+                "TRUSTED_BWRAP_PATHS entry '{p}' is not conventionally \
+                 root-owned on Linux; only /run /nix/var /usr prefixes \
+                 are permitted"
             );
         }
     }

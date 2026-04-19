@@ -373,19 +373,46 @@ impl NixExecutor {
                 policy
                     .ro_binds
                     .push((self.cache_dir.to_path_buf(), self.cache_dir.to_path_buf()));
-                // Bind only the nix executable itself, not its parent
-                // directory. Binding the parent on a distro install
-                // (e.g. `/usr/bin`) would expose `sudo`, `curl`, and
-                // any other suid-or-sensitive system binary. Single
-                // file bind: `bwrap` creates the intermediate dir
-                // scaffolding automatically.
-                if self.nix_bin.is_file()
-                    && !self.nix_bin.starts_with("/nix/store")
+                // Nix binary visibility inside the sandbox has three cases:
+                //
+                // 1. `nix_bin` is under `/nix/store` — covered by the
+                //    default `/nix/store` bind. Nothing to add.
+                // 2. `nix_bin` is under `cache_dir` — covered by the
+                //    `cache_dir` bind above. Nothing to add.
+                // 3. `nix_bin` is a distro-packaged install (e.g.
+                //    `/usr/bin/nix`, `/usr/local/bin/nix`). The
+                //    binary is dynamically linked against glibc,
+                //    libcrypto, and readline living in `/usr/lib*`.
+                //    Binding just the nix executable file would let
+                //    the sandbox exec it but immediately fail
+                //    resolving `ld-linux-x86-64.so.2` — the kernel
+                //    can't find the dynamic loader.
+                //
+                //    Widening the bind set to include `/usr/lib*`
+                //    re-exposes the full suid-binary surface the
+                //    hardening closed. Instead: refuse to run, with
+                //    a clear message pointing the operator at the
+                //    Nix-native install path. The trust model here
+                //    is "nix belongs to the same reproducibility
+                //    boundary as the stages it dispatches;" a
+                //    distro-packaged nix violates that boundary
+                //    anyway.
+                if !self.nix_bin.starts_with("/nix/store")
                     && !self.nix_bin.starts_with(&self.cache_dir)
                 {
-                    policy
-                        .ro_binds
-                        .push((self.nix_bin.clone(), self.nix_bin.clone()));
+                    return Err(ExecutionError::StageFailed {
+                        stage_id: stage_id.clone(),
+                        message: format!(
+                            "stage isolation is enabled but nix is installed at \
+                             {} (outside /nix/store). A distro-packaged nix is \
+                             dynamically linked against host libraries; binding \
+                             those into the sandbox would defeat isolation. \
+                             Install nix via the Determinate / upstream \
+                             installer (places nix under /nix/store) or pass \
+                             --isolate=none to run without the sandbox.",
+                            self.nix_bin.display()
+                        ),
+                    });
                 }
                 // `build_bwrap_command` emits `--setenv` args for
                 // the sandbox's env allowlist (HOME=/work,
