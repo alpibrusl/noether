@@ -1,4 +1,5 @@
 use crate::effects::{Effect, EffectSet};
+use crate::stage::property::Property;
 use crate::stage::{Stage, StageBuilder};
 use crate::types::NType;
 use ed25519_dalek::SigningKey;
@@ -246,6 +247,11 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
             .example(json!([null, false, 0.0]), json!(3.0))
             .tag("collections").tag("list").tag("pure")
             .alias("count").alias("size").alias("array_length").alias("len")
+            .property(Property::Range {
+                field: "output".into(),
+                min: Some(0.0),
+                max: None,
+            })
             .build_stdlib(key)
             .unwrap(),
     ]

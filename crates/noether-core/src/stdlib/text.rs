@@ -1,4 +1,5 @@
 use crate::effects::{Effect, EffectSet};
+use crate::stage::property::Property;
 use crate::stage::{Stage, StageBuilder};
 use crate::types::NType;
 use ed25519_dalek::SigningKey;
@@ -74,6 +75,10 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
             )
             .tag("text").tag("regex").tag("pure")
             .alias("regexp").alias("re_match").alias("pattern_match")
+            .property(Property::SetMember {
+                field: "output.matched".into(),
+                set: vec![json!(true), json!(false)],
+            })
             .build_stdlib(key)
             .unwrap(),
         StageBuilder::new("regex_replace")
@@ -189,6 +194,11 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
             .example(json!("αβγ"), json!(3.0))
             .tag("text").tag("string").tag("pure")
             .alias("strlen").alias("len").alias("count_chars").alias("char_count")
+            .property(Property::Range {
+                field: "output".into(),
+                min: Some(0.0),
+                max: None,
+            })
             .build_stdlib(key)
             .unwrap(),
         StageBuilder::new("text_contains")
@@ -206,6 +216,10 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
             .example(json!({"text": "Hello", "substring": "hello"}), json!(false))
             .tag("text").tag("string").tag("pure")
             .alias("includes").alias("has_substring").alias("str_contains")
+            .property(Property::SetMember {
+                field: "output".into(),
+                set: vec![json!(true), json!(false)],
+            })
             .build_stdlib(key)
             .unwrap(),
         StageBuilder::new("text_reverse")

@@ -1,5 +1,6 @@
 use crate::capability::Capability;
 use crate::effects::{Effect, EffectSet};
+use crate::stage::property::Property;
 use crate::stage::{Stage, StageBuilder};
 use crate::types::NType;
 use ed25519_dalek::SigningKey;
@@ -200,6 +201,16 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
             .example(json!({"status": 301, "body": "", "headers": {"location": "/new"}}), json!(301.0))
             .tag("io").tag("http").tag("network").tag("pure")
             .alias("response_status").alias("status_code").alias("get_status")
+            .property(Property::Range {
+                field: "output".into(),
+                min: Some(100.0),
+                max: Some(599.0),
+            })
+            .property(Property::Range {
+                field: "input.status".into(),
+                min: Some(100.0),
+                max: Some(599.0),
+            })
             .build_stdlib(key)
             .unwrap(),
     ]

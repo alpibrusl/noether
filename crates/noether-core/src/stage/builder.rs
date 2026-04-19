@@ -1,6 +1,7 @@
 use crate::capability::Capability;
 use crate::effects::EffectSet;
 use crate::stage::hash::{compute_signature_id, compute_stage_id};
+use crate::stage::property::Property;
 use crate::stage::schema::{CostEstimate, Example, Stage, StageLifecycle, StageSignature};
 use crate::stage::signing::sign_stage_id;
 use crate::types::NType;
@@ -33,6 +34,7 @@ pub struct StageBuilder {
     ui_style: Option<String>,
     tags: Vec<String>,
     aliases: Vec<String>,
+    properties: Vec<Property>,
 }
 
 impl StageBuilder {
@@ -55,6 +57,7 @@ impl StageBuilder {
             ui_style: None,
             tags: Vec::new(),
             aliases: Vec::new(),
+            properties: Vec::new(),
         }
     }
 
@@ -82,6 +85,17 @@ impl StageBuilder {
     /// Append a single alias / alternative name to improve search recall.
     pub fn alias(mut self, a: impl Into<String>) -> Self {
         self.aliases.push(a.into());
+        self
+    }
+
+    /// Append a declarative property this stage claims to hold for
+    /// every (input, output) example. See [`Property`] for the DSL.
+    ///
+    /// Not part of the content hash — properties can be strengthened
+    /// without forcing a new `StageId`. Per `STABILITY.md`, properties
+    /// may only grow additively within 1.x.
+    pub fn property(mut self, p: Property) -> Self {
+        self.properties.push(p);
         self
     }
 
@@ -193,7 +207,7 @@ impl StageBuilder {
             tags: self.tags,
             aliases: self.aliases,
             name: self.name.clone(),
-            properties: Vec::new(),
+            properties: self.properties.clone(),
         })
     }
 
@@ -248,7 +262,7 @@ impl StageBuilder {
             tags: self.tags,
             aliases: self.aliases,
             name: self.name.clone(),
-            properties: Vec::new(),
+            properties: self.properties.clone(),
         })
     }
 
@@ -294,7 +308,7 @@ impl StageBuilder {
             tags: self.tags,
             aliases: self.aliases,
             name: self.name.clone(),
-            properties: Vec::new(),
+            properties: self.properties.clone(),
         })
     }
 }
@@ -365,5 +379,55 @@ mod tests {
             .unwrap();
         assert_eq!(stage.lifecycle, StageLifecycle::Draft);
         assert!(stage.ed25519_signature.is_none());
+    }
+
+    #[test]
+    fn builder_property_round_trips_through_build_stdlib() {
+        let key = SigningKey::generate(&mut OsRng);
+        let prop = Property::Range {
+            field: "output".into(),
+            min: Some(0.0),
+            max: None,
+        };
+        let stage = StageBuilder::new("ranged_stage")
+            .input(NType::Number)
+            .output(NType::Number)
+            .pure()
+            .description("emits non-negative numbers")
+            .example(json!(1), json!(1))
+            .example(json!(2), json!(2))
+            .example(json!(3), json!(3))
+            .example(json!(4), json!(4))
+            .example(json!(5), json!(5))
+            .property(prop.clone())
+            .build_stdlib(&key)
+            .unwrap();
+
+        assert_eq!(stage.properties, vec![prop.clone()]);
+
+        let json = serde_json::to_string(&stage).unwrap();
+        let decoded: Stage = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.properties, vec![prop]);
+    }
+
+    #[test]
+    fn builder_property_round_trips_through_build_unsigned() {
+        let prop = Property::SetMember {
+            field: "input".into(),
+            set: vec![json!("a"), json!("b")],
+        };
+        let stage = StageBuilder::new("enum_stage")
+            .input(NType::Text)
+            .output(NType::Text)
+            .description("only accepts a or b")
+            .property(prop.clone())
+            .build_unsigned("h".into())
+            .unwrap();
+
+        assert_eq!(stage.properties, vec![prop.clone()]);
+
+        let json = serde_json::to_string(&stage).unwrap();
+        let decoded: Stage = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.properties, vec![prop]);
     }
 }

@@ -1,4 +1,5 @@
 use crate::effects::{Effect, EffectSet};
+use crate::stage::property::Property;
 use crate::stage::{Stage, StageBuilder};
 use crate::types::NType;
 use ed25519_dalek::SigningKey;
@@ -64,6 +65,10 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
             .alias("parse_bool")
             .alias("truthy")
             .alias("coerce_bool")
+            .property(Property::SetMember {
+                field: "output".into(),
+                set: vec![json!(true), json!(false)],
+            })
             .build_stdlib(key)
             .unwrap(),
         StageBuilder::new("parse_json")
