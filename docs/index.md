@@ -2,14 +2,19 @@
 
 **Typed, content-addressed pipelines — reproducible by construction, LLM-assisted by option.**
 
-Decompose computation into stages with structural type signatures. The type checker verifies graph *topology* before execution — it does not prove stage bodies correct. Run stages in a Nix-pinned runtime for byte-identical reproduction. Replay any run from its composition hash.
+Decompose computation into stages with structural type signatures. The type checker verifies graph *topology* before execution — it does not prove stage bodies correct. Run stages in a Nix-pinned runtime for byte-identical reproduction, sandboxed by default (v0.7+) via bubblewrap. Replay any run from its composition hash.
 
-!!! warning "Reproducibility is not isolation"
-    The Nix-pinned runtime fixes the language and library versions so the
-    same stage produces the same output. It does **not** sandbox the
-    subprocess: stages run with host-user privileges and can read the
-    filesystem, make network calls, and read environment variables. Do not
-    run stages you did not write without reading [SECURITY.md](https://github.com/alpibrusl/noether/blob/main/SECURITY.md).
+!!! tip "Reading this as an AI agent?"
+    Start at [`AGENTS.md`](https://github.com/alpibrusl/noether/blob/main/AGENTS.md) and query playbooks via `noether agent-docs`. Dense, intent-keyed, machine-readable. The rest of these docs are human-facing narrative.
+
+!!! info "Trust model — v0.7+"
+    The Nix-pinned runtime is the **reproducibility boundary**; the
+    bubblewrap sandbox (enabled by default via `--isolate=auto`) is the
+    **isolation boundary**. Stages run under a fresh user namespace,
+    mapped UID `nobody`, sandbox-private `/work` tmpfs, `--cap-drop ALL`,
+    network namespace unshared unless the stage declares `Effect::Network`.
+    Pass `--require-isolation` in CI to turn the `auto → none` fallback
+    into a hard error. See [SECURITY.md](https://github.com/alpibrusl/noether/blob/main/SECURITY.md) for the full model, including the distro-nix caveat.
 
 ```bash
 cargo install noether-cli
@@ -134,16 +139,35 @@ graph TD
 Four layers — agent interface, composition engine, stage store, execution.
 Details: **[Architecture overview →](architecture/overview.md)**
 
-## What's new in v0.2
+## What's new in v0.7
 
-- **`Let` operator** — carry original-input fields through `Sequential`
-  pipelines (solves the canonical scan → hash → diff pattern).
-- **`def execute(input)` validated** at `stage add` — no more cryptic
-  `NoneType` errors at run time.
-- **Stage ID prefix resolution in graphs** — 8-char IDs work everywhere.
-- **Hosted public registry** at `registry.alpibru.com` — stdlib + ~400
-  curated stages, anonymous read.
-- **`stage sync <dir>`** for bulk import · **`stage list --signed-by`** /
-  `--lifecycle` / `--full-ids` filters · **stdin piping** to `noether run`.
+- **Sandbox by default** — `noether run --isolate=auto` wraps every
+  stage subprocess in bubblewrap: fresh namespaces, UID mapped to
+  `nobody`, sandbox-private `/work` tmpfs, `--cap-drop ALL`, network
+  unshared unless `Effect::Network` is declared. `--require-isolation`
+  turns the `auto → none` fallback into a hard error for CI.
+- **`noether-isolation` crate** — the sandbox primitive extracted from
+  `noether-engine` for non-Rust consumers. Stable Serde-enabled
+  `IsolationPolicy` wire format (v0.7.1).
+- **`noether-sandbox` binary** — ~300 LOC glue that reads an
+  `IsolationPolicy` JSON + argv and runs the command under bwrap.
+  What agentspec-shaped callers use instead of building their own
+  sandbox.
+- **Property DSL expansion** — seven declarative property kinds
+  (`SetMember`, `Range`, `FieldLengthEq`, `FieldLengthMax`,
+  `SubsetOf`, `Equals`, `FieldTypeIn`) with typed `JsonKind` and
+  ingest-time rejection of typo'd property kinds.
+- **Resolver everywhere** — signature-pinned graph nodes resolve to
+  concrete implementation IDs before every execution path (CLI,
+  compose, serve, scheduler, grid-broker, grid-worker, registry).
+  `composition_id` is computed pre-resolution so the same source
+  graph produces a stable id across days.
+- **Stage identity split** — `signature_id` + `implementation_id`.
+  Graphs pin by signature; bugfix-only impl rewrites don't break
+  pinned references.
+- **Agent-facing docs** — [`AGENTS.md`](https://github.com/alpibrusl/noether/blob/main/AGENTS.md)
+  at the repo root + 5 intent-keyed playbooks at
+  [`docs/agents/`](https://github.com/alpibrusl/noether/tree/main/docs/agents)
+  + `noether agent-docs` CLI subcommand.
 
 Full list: **[Changelog →](changelog.md)**.

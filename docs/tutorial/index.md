@@ -27,18 +27,24 @@ You don't need to have followed the ACLI tutorial — this one stands alone. But
 
 ## Quick-start
 
-Install Noether. Pre-built binaries are on the [releases page](https://github.com/alpibrusl/noether/releases/tag/v0.1.0); choose your platform, extract, put on PATH:
+Install Noether. Pre-built binaries are on the [releases page](https://github.com/alpibrusl/noether/releases/latest); choose your platform, extract, put on PATH. The archive name includes the version, so check the latest release and substitute it in:
 
 ```bash
-# macOS (Apple Silicon)
-curl -L https://github.com/alpibrusl/noether/releases/latest/download/noether-v0.1.0-aarch64-apple-darwin.tar.gz | tar xz
+# macOS (Apple Silicon) — replace v0.7.1 with the current release tag
+curl -L https://github.com/alpibrusl/noether/releases/latest/download/noether-v0.7.1-aarch64-apple-darwin.tar.gz | tar xz
 chmod +x noether && mv noether ~/.local/bin/
 
 # Linux (x86_64)
-curl -L https://github.com/alpibrusl/noether/releases/latest/download/noether-v0.1.0-x86_64-unknown-linux-gnu.tar.gz | tar xz
+curl -L https://github.com/alpibrusl/noether/releases/latest/download/noether-v0.7.1-x86_64-unknown-linux-gnu.tar.gz | tar xz
 chmod +x noether && mv noether ~/.local/bin/
 
 # Windows: download the -x86_64-pc-windows-msvc.zip
+```
+
+Or install via cargo:
+
+```bash
+cargo install noether-cli
 ```
 
 Verify:

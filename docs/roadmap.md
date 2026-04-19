@@ -21,9 +21,27 @@ Current implementation status and future directions for Noether.
 
 ---
 
+## Milestones (post-phase 9)
+
+Noether shifted from sequential "phase" numbering to milestone tracking with the v0.5 release. Milestones correspond to the [Rock-Solid Plan](roadmap/2026-04-18-rock-solid-plan.md).
+
+| Milestone | Name | Status | Shipped as | Key deliverables |
+|---|---|---|---|---|
+| M1 | Semantics + Canonical Form | ✅ Done | v0.5.0 | `canonicalise` for every composition op, pre-resolution `composition_id` contract, `laws.rs` property tests |
+| M2 | Stability + Versioning + Property Predicates | ✅ Done | v0.6.0 + v0.7.0 | Stage identity split (`signature_id` + `implementation_id`), graph-level pinning, declarative properties DSL (7 kinds), resolver pass, `stage verify --with-properties`, STABILITY.md, store ≤1-Active-per-signature invariant |
+| M2.4 | Stage execution isolation — Phase 1 | ✅ Done | v0.7.0 | Bubblewrap sandbox by default, UID mapping to `nobody`, sandbox-private `/work` tmpfs, trusted `bwrap` path discovery, `--require-isolation` CI gate, DNS/TLS binds when network declared, adversarial escape-test suite |
+| M2.5 | Property DSL expansion | ✅ Done | v0.7.0 | `FieldLengthEq` / `FieldLengthMax` / `SubsetOf` / `Equals` / `FieldTypeIn`, typed `JsonKind` enum, shadowed-kind ingest rejection |
+| M2.x | `noether-isolation` crate extraction | ✅ Done | v0.7.1 | Standalone crate + `noether-sandbox` binary for non-Rust consumers (agentspec, future Python/Node/Go bindings) |
+| M3 | Optimizer + Richer Types | ⏳ Next | targeting v0.8.0 | Graph optimizer (`fuse_pure_sequential`, `hoist_invariant`, `dead_branch`, `memoize_pure`), parametric polymorphism on stage signatures, row polymorphism on records, refinement types with runtime check |
+| M3.x | Filesystem-scoped effects | ⏳ Planned | targeting v0.8.0 | `Effect::FsRead(path)` / `FsWrite(path)` variants so the sandbox can grant targeted filesystem access per stage |
+| M4 | Stdlib Curation + Vertical Depth + 1.0 | ⏳ Planned | targeting 1.0.0 | Stdlib audit, vertical depth in a chosen domain, freeze |
+| Phase 2 isolation | Native namespaces + Landlock + seccomp | ⏳ Planned | targeting v0.8.0 | Replace bwrap subprocess with direct `unshare` + Landlock + seccomp; same `IsolationPolicy` surface, ~10× lower startup |
+
+---
+
 ## Near-term improvements
 
-These are gaps in the current implementation, not new phases:
+Smaller tech-debt items tracked outside the milestone cadence:
 
 | Item | Description |
 |---|---|
@@ -31,7 +49,8 @@ These are gaps in the current implementation, not new phases:
 | `NixExecutor::warmup()` caller | Warmup is implemented but never called at CLI startup |
 | `get_live` CLI integration | `RemoteStageStore::get_live` is never called from the CLI |
 | Scheduler `registry_url` docs | The scheduler's remote-store config is undocumented outside source code |
-| `noether-cloud` CI | No GitHub Actions workflow for the cloud repo yet |
+| Registry unconditional LLM-provider init | `routes::compositions::run` constructs a `reqwest::blocking::Client` even when no LLM env is set, which blocks HTTP-level integration testing from `#[tokio::test]` in noether-cloud. Make provider construction lazy or env-gated |
+| `validate_against_types` for relational property variants | Structural checks (length-on-numeric, equals-on-disjoint-types) currently punt at registration; land naturally with M3 refinement types |
 
 ---
 

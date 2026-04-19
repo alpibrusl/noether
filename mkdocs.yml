@@ -67,6 +67,13 @@ markdown_extensions:
 nav:
   - Home: index.md
   - Getting Started: getting-started/index.md
+  - For AI Agents:
+    - Overview — AGENTS.md philosophy: agents/index.md
+    - Compose a graph: agents/compose-a-graph.md
+    - Find an existing stage: agents/find-an-existing-stage.md
+    - Synthesize a new stage: agents/synthesize-a-new-stage.md
+    - Express a property: agents/express-a-property.md
+    - Debug a failed graph: agents/debug-a-failed-graph.md
   - Guides:
     - Building Custom Stages: guides/custom-stages.md
     - Composition Graphs: guides/composition-graphs.md

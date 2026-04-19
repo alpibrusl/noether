@@ -12,6 +12,84 @@ uses [Semantic Versioning](https://semver.org/).
 > [Pre-release history](#pre-release-history) for reference — don't map
 > them to crates.io versions.
 
+> **Authoritative source.** The root-level
+> [`CHANGELOG.md`](https://github.com/alpibrusl/noether/blob/main/CHANGELOG.md)
+> is the canonical changelog from v0.7.0 forward. This doc summarises
+> the same entries for MkDocs navigation; the full detail + rationale
+> lives at the root.
+
+---
+
+## [0.7.1] — 2026-04-19
+
+Small release: extract isolation into its own crate + ship a standalone sandbox binary for non-Rust consumers.
+
+- **New crate `noether-isolation`** — extracted from `noether-engine::executor::isolation`. Small dependency footprint (`noether-core` + `serde` + `thiserror` + `tracing`). `IsolationPolicy` is now Serde-enabled with a round-trip test pinning the wire format. `noether-engine` re-exports from this crate so existing callers see no API change.
+- **New binary `noether-sandbox`** — ~300 LOC glue. Reads an `IsolationPolicy` on stdin (or `--policy-file <path>`), takes argv after `--`, runs the inner command inside bubblewrap. Flags: `--isolate=auto|bwrap|none`, `--require-isolation` (mirrors the engine-side env var), 1 MiB stdin cap, `128 + signum` exit codes for signal deaths. Intended for Python/Node/Go/shell callers (notably agentspec) that want the sandbox primitive without a Rust toolchain.
+- **`ro_binds` wire format** switched from tuple `[[host, sandbox]]` to named-struct `[{"host": ..., "sandbox": ...}]` before external consumers pinned the shape.
+
+## [0.7.0] — 2026-04-19
+
+M2 close-out: property DSL parity with the "what does this stage guarantee?" use case, resolver at every graph-ingest entry point, store enforces its Active-per-signature invariant, stage subprocesses execute inside a real sandbox by default. The v1.x stability contract ([STABILITY.md](https://github.com/alpibrusl/noether/blob/main/STABILITY.md)) applies from this release.
+
+### Added — sandbox isolation
+
+`noether run --isolate=auto` (default from v0.7) wraps every stage subprocess in bubblewrap: UID mapped to `nobody` (65534), unshared user/pid/mount/uts/ipc/cgroup namespaces, `/nix/store` RO, sandbox-private `/work` tmpfs, `--cap-drop ALL`, `--new-session`, env cleared to a short allowlist, network namespace unshared unless `Effect::Network` is declared. When network is on, `/etc/resolv.conf`, `/etc/hosts`, `/etc/nsswitch.conf`, `/etc/ssl/certs` bind read-only so DNS and TLS actually work. `bwrap` resolved from trusted system paths first (`/run/current-system/sw/bin`, `/nix/var/nix/profiles/default/bin`, `/usr/bin`, `/usr/local/bin`) before falling back to `$PATH`.
+
+CLI flags: `--isolate=auto|bwrap|none` (+ `NOETHER_ISOLATION`), `--unsafe-no-isolation`, `--require-isolation` (+ `NOETHER_REQUIRE_ISOLATION=1` for CI fail-closed).
+
+Adversarial escape-test suite (`tests/isolation_escape.rs`) runs real bwrap+python and verifies `setuid(0)`, `chroot("/")`, reading `/etc/shadow`, reading `~/.ssh/*`, and DNS with `network:false` all fail.
+
+**Caveat**: isolation requires nix installed under `/nix/store` (upstream or Determinate). Distro-packaged `/usr/bin/nix` is dynamically linked against host libs that aren't bound; the executor refuses cleanly with a clear message.
+
+Phase 2 (v0.8): native `unshare` + Landlock + seccomp, same `IsolationPolicy`, ~10× lower startup. Roadmap: [`docs/roadmap/2026-04-18-stage-isolation.md`](roadmap/2026-04-18-stage-isolation.md).
+
+### Added — property DSL expansion
+
+Five new `Property` variants on top of v0.6 `SetMember` / `Range`:
+
+- `FieldLengthEq { left_field, right_field }` — equal length. Strings: UTF-8 code-point count. Arrays: element count. Objects: key count.
+- `FieldLengthMax { subject_field, bound_field }` — subject length ≤ bound length.
+- `SubsetOf { subject_field, super_field }` — element / (key, value) / contiguous substring subset. Three branches per JSON kind, each pinned by a dedicated test.
+- `Equals { left_field, right_field }` — JSON-value equality.
+- `FieldTypeIn { field, allowed: Vec<JsonKind> }` — runtime JSON type in the allowed set. `JsonKind` is a typed enum; wire format stays snake-case strings.
+
+`Property::Unknown` is the forward-compat escape; `Property::shadowed_known_kind()` distinguishes "genuinely unknown kind" (safe skip) from "typo inside a known kind" (rejected at ingest via `ValidationError::ShadowedKnownKind`). Every stdlib stage carries ≥3 properties.
+
+### Changed — resolver runs at every graph-ingest entry point
+
+`resolve_pinning` + the new `resolve_deprecated_stages` (in `noether_engine::lagrange::deprecation`) now runs from every entry point that ingests a graph: `noether run`, `compose`, `build`, `serve`, the scheduler, the grid broker, and the grid worker. `composition_id` is always computed **before** resolution per the M1/#28 "canonical form is identity" contract.
+
+New `DeprecationReport { rewrites, events }` distinguishes routine rewrites from anomalies (`ChainEvent::CycleDetected`, `MaxHopsExceeded`) explicitly.
+
+### Changed — store enforces ≤1 Active per signature
+
+`MemoryStore::put` / `upsert` and `JsonFileStore` equivalents auto-deprecate any existing Active stage whose `signature_id` matches an incoming Active. Shared `noether_store::invariant` module; every auto-deprecation emits structured `tracing::warn!`.
+
+### Changed — stage identity split
+
+Two content-addressed IDs per stage: `signature_id = SHA-256(name + input + output + effects)` (stable across bugfix-only impl rewrites) and `implementation_id` aka `StageId = SHA-256(signature_id + implementation_hash)`. Graphs pin by `signature_id` by default (`Pinning::Signature`); `Pinning::Both` requires exact impl match.
+
+### Added — `noether stage verify --with-properties`
+
+Default now checks both signatures and declarative properties against declared examples. Pass `--signatures-only` for the v0.6 behaviour.
+
+### Added — STABILITY.md
+
+Formal 1.x compatibility contract — what's stable on the wire, what's additive, what's deprecated, what can change.
+
+### Breaking changes
+
+- `NixExecutor::register` (unsafe default) removed. Synthesized-stage registration goes through `NixExecutor::register_with_effects`; `CompositeExecutor::register_synthesized` takes an `EffectSet` argument.
+- `IsolationPolicy::from_effects` no longer takes a `work_host: PathBuf` argument (sandbox defaults to a private tmpfs; opt-in via `.with_work_host(...)`).
+- `resolve_deprecated_stages` moved from `noether_cli::commands::resolver_utils` to `noether_engine::lagrange::deprecation` (now `pub`). Return type changed to `DeprecationReport`.
+- `Stage.canonical_id` accepted on the wire but removed from the Rust type — use `signature_id`. JSON alias stays through 0.7.x.
+
+### Known limitations / deferred
+
+- Filesystem-scoped effect variants (`Effect::FsRead(path)` / `FsWrite(path)`) — v0.8, paired with Phase-2 isolation.
+- `validate_against_types` punts on the five new relational property variants. Structural checks land with M3 refinement types.
+
 ---
 
 ## [0.6.0] — 2026-04-18
