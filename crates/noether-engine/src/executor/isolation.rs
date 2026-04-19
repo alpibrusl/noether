@@ -267,6 +267,28 @@ pub fn build_bwrap_command(
     }
     c.arg("--chdir").arg("/work");
 
+    // Env: `--clearenv` wipes the inner process's inherited env,
+    // then `--setenv` repopulates it. Setting `cmd.env(...)` on the
+    // outer `Command` would only affect `bwrap` itself, not the
+    // inner command — that was the trap the previous design fell
+    // into (HOME was set on bwrap but stripped before the stage
+    // ran, so `nix` crashed looking for a home directory).
+    //
+    // HOME / USER are always set to sandbox-consistent values
+    // (/work + "nobody" matching the UID mapping). Other allowlist
+    // entries inherit their value from the invoking process if set
+    // there.
+    c.arg("--setenv").arg("HOME").arg("/work");
+    c.arg("--setenv").arg("USER").arg("nobody");
+    for var in &policy.env_allowlist {
+        if var == "HOME" || var == "USER" {
+            continue;
+        }
+        if let Ok(v) = std::env::var(var) {
+            c.arg("--setenv").arg(var).arg(v);
+        }
+    }
+
     c.arg("--").args(inner_cmd);
     c
 }

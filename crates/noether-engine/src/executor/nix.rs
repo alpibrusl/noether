@@ -387,14 +387,10 @@ impl NixExecutor {
                         .ro_binds
                         .push((self.nix_bin.clone(), self.nix_bin.clone()));
                 }
-                let mut cmd = super::isolation::build_bwrap_command(bwrap_path, &policy, &raw_argv);
-                // Pass through allowlisted env vars.
-                for var in &policy.env_allowlist {
-                    if let Ok(v) = std::env::var(var) {
-                        cmd.env(var, v);
-                    }
-                }
-                cmd
+                // `build_bwrap_command` emits `--setenv` args for
+                // the sandbox's env allowlist (HOME=/work,
+                // USER=nobody, + inherited). Nothing else to do here.
+                super::isolation::build_bwrap_command(bwrap_path, &policy, &raw_argv)
             }
         };
 
