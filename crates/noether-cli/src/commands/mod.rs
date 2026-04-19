@@ -3,6 +3,7 @@ pub mod build_browser;
 pub mod build_mobile;
 pub mod compose;
 pub mod executor_builder;
+pub mod resolver_utils;
 pub mod run;
 pub mod serve;
 pub mod stage;

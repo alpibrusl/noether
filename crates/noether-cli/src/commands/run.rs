@@ -1,14 +1,12 @@
+use super::resolver_utils::resolve_and_emit_diagnostics;
 use crate::output::{acli_error, acli_error_hints, acli_ok};
-use noether_core::stage::{StageId, StageLifecycle};
 use noether_engine::checker::{
     check_capabilities, check_effects, check_graph, collect_effect_warnings, infer_effects,
     verify_signatures, CapabilityPolicy, EffectPolicy,
 };
 use noether_engine::executor::budget::{build_cost_map, BudgetedExecutor};
 use noether_engine::executor::runner::run_composition;
-use noether_engine::lagrange::{
-    compute_composition_id, parse_graph, resolve_pinning, resolve_stage_prefixes,
-};
+use noether_engine::lagrange::{compute_composition_id, parse_graph, resolve_stage_prefixes};
 use noether_engine::planner::plan_graph;
 use noether_engine::trace::JsonFileTraceStore;
 use noether_store::StageStore;
@@ -71,55 +69,13 @@ pub fn cmd_run(
         std::process::exit(1);
     }
 
-    // 1b. Resolve pinning — rewrite every `Stage { pinning: Signature, id: <sig> }`
-    //     node to carry the concrete implementation ID instead. Subsequent
-    //     passes (effect inference, capability check, Ed25519 verify, planner,
-    //     budget) all look up stages via `store.get(id)` and assume `id` is an
-    //     implementation hash. Without this pass, signature-pinned graphs would
-    //     type-check but fail in those downstream passes.
-    let resolution_report = match resolve_pinning(&mut graph.root, store) {
-        Ok(rep) => rep,
-        Err(e) => {
-            eprintln!("{}", acli_error(&format!("pinning resolution: {e}")));
-            std::process::exit(1);
-        }
-    };
-    for rw in &resolution_report.rewrites {
-        eprintln!(
-            "Info: {:?}-pinned stage {} resolved to {}",
-            rw.pinning,
-            &rw.before[..8.min(rw.before.len())],
-            &rw.after[..8.min(rw.after.len())]
-        );
-    }
-    for w in &resolution_report.warnings {
-        eprintln!(
-            "Warning: signature {} has {} Active implementations ({}) — \
-             picked {} deterministically, but the store's ≤1-Active-per-\
-             signature invariant is violated. Deprecate the duplicates \
-             via `noether stage activate` / `noether store retro`.",
-            &w.signature_id[..8.min(w.signature_id.len())],
-            w.active_implementation_ids.len(),
-            w.active_implementation_ids
-                .iter()
-                .map(|id| id[..8.min(id.len())].to_string())
-                .collect::<Vec<_>>()
-                .join(", "),
-            &w.chosen[..8.min(w.chosen.len())],
-        );
-    }
-
-    // 1c. Resolve deprecated stages — rewrite any stage IDs that point to
-    //     deprecated stages, following the successor_id chain.
-    let rewrites = resolve_deprecated_stages(&mut graph.root, store);
-    if !rewrites.is_empty() {
-        for (old, new) in &rewrites {
-            eprintln!(
-                "Warning: stage {} is deprecated → resolved to successor {}",
-                &old.0[..8.min(old.0.len())],
-                &new.0[..8.min(new.0.len())]
-            );
-        }
+    // 1b+1c. Resolve pinning + deprecated stages in one pass, printing
+    //        rewrite diagnostics and invariant-violation warnings. See
+    //        `resolver_utils` for the canonical preamble used by every
+    //        Lagrange-ingest entry point.
+    if let Err(msg) = resolve_and_emit_diagnostics(&mut graph, store) {
+        eprintln!("{}", acli_error(&msg));
+        std::process::exit(1);
     }
 
     // 2. Type check
@@ -291,81 +247,4 @@ pub fn cmd_run(
             std::process::exit(3);
         }
     }
-}
-
-/// Walk the composition graph and replace any deprecated stage IDs with their
-/// successor, following the chain (up to 10 hops to prevent cycles).
-fn resolve_deprecated_stages(
-    node: &mut noether_engine::lagrange::CompositionNode,
-    store: &dyn StageStore,
-) -> Vec<(StageId, StageId)> {
-    use noether_engine::lagrange::CompositionNode;
-
-    let mut rewrites = Vec::new();
-
-    match node {
-        CompositionNode::Stage { id, .. } => {
-            let mut current = id.clone();
-            for _ in 0..10 {
-                match store.get(&current) {
-                    Ok(Some(stage)) => {
-                        if let StageLifecycle::Deprecated { successor_id } = &stage.lifecycle {
-                            let old = current.clone();
-                            current = successor_id.clone();
-                            rewrites.push((old, current.clone()));
-                        } else {
-                            break;
-                        }
-                    }
-                    _ => break,
-                }
-            }
-            if current != *id {
-                *id = current;
-            }
-        }
-        CompositionNode::Sequential { stages } => {
-            for s in stages {
-                rewrites.extend(resolve_deprecated_stages(s, store));
-            }
-        }
-        CompositionNode::Parallel { branches } => {
-            for (_, branch) in branches.iter_mut() {
-                rewrites.extend(resolve_deprecated_stages(branch, store));
-            }
-        }
-        CompositionNode::Branch {
-            predicate,
-            if_true,
-            if_false,
-        } => {
-            rewrites.extend(resolve_deprecated_stages(predicate, store));
-            rewrites.extend(resolve_deprecated_stages(if_true, store));
-            rewrites.extend(resolve_deprecated_stages(if_false, store));
-        }
-        CompositionNode::Retry { stage, .. } => {
-            rewrites.extend(resolve_deprecated_stages(stage, store));
-        }
-        CompositionNode::Fanout { source, targets } => {
-            rewrites.extend(resolve_deprecated_stages(source, store));
-            for t in targets {
-                rewrites.extend(resolve_deprecated_stages(t, store));
-            }
-        }
-        CompositionNode::Merge { sources, target } => {
-            for s in sources {
-                rewrites.extend(resolve_deprecated_stages(s, store));
-            }
-            rewrites.extend(resolve_deprecated_stages(target, store));
-        }
-        CompositionNode::Const { .. } | CompositionNode::RemoteStage { .. } => {}
-        CompositionNode::Let { bindings, body } => {
-            for b in bindings.values_mut() {
-                rewrites.extend(resolve_deprecated_stages(b, store));
-            }
-            rewrites.extend(resolve_deprecated_stages(body, store));
-        }
-    }
-
-    rewrites
 }

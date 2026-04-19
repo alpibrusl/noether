@@ -459,9 +459,9 @@ async fn execute_single_stage(
 async fn run_graph(store: &JsonFileStore, req: ExecuteRequest) -> JobResult {
     use noether_engine::executor::composite::CompositeExecutor;
     use noether_engine::executor::runner::run_composition;
-    use noether_engine::lagrange::{compute_composition_id, parse_graph};
+    use noether_engine::lagrange::{compute_composition_id, parse_graph, resolve_pinning};
 
-    let graph = match parse_graph(&req.graph.to_string()) {
+    let mut graph = match parse_graph(&req.graph.to_string()) {
         Ok(g) => g,
         Err(e) => {
             return JobResult {
@@ -476,7 +476,22 @@ async fn run_graph(store: &JsonFileStore, req: ExecuteRequest) -> JobResult {
         }
     };
 
+    // Composition identity comes from the pre-resolution graph (M1
+    // canonical-form contract); grid-submitted graphs ride through
+    // the resolver before dispatch so signature-pinned nodes reach
+    // the executor with concrete impl ids.
     let composition_id = compute_composition_id(&graph).unwrap_or_else(|_| "unknown".into());
+    if let Err(e) = resolve_pinning(&mut graph.root, store) {
+        return JobResult {
+            job_id: req.job_id,
+            status: JobStatus::Failed,
+            output: serde_json::Value::Null,
+            spent_cents: 0,
+            composition_id: Some(composition_id),
+            error: Some(format!("pinning resolution: {e}")),
+            completed_at: Utc::now(),
+        };
+    }
     let executor = CompositeExecutor::from_store(store);
 
     // Run the graph on a blocking thread — the executor is synchronous.

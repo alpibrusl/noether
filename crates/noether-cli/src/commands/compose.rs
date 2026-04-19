@@ -1,3 +1,4 @@
+use super::resolver_utils::resolve_and_emit_diagnostics;
 use crate::output::{acli_error, acli_error_hints, acli_ok, acli_ok_cached};
 use acli::output::CacheMeta;
 use noether_engine::agent::SynthesisResult;
@@ -7,9 +8,7 @@ use noether_engine::checker::{
 use noether_engine::composition_cache::CompositionCache;
 use noether_engine::executor::runner::run_composition;
 use noether_engine::index::SemanticIndex;
-use noether_engine::lagrange::{
-    compute_composition_id, resolve_pinning, serialize_graph, CompositionGraph,
-};
+use noether_engine::lagrange::{compute_composition_id, serialize_graph, CompositionGraph};
 use noether_engine::llm::{LlmConfig, LlmProvider};
 use noether_engine::planner::plan_graph;
 use noether_store::StageStore;
@@ -48,13 +47,15 @@ pub fn cmd_compose(
                 "Cache hit (model: {}, composed: {}s ago). Use --force to recompose.",
                 cached.model, age_secs,
             );
-            // Resolve pinning on a local clone so downstream passes see
-            // concrete impl IDs. composition_id is computed from the
-            // pre-resolution graph (inside emit_result), so rewrites
-            // don't affect the hashed identity.
+            // Composition identity is taken from the **pre-resolution**
+            // graph — the M1 "canonical form is identity" contract.
+            // Compute the id now, then let resolve_and_emit_diagnostics
+            // rewrite the graph for downstream passes.
             let mut cached_graph = cached.graph.clone();
-            if let Err(e) = resolve_pinning(&mut cached_graph.root, store) {
-                eprintln!("{}", acli_error(&format!("Pinning resolution: {e}")));
+            let composition_id =
+                compute_composition_id(&cached_graph).unwrap_or_else(|_| "unknown".into());
+            if let Err(msg) = resolve_and_emit_diagnostics(&mut cached_graph, store) {
+                eprintln!("{}", acli_error(&msg));
                 std::process::exit(1);
             }
             emit_result(
@@ -68,6 +69,7 @@ pub fn cmd_compose(
                     attempts: 0,
                     synthesized: &[],
                     graph: &cached_graph,
+                    composition_id,
                     policy: opts.policy,
                     budget_cents: opts.budget_cents,
                 },
@@ -98,9 +100,11 @@ pub fn cmd_compose(
     }
 
     let (mut graph, synthesized, attempts) = (result.graph, result.synthesized, result.attempts);
-    // Resolve pinning on the fresh graph before downstream passes run.
-    if let Err(e) = resolve_pinning(&mut graph.root, store) {
-        eprintln!("{}", acli_error(&format!("Pinning resolution: {e}")));
+    // Composition identity from the pre-resolution graph — see the
+    // cached branch above for the contract rationale.
+    let composition_id = compute_composition_id(&graph).unwrap_or_else(|_| "unknown".into());
+    if let Err(msg) = resolve_and_emit_diagnostics(&mut graph, store) {
+        eprintln!("{}", acli_error(&msg));
         std::process::exit(1);
     }
     emit_result(
@@ -114,6 +118,7 @@ pub fn cmd_compose(
             attempts,
             synthesized: &synthesized,
             graph: &graph,
+            composition_id,
             policy: opts.policy,
             budget_cents: opts.budget_cents,
         },
@@ -131,12 +136,17 @@ struct EmitCtx<'a> {
     attempts: u32,
     synthesized: &'a [SynthesisResult],
     graph: &'a CompositionGraph,
+    /// Composition identity computed from the **pre-resolution** graph.
+    /// Must be supplied by the caller — hashing `ctx.graph` here would
+    /// see the already-resolved form and violate the M1/#28 contract
+    /// that the same source graph produces a stable id across days.
+    composition_id: String,
     policy: &'a CapabilityPolicy,
     budget_cents: Option<u64>,
 }
 
 fn emit_result(store: &mut dyn StageStore, ctx: EmitCtx<'_>) {
-    let composition_id = compute_composition_id(ctx.graph).unwrap_or_else(|_| "unknown".into());
+    let composition_id = ctx.composition_id.clone();
     let graph_json = serialize_graph(ctx.graph).unwrap_or_else(|_| "{}".into());
 
     let synthesized_json: Vec<serde_json::Value> = ctx

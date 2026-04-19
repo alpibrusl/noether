@@ -1,3 +1,4 @@
+use super::resolver_utils::resolve_and_emit_diagnostics;
 use noether_engine::executor::composite::CompositeExecutor;
 use noether_engine::executor::runner::run_composition;
 use noether_engine::lagrange::{parse_graph, CompositionGraph};
@@ -53,14 +54,20 @@ pub fn cmd_serve(
                     std::process::exit(1);
                 }
             };
-            let graph = match parse_graph(&graph_content) {
+            let mut graph = match parse_graph(&graph_content) {
                 Ok(g) => g,
                 Err(e) => {
                     eprintln!("Invalid graph {graph_path}: {e}");
                     std::process::exit(1);
                 }
             };
-            // Type check each graph
+            // Resolve signature/canonical pinning → impl IDs, and
+            // auto-follow deprecation chains, so graphs authored today
+            // keep serving after an implementation is rotated.
+            if let Err(msg) = resolve_and_emit_diagnostics(&mut graph, store) {
+                eprintln!("Graph {graph_path}: {msg}");
+                std::process::exit(1);
+            }
             if let Err(errors) = noether_engine::checker::check_graph(&graph.root, store) {
                 let msgs: Vec<String> = errors.iter().map(|e| format!("{e}")).collect();
                 eprintln!(
@@ -79,13 +86,17 @@ pub fn cmd_serve(
         routes
     } else {
         // Single graph file (backward compatible)
-        let graph = match parse_graph(&content) {
+        let mut graph = match parse_graph(&content) {
             Ok(g) => g,
             Err(e) => {
                 eprintln!("Invalid graph JSON: {e}");
                 std::process::exit(1);
             }
         };
+        if let Err(msg) = resolve_and_emit_diagnostics(&mut graph, store) {
+            eprintln!("{msg}");
+            std::process::exit(1);
+        }
         if let Err(errors) = noether_engine::checker::check_graph(&graph.root, store) {
             let msgs: Vec<String> = errors.iter().map(|e| format!("{e}")).collect();
             eprintln!("Graph type check failed:\n  {}", msgs.join("\n  "));
