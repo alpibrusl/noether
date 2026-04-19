@@ -115,9 +115,19 @@ pub struct IsolationPolicy {
     /// includes `/nix/store` so Nix-pinned runtimes resolve inside
     /// the sandbox.
     pub ro_binds: Vec<(PathBuf, PathBuf)>,
-    /// The stage's scratch directory. Bind-mounted read-write at the
-    /// sandbox path. Cleaned up after the stage exits.
-    pub work_bind: (PathBuf, PathBuf),
+    /// Scratch directory strategy for `/work` inside the sandbox.
+    ///
+    /// - `None` (recommended, and the default from [`Self::from_effects`])
+    ///   → `bwrap` creates `/work` as a sandbox-private tmpfs via
+    ///   `--dir /work`. No host-side path exists; cleanup happens
+    ///   automatically when the sandbox exits; a malicious host user
+    ///   can't race to write predicatable filenames into the work
+    ///   dir before the stage runs.
+    /// - `Some(host)` → `--bind <host> /work`. Host dir must exist
+    ///   and be writable by the sandbox's effective UID (65534 by
+    ///   default). Only for callers that need to inspect the work
+    ///   dir after execution — e.g., an integration test.
+    pub work_host: Option<PathBuf>,
     /// Inherit the host's network namespace (`true`) or unshare into
     /// a fresh empty one (`false`). Only `true` when the stage has
     /// `Effect::Network`.
@@ -131,15 +141,14 @@ pub struct IsolationPolicy {
 impl IsolationPolicy {
     /// Build the policy for a stage with the given effects.
     ///
-    /// `work_host` is the host-side tmpdir to bind-mount as `/work`
-    /// inside the sandbox. Callers pick this (typically a per-run
-    /// tmp). The policy takes ownership of the paths but not the
-    /// tmpdir lifetime — the caller is responsible for cleanup.
-    pub fn from_effects(effects: &EffectSet, work_host: PathBuf) -> Self {
+    /// Defaults to a sandbox-private `/work` (tmpfs, no host-side
+    /// state). Callers that need a host-visible work dir can swap in
+    /// [`Self::with_work_host`].
+    pub fn from_effects(effects: &EffectSet) -> Self {
         let has_network = effects.iter().any(|e| matches!(e, Effect::Network));
         Self {
             ro_binds: vec![(PathBuf::from("/nix/store"), PathBuf::from("/nix/store"))],
-            work_bind: (work_host, PathBuf::from("/work")),
+            work_host: None,
             network: has_network,
             env_allowlist: vec![
                 "PATH".into(),
@@ -153,7 +162,22 @@ impl IsolationPolicy {
             ],
         }
     }
+
+    /// Override the sandbox's `/work` to bind a caller-provided host
+    /// directory. The directory must already exist and be writable by
+    /// the sandbox effective UID (65534). Consumers mostly leave the
+    /// default (tmpfs).
+    pub fn with_work_host(mut self, host: PathBuf) -> Self {
+        self.work_host = Some(host);
+        self
+    }
 }
+
+/// Conventional "nobody" UID/GID on Linux. bwrap maps the invoking
+/// user to this identity inside the sandbox so the stage cannot
+/// observe the real UID of the caller.
+pub(crate) const NOBODY_UID: u32 = 65534;
+pub(crate) const NOBODY_GID: u32 = 65534;
 
 /// Build a `bwrap` invocation that runs `cmd` inside a sandbox.
 ///
@@ -166,6 +190,11 @@ impl IsolationPolicy {
 /// - `--unshare-all` — fresh user, pid, uts, ipc, mount, cgroup
 ///   namespaces. Network namespace is unshared too, unless the
 ///   policy re-shares via `--share-net` (see below).
+/// - `--uid 65534 --gid 65534` — map the invoking user to
+///   `nobody/nogroup` inside the sandbox. Without this, the stage
+///   would observe the host user's real UID (informational leak,
+///   and potentially exploitable when combined with filesystem
+///   bind-mount misconfiguration).
 /// - `--die-with-parent` — if the parent dies, so does the sandbox.
 /// - `--proc /proc`, `--dev /dev` — standard Linux mounts.
 /// - `--ro-bind <host> <sandbox>` — read-only mounts from the
@@ -185,6 +214,10 @@ pub fn build_bwrap_command(
     c.arg("--unshare-all")
         .arg("--die-with-parent")
         .arg("--new-session")
+        .arg("--uid")
+        .arg(NOBODY_UID.to_string())
+        .arg("--gid")
+        .arg(NOBODY_GID.to_string())
         .arg("--proc")
         .arg("/proc")
         .arg("--dev")
@@ -203,11 +236,18 @@ pub fn build_bwrap_command(
         c.arg("--ro-bind").arg(host).arg(sandbox);
     }
 
-    c.arg("--bind")
-        .arg(&policy.work_bind.0)
-        .arg(&policy.work_bind.1)
-        .arg("--chdir")
-        .arg(&policy.work_bind.1);
+    match &policy.work_host {
+        Some(host) => {
+            c.arg("--bind").arg(host).arg("/work");
+        }
+        None => {
+            // Sandbox-private tmpfs at /work. No host-side path,
+            // so nothing to clean up and nothing for a host-side
+            // attacker to race into before the sandbox starts.
+            c.arg("--dir").arg("/work");
+        }
+    }
+    c.arg("--chdir").arg("/work");
 
     c.arg("--").args(inner_cmd);
     c
@@ -242,20 +282,32 @@ mod tests {
     #[test]
     fn policy_without_network_effect_isolates_network() {
         let effects = EffectSet::pure();
-        let policy = IsolationPolicy::from_effects(&effects, PathBuf::from("/tmp/work"));
+        let policy = IsolationPolicy::from_effects(&effects);
         assert!(!policy.network);
     }
 
     #[test]
     fn policy_with_network_effect_shares_network() {
         let effects = EffectSet::new([Effect::Pure, Effect::Network]);
-        let policy = IsolationPolicy::from_effects(&effects, PathBuf::from("/tmp/work"));
+        let policy = IsolationPolicy::from_effects(&effects);
         assert!(policy.network);
     }
 
     #[test]
+    fn policy_defaults_to_sandbox_private_work() {
+        // New default after the v0.7 hardening: no host-side workdir.
+        let policy = IsolationPolicy::from_effects(&EffectSet::pure());
+        assert!(
+            policy.work_host.is_none(),
+            "from_effects must default to sandbox-private /work; \
+             callers asking for host-visible scratch must opt in via \
+             .with_work_host(...)"
+        );
+    }
+
+    #[test]
     fn policy_always_binds_nix_store() {
-        let policy = IsolationPolicy::from_effects(&EffectSet::pure(), PathBuf::from("/tmp/work"));
+        let policy = IsolationPolicy::from_effects(&EffectSet::pure());
         let (host, sandbox) = policy
             .ro_binds
             .iter()
@@ -267,7 +319,7 @@ mod tests {
 
     #[test]
     fn bwrap_command_includes_core_flags() {
-        let policy = IsolationPolicy::from_effects(&EffectSet::pure(), PathBuf::from("/tmp/w"));
+        let policy = IsolationPolicy::from_effects(&EffectSet::pure());
         let cmd = build_bwrap_command(
             Path::new("/usr/bin/bwrap"),
             &policy,
@@ -282,6 +334,9 @@ mod tests {
         assert!(argv.contains(&"--die-with-parent".to_string()));
         // No --share-net when no Network effect.
         assert!(!argv.contains(&"--share-net".to_string()));
+        // Default workdir is sandbox-private tmpfs, not a host bind.
+        assert!(argv.contains(&"--dir".to_string()));
+        assert!(argv.contains(&"/work".to_string()));
         // Inner command appended after --.
         let dash_dash_idx = argv
             .iter()
@@ -291,11 +346,25 @@ mod tests {
     }
 
     #[test]
+    fn bwrap_command_uses_host_bind_when_work_host_set() {
+        // Integration tests and debugging tools can still opt into a
+        // host-visible work dir via `with_work_host`.
+        let policy = IsolationPolicy::from_effects(&EffectSet::pure())
+            .with_work_host(PathBuf::from("/tmp/inspect-me"));
+        let cmd = build_bwrap_command(Path::new("/usr/bin/bwrap"), &policy, &["python3".into()]);
+        let argv: Vec<String> = cmd.get_args().map(|a| a.to_string_lossy().into()).collect();
+        let bind_pos = argv
+            .iter()
+            .position(|a| a == "--bind")
+            .expect("--bind missing");
+        assert_eq!(argv[bind_pos + 1], "/tmp/inspect-me");
+        assert_eq!(argv[bind_pos + 2], "/work");
+    }
+
+    #[test]
     fn bwrap_command_adds_share_net_for_network_effect() {
-        let policy = IsolationPolicy::from_effects(
-            &EffectSet::new([Effect::Pure, Effect::Network]),
-            PathBuf::from("/tmp/w"),
-        );
+        let policy =
+            IsolationPolicy::from_effects(&EffectSet::new([Effect::Pure, Effect::Network]));
         let cmd = build_bwrap_command(
             Path::new("/usr/bin/bwrap"),
             &policy,
@@ -303,6 +372,29 @@ mod tests {
         );
         let argv: Vec<String> = cmd.get_args().map(|a| a.to_string_lossy().into()).collect();
         assert!(argv.contains(&"--share-net".to_string()));
+    }
+
+    #[test]
+    fn bwrap_command_maps_to_nobody_uid_and_gid() {
+        // Regression guard: the sandbox must not surface the invoking
+        // user's real UID. Without `--uid 65534 --gid 65534` a stage
+        // can call `os.getuid()` / `id` and observe the host user —
+        // that's both an info leak and a stepping stone when combined
+        // with any bind-mount misconfiguration.
+        let policy = IsolationPolicy::from_effects(&EffectSet::pure());
+        let cmd = build_bwrap_command(Path::new("/usr/bin/bwrap"), &policy, &["python3".into()]);
+        let argv: Vec<String> = cmd.get_args().map(|a| a.to_string_lossy().into()).collect();
+
+        let uid_pos = argv
+            .iter()
+            .position(|a| a == "--uid")
+            .expect("--uid missing");
+        assert_eq!(argv[uid_pos + 1], "65534");
+        let gid_pos = argv
+            .iter()
+            .position(|a| a == "--gid")
+            .expect("--gid missing");
+        assert_eq!(argv[gid_pos + 1], "65534");
     }
 
     #[test]

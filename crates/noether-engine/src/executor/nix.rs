@@ -367,16 +367,6 @@ impl NixExecutor {
             v
         };
 
-        // Scratch work dir used as /work inside the sandbox. Must exist
-        // before bwrap spawns. Reuse a per-executor tmpdir; each stage
-        // invocation gets its own uniquely-named subdirectory so cross-
-        // stage filesystem collisions can't happen.
-        let work_host =
-            self.cache_dir
-                .join("work")
-                .join(format!("{}-{}", stage_id.0, std::process::id()));
-        let _ = std::fs::create_dir_all(&work_host);
-
         let mut spawn = match &self.config.isolation {
             super::isolation::IsolationBackend::None => {
                 // No sandbox — legacy behaviour.
@@ -385,36 +375,35 @@ impl NixExecutor {
                 cmd
             }
             super::isolation::IsolationBackend::Bwrap { bwrap_path } => {
-                let policy = super::isolation::IsolationPolicy::from_effects(
+                // /work is a sandbox-private tmpfs (set by
+                // `IsolationPolicy::from_effects` default) — no host-side
+                // tmpdir to manage, no cleanup, no race.
+                let mut policy = super::isolation::IsolationPolicy::from_effects(
                     self.implementations
                         .get(&stage_id.0)
                         .map(|i| &i.effects)
                         .unwrap_or(&noether_core::effects::EffectSet::pure()),
-                    work_host.clone(),
                 );
-                // Prepend the Nix binary to the ro_binds so the
-                // sandboxed process can invoke it. NixExecutor resolves
-                // `nix` at construction time from the host PATH; the
-                // bwrap sandbox doesn't inherit PATH, so we bind-mount
-                // the resolved path's parent directory read-only.
-                let mut policy = policy;
-                if let Some(parent) = self.nix_bin.parent() {
+                // Expose the stage-script cache (where this invocation's
+                // wrapped `.py` / `.sh` / `.js` file lives). Scoped to
+                // `cache_dir` so the sandbox sees noether's own
+                // workspace and nothing else from the host user's home.
+                policy
+                    .ro_binds
+                    .push((self.cache_dir.to_path_buf(), self.cache_dir.to_path_buf()));
+                // Bind only the nix executable itself, not its parent
+                // directory. Binding the parent on a distro install
+                // (e.g. `/usr/bin`) would expose `sudo`, `curl`, and
+                // any other suid-or-sensitive system binary. Single
+                // file bind: `bwrap` creates the intermediate dir
+                // scaffolding automatically.
+                if self.nix_bin.is_file()
+                    && !self.nix_bin.starts_with("/nix/store")
+                    && !self.nix_bin.starts_with(&self.cache_dir)
+                {
                     policy
                         .ro_binds
-                        .push((parent.to_path_buf(), parent.to_path_buf()));
-                }
-                // Rewrite the argv: the nix_bin inside the sandbox is
-                // at its real path (bind-mounted), so the absolute path
-                // in raw_argv[0] works. For `__direct__`, the first arg
-                // is typically a venv-installed Python binary at some
-                // arbitrary path — we bind-mount its parent dir so
-                // that resolves too.
-                if nix_subcommand == "__direct__" {
-                    if let Some(parent) = std::path::Path::new(&raw_argv[0]).parent() {
-                        policy
-                            .ro_binds
-                            .push((parent.to_path_buf(), parent.to_path_buf()));
-                    }
+                        .push((self.nix_bin.clone(), self.nix_bin.clone()));
                 }
                 let mut cmd = super::isolation::build_bwrap_command(bwrap_path, &policy, &raw_argv);
                 // Pass through allowlisted env vars.
