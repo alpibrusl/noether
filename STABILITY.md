@@ -115,8 +115,18 @@ structured object tagged by `kind`:
 ]
 ```
 
-**Kinds frozen at 1.0.** `"set_member"` and `"range"` carry the
-meanings documented in `crates/noether-core/src/stage/property.rs`.
+**Kinds frozen at 1.0.** The v0.7-era set:
+
+- `"set_member"` — value at `field` is in an enumerated set
+- `"range"` — numeric value at `field` is within `[min, max]`
+- `"field_length_eq"` — length of `left_field` equals length of `right_field`
+- `"field_length_max"` — length of `subject_field` ≤ length of `bound_field`
+- `"subset_of"` — every element / key of `subject_field` appears in `super_field`
+- `"equals"` — JSON-value equality between `left_field` and `right_field`
+- `"field_type_in"` — runtime JSON type at `field` is in the `allowed` list
+
+Meanings and required fields are documented in
+`crates/noether-core/src/stage/property.rs`.
 
 **Promise.** Existing `kind` strings, their required fields, and their
 evaluation semantics are frozen across 1.x. New `kind` variants may

@@ -6,15 +6,25 @@
 //!
 //! ## Scope
 //!
-//! Per the M2 roadmap, the DSL is deliberately tiny:
+//! The v0.6 DSL shipped with two variants; M2.5 (v0.7) added five more
+//! for relational and type-shape constraints:
 //!
 //! - [`Property::SetMember`] — a named field is one of a fixed set of
 //!   JSON values.
 //! - [`Property::Range`] — a named numeric field is within `[min, max]`
 //!   (either bound optional).
+//! - [`Property::FieldLengthEq`] — two fields have the same length
+//!   (string UTF-8 chars / array length / object key count).
+//! - [`Property::FieldLengthMax`] — `subject_field` length ≤
+//!   `bound_field` length.
+//! - [`Property::SubsetOf`] — every element / key of `subject_field`
+//!   appears in `super_field`.
+//! - [`Property::Equals`] — two fields are JSON-value-equal.
+//! - [`Property::FieldTypeIn`] — the runtime JSON type at `field` is
+//!   one of the allowed set.
 //!
 //! Higher-order predicates (implications over examples, quantifiers,
-//! type-class predicates) are explicit non-goals for 1.0.
+//! type-class predicates) remain explicit non-goals for 1.0.
 //!
 //! ## Wire format
 //!
@@ -70,6 +80,59 @@ pub enum Property {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         max: Option<f64>,
     },
+    /// The length of the value at `left_field` equals the length of the
+    /// value at `right_field`. "Length" is defined as:
+    /// - UTF-8 character count for strings
+    /// - element count for arrays
+    /// - key count for objects
+    ///
+    /// Added in M2.5 to express length-preservation invariants
+    /// (`text_reverse`, `text_upper`, `map`, etc.).
+    FieldLengthEq {
+        left_field: String,
+        right_field: String,
+    },
+    /// The length of `subject_field` is less than or equal to the
+    /// length of `bound_field`. Useful for stages like `filter`,
+    /// `take`, `list_dedup` where the output is bounded by the
+    /// input's size but not equal to it.
+    ///
+    /// Added in M2.5.
+    FieldLengthMax {
+        subject_field: String,
+        bound_field: String,
+    },
+    /// Every element of `subject_field` appears (by JSON-value
+    /// equality) in `super_field`. Arrays are treated as sets;
+    /// duplicates in subject are allowed as long as the value is
+    /// present in super.
+    ///
+    /// Useful for `sort` (output is a permutation of input), stages
+    /// that project or re-group a subset of input fields.
+    ///
+    /// Added in M2.5.
+    SubsetOf {
+        subject_field: String,
+        super_field: String,
+    },
+    /// `left_field` and `right_field` are equal by JSON-value
+    /// equality. The most common use is reflexivity (`output ==
+    /// input` for identity stages) and content preservation (output
+    /// body bytes match a source field).
+    ///
+    /// Added in M2.5.
+    Equals {
+        left_field: String,
+        right_field: String,
+    },
+    /// The runtime JSON type at `field` is one of the allowed kinds.
+    /// Kinds are the strings `"null"`, `"bool"`, `"number"`,
+    /// `"string"`, `"array"`, `"object"`. Bridges the gap between
+    /// the structural type system's compile-time view and the
+    /// actual runtime shape.
+    ///
+    /// Added in M2.5.
+    FieldTypeIn { field: String, allowed: Vec<String> },
     /// A property kind this reader doesn't know how to evaluate.
     /// Produced by the deserialiser for forward compatibility when a
     /// future minor release adds a new `kind` variant; the original
@@ -113,6 +176,78 @@ pub enum PropertyViolation {
 
     #[error("field `{path}` is {actual}; expected <= {max}")]
     AboveMax { path: String, actual: f64, max: f64 },
+
+    // ── M2.5 violation variants ────────────────────────────────────────
+    #[error(
+        "field `{path}` has no measurable length ({actual}); expected a \
+         string, array, or object for a length check"
+    )]
+    NotMeasurable {
+        path: String,
+        actual: serde_json::Value,
+    },
+
+    #[error(
+        "length check failed: `{left}` has length {left_len}, `{right}` \
+         has length {right_len}; expected equal"
+    )]
+    LengthMismatch {
+        left: String,
+        left_len: usize,
+        right: String,
+        right_len: usize,
+    },
+
+    #[error(
+        "length bound violated: `{subject}` has length {subject_len} but \
+         `{bound}` has length {bound_len}; expected subject ≤ bound"
+    )]
+    LengthExceedsBound {
+        subject: String,
+        subject_len: usize,
+        bound: String,
+        bound_len: usize,
+    },
+
+    #[error(
+        "field `{subject}` is not a subset of `{super_field}`: element \
+         {element} appears in subject but not in super"
+    )]
+    NotSubset {
+        subject: String,
+        super_field: String,
+        element: serde_json::Value,
+    },
+
+    #[error(
+        "subset check needs arrays, objects, or strings; `{path}` is \
+         {actual}"
+    )]
+    NotCollectionForSubset {
+        path: String,
+        actual: serde_json::Value,
+    },
+
+    #[error(
+        "equality check failed: `{left}` is {left_value}; `{right}` is \
+         {right_value}"
+    )]
+    NotEqual {
+        left: String,
+        left_value: serde_json::Value,
+        right: String,
+        right_value: serde_json::Value,
+    },
+
+    #[error(
+        "field `{path}` is of JSON type `{actual}`; expected one of: \
+         {allowed:?}"
+    )]
+    TypeNotInAllowed {
+        path: String,
+        actual: String,
+        allowed: Vec<String>,
+    },
 }
 
 /// Why a property failed static validation against a stage's declared
@@ -143,13 +278,23 @@ pub enum PropertyTypeError {
 }
 
 impl Property {
-    /// The field path this property constrains. Used by callers that
-    /// want to group properties by target field for reporting.
-    /// Returns an empty string for [`Property::Unknown`] since the
-    /// reader doesn't know how to interpret it.
+    /// The primary field path this property constrains. Used by
+    /// callers that want to group properties by target field for
+    /// reporting.
+    ///
+    /// For relational variants (`FieldLengthEq`, `FieldLengthMax`,
+    /// `SubsetOf`, `Equals`) this returns the left/subject side.
+    /// Returns an empty string for [`Property::Unknown`].
     pub fn field(&self) -> &str {
         match self {
-            Property::SetMember { field, .. } | Property::Range { field, .. } => field,
+            Property::SetMember { field, .. }
+            | Property::Range { field, .. }
+            | Property::FieldTypeIn { field, .. } => field,
+            Property::FieldLengthEq { left_field, .. } | Property::Equals { left_field, .. } => {
+                left_field
+            }
+            Property::FieldLengthMax { subject_field, .. }
+            | Property::SubsetOf { subject_field, .. } => subject_field,
             Property::Unknown { .. } => "",
         }
     }
@@ -269,6 +414,16 @@ impl Property {
                     declared_type: format!("{other:?}"),
                 }),
             },
+            // M2.5 relational variants: type-aware validation of
+            // these pairs would require resolving BOTH paths, which
+            // validate_against_types doesn't do today (it validates
+            // one path). Accept them structurally; runtime
+            // evaluation still catches real shape mismatches.
+            Property::FieldLengthEq { .. }
+            | Property::FieldLengthMax { .. }
+            | Property::SubsetOf { .. }
+            | Property::Equals { .. }
+            | Property::FieldTypeIn { .. } => Ok(()),
         }
     }
 
@@ -285,37 +440,30 @@ impl Property {
         input: &serde_json::Value,
         output: &serde_json::Value,
     ) -> Result<(), PropertyViolation> {
-        if let Property::Unknown { .. } = self {
-            return Ok(());
-        }
-        let path = self.field();
-        let value = resolve_path(path, input, output)?;
         match self {
-            Property::SetMember { set, .. } => {
+            Property::Unknown { .. } => Ok(()),
+            Property::SetMember { field, set } => {
+                let value = resolve_path(field, input, output)?;
                 if set.iter().any(|allowed| allowed == value) {
                     Ok(())
                 } else {
                     Err(PropertyViolation::NotInSet {
-                        path: path.to_string(),
+                        path: field.clone(),
                         actual: value.clone(),
                         expected: set.clone(),
                     })
                 }
             }
-            Property::Unknown { .. } => unreachable!("handled above"),
-            Property::Range { min, max, .. } => {
-                let n = value
-                    .as_f64()
-                    .or_else(|| value.as_i64().map(|i| i as f64))
-                    .or_else(|| value.as_u64().map(|u| u as f64))
-                    .ok_or_else(|| PropertyViolation::NotNumber {
-                        path: path.to_string(),
-                        actual: value.clone(),
-                    })?;
+            Property::Range { field, min, max } => {
+                let value = resolve_path(field, input, output)?;
+                let n = coerce_number(value).ok_or_else(|| PropertyViolation::NotNumber {
+                    path: field.clone(),
+                    actual: value.clone(),
+                })?;
                 if let Some(lo) = min {
                     if n < *lo {
                         return Err(PropertyViolation::BelowMin {
-                            path: path.to_string(),
+                            path: field.clone(),
                             actual: n,
                             min: *lo,
                         });
@@ -324,7 +472,7 @@ impl Property {
                 if let Some(hi) = max {
                     if n > *hi {
                         return Err(PropertyViolation::AboveMax {
-                            path: path.to_string(),
+                            path: field.clone(),
                             actual: n,
                             max: *hi,
                         });
@@ -332,7 +480,206 @@ impl Property {
                 }
                 Ok(())
             }
+            Property::FieldLengthEq {
+                left_field,
+                right_field,
+            } => {
+                let left = resolve_path(left_field, input, output)?;
+                let right = resolve_path(right_field, input, output)?;
+                let left_len =
+                    measurable_length(left).ok_or_else(|| PropertyViolation::NotMeasurable {
+                        path: left_field.clone(),
+                        actual: left.clone(),
+                    })?;
+                let right_len =
+                    measurable_length(right).ok_or_else(|| PropertyViolation::NotMeasurable {
+                        path: right_field.clone(),
+                        actual: right.clone(),
+                    })?;
+                if left_len == right_len {
+                    Ok(())
+                } else {
+                    Err(PropertyViolation::LengthMismatch {
+                        left: left_field.clone(),
+                        left_len,
+                        right: right_field.clone(),
+                        right_len,
+                    })
+                }
+            }
+            Property::FieldLengthMax {
+                subject_field,
+                bound_field,
+            } => {
+                let subject = resolve_path(subject_field, input, output)?;
+                let bound = resolve_path(bound_field, input, output)?;
+                let subject_len =
+                    measurable_length(subject).ok_or_else(|| PropertyViolation::NotMeasurable {
+                        path: subject_field.clone(),
+                        actual: subject.clone(),
+                    })?;
+                let bound_len =
+                    measurable_length(bound).ok_or_else(|| PropertyViolation::NotMeasurable {
+                        path: bound_field.clone(),
+                        actual: bound.clone(),
+                    })?;
+                if subject_len <= bound_len {
+                    Ok(())
+                } else {
+                    Err(PropertyViolation::LengthExceedsBound {
+                        subject: subject_field.clone(),
+                        subject_len,
+                        bound: bound_field.clone(),
+                        bound_len,
+                    })
+                }
+            }
+            Property::SubsetOf {
+                subject_field,
+                super_field,
+            } => {
+                let subject = resolve_path(subject_field, input, output)?;
+                let superset = resolve_path(super_field, input, output)?;
+                check_subset(subject_field, subject, super_field, superset)
+            }
+            Property::Equals {
+                left_field,
+                right_field,
+            } => {
+                let left = resolve_path(left_field, input, output)?;
+                let right = resolve_path(right_field, input, output)?;
+                if left == right {
+                    Ok(())
+                } else {
+                    Err(PropertyViolation::NotEqual {
+                        left: left_field.clone(),
+                        left_value: left.clone(),
+                        right: right_field.clone(),
+                        right_value: right.clone(),
+                    })
+                }
+            }
+            Property::FieldTypeIn { field, allowed } => {
+                let value = resolve_path(field, input, output)?;
+                let actual = json_type_name(value);
+                if allowed.iter().any(|a| a == actual) {
+                    Ok(())
+                } else {
+                    Err(PropertyViolation::TypeNotInAllowed {
+                        path: field.clone(),
+                        actual: actual.to_string(),
+                        allowed: allowed.clone(),
+                    })
+                }
+            }
         }
+    }
+}
+
+fn coerce_number(v: &serde_json::Value) -> Option<f64> {
+    v.as_f64()
+        .or_else(|| v.as_i64().map(|i| i as f64))
+        .or_else(|| v.as_u64().map(|u| u as f64))
+}
+
+/// Return the length of a JSON value for length-based property
+/// checks. UTF-8 chars for strings, element count for arrays, key
+/// count for objects. `None` for non-measurable types (numbers,
+/// bools, null).
+fn measurable_length(v: &serde_json::Value) -> Option<usize> {
+    match v {
+        serde_json::Value::String(s) => Some(s.chars().count()),
+        serde_json::Value::Array(a) => Some(a.len()),
+        serde_json::Value::Object(o) => Some(o.len()),
+        _ => None,
+    }
+}
+
+/// Element-wise subset check used by `Property::SubsetOf`. Works on
+/// arrays, objects (key set), and strings (substring).
+fn check_subset(
+    subject_path: &str,
+    subject: &serde_json::Value,
+    super_path: &str,
+    superset: &serde_json::Value,
+) -> Result<(), PropertyViolation> {
+    match (subject, superset) {
+        (serde_json::Value::Array(sub), serde_json::Value::Array(sup)) => {
+            for element in sub {
+                if !sup.iter().any(|s| s == element) {
+                    return Err(PropertyViolation::NotSubset {
+                        subject: subject_path.to_string(),
+                        super_field: super_path.to_string(),
+                        element: element.clone(),
+                    });
+                }
+            }
+            Ok(())
+        }
+        (serde_json::Value::Object(sub), serde_json::Value::Object(sup)) => {
+            // Object subset = every key in subject appears in super
+            // with an equal value.
+            for (key, val) in sub {
+                match sup.get(key) {
+                    Some(sup_val) if sup_val == val => {}
+                    _ => {
+                        return Err(PropertyViolation::NotSubset {
+                            subject: subject_path.to_string(),
+                            super_field: super_path.to_string(),
+                            element: serde_json::json!({ key.as_str(): val }),
+                        });
+                    }
+                }
+            }
+            Ok(())
+        }
+        (serde_json::Value::String(sub), serde_json::Value::String(sup)) => {
+            if sup.contains(sub.as_str()) {
+                Ok(())
+            } else {
+                Err(PropertyViolation::NotSubset {
+                    subject: subject_path.to_string(),
+                    super_field: super_path.to_string(),
+                    element: serde_json::Value::String(sub.clone()),
+                })
+            }
+        }
+        // Cross-type or scalar subject/super: not a meaningful subset check.
+        (_, _) => Err(PropertyViolation::NotCollectionForSubset {
+            path: if matches!(
+                subject,
+                serde_json::Value::Array(_)
+                    | serde_json::Value::Object(_)
+                    | serde_json::Value::String(_)
+            ) {
+                super_path.to_string()
+            } else {
+                subject_path.to_string()
+            },
+            actual: if matches!(
+                subject,
+                serde_json::Value::Array(_)
+                    | serde_json::Value::Object(_)
+                    | serde_json::Value::String(_)
+            ) {
+                superset.clone()
+            } else {
+                subject.clone()
+            },
+        }),
+    }
+}
+
+/// Map a serde_json::Value to one of the six canonical type-name
+/// strings used by `Property::FieldTypeIn`.
+fn json_type_name(v: &serde_json::Value) -> &'static str {
+    match v {
+        serde_json::Value::Null => "null",
+        serde_json::Value::Bool(_) => "bool",
+        serde_json::Value::Number(_) => "number",
+        serde_json::Value::String(_) => "string",
+        serde_json::Value::Array(_) => "array",
+        serde_json::Value::Object(_) => "object",
     }
 }
 
@@ -553,6 +900,227 @@ mod tests {
         let r = percent_prop();
         let v: serde_json::Value = serde_json::to_value(&r).unwrap();
         assert_eq!(v["kind"], json!("range"));
+    }
+
+    // ── M2.5 new variants ──────────────────────────────────────────
+
+    #[test]
+    fn field_length_eq_passes_on_equal_string_lengths() {
+        let p = Property::FieldLengthEq {
+            left_field: "output".into(),
+            right_field: "input".into(),
+        };
+        assert!(p.check(&json!("abc"), &json!("cba")).is_ok());
+    }
+
+    #[test]
+    fn field_length_eq_fails_on_different_lengths() {
+        let p = Property::FieldLengthEq {
+            left_field: "output".into(),
+            right_field: "input".into(),
+        };
+        let err = p.check(&json!("abc"), &json!("abcd")).unwrap_err();
+        assert!(matches!(err, PropertyViolation::LengthMismatch { .. }));
+    }
+
+    #[test]
+    fn field_length_eq_handles_arrays() {
+        let p = Property::FieldLengthEq {
+            left_field: "output.items".into(),
+            right_field: "input.items".into(),
+        };
+        assert!(p
+            .check(
+                &json!({"items": [1, 2, 3]}),
+                &json!({"items": ["a", "b", "c"]})
+            )
+            .is_ok());
+    }
+
+    #[test]
+    fn field_length_eq_rejects_non_measurable() {
+        let p = Property::FieldLengthEq {
+            left_field: "output".into(),
+            right_field: "input".into(),
+        };
+        let err = p.check(&json!(42), &json!("abc")).unwrap_err();
+        assert!(matches!(err, PropertyViolation::NotMeasurable { .. }));
+    }
+
+    #[test]
+    fn field_length_max_passes_when_subject_bounded() {
+        let p = Property::FieldLengthMax {
+            subject_field: "output.items".into(),
+            bound_field: "input.items".into(),
+        };
+        assert!(p
+            .check(&json!({"items": [1, 2]}), &json!({"items": [10]}))
+            .is_ok());
+        assert!(p
+            .check(
+                &json!({"items": [1, 2, 3]}),
+                &json!({"items": [10, 20, 30]})
+            )
+            .is_ok());
+    }
+
+    #[test]
+    fn field_length_max_fails_when_subject_exceeds_bound() {
+        let p = Property::FieldLengthMax {
+            subject_field: "output.items".into(),
+            bound_field: "input.items".into(),
+        };
+        let err = p
+            .check(&json!({"items": [10, 20]}), &json!({"items": [1, 2, 3, 4]}))
+            .unwrap_err();
+        assert!(matches!(err, PropertyViolation::LengthExceedsBound { .. }));
+    }
+
+    #[test]
+    fn subset_of_passes_on_array_subset() {
+        let p = Property::SubsetOf {
+            subject_field: "output".into(),
+            super_field: "input".into(),
+        };
+        assert!(p.check(&json!([1, 2, 3, 4]), &json!([1, 3])).is_ok());
+    }
+
+    #[test]
+    fn subset_of_fails_on_non_subset() {
+        let p = Property::SubsetOf {
+            subject_field: "output".into(),
+            super_field: "input".into(),
+        };
+        let err = p.check(&json!([1, 2, 3]), &json!([99, 100])).unwrap_err();
+        assert!(matches!(err, PropertyViolation::NotSubset { .. }));
+    }
+
+    #[test]
+    fn subset_of_objects_uses_key_subset() {
+        let p = Property::SubsetOf {
+            subject_field: "output".into(),
+            super_field: "input".into(),
+        };
+        assert!(p
+            .check(&json!({"a": 1, "b": 2, "c": 3}), &json!({"a": 1, "b": 2}))
+            .is_ok());
+    }
+
+    #[test]
+    fn equals_passes_on_identical_values() {
+        let p = Property::Equals {
+            left_field: "output".into(),
+            right_field: "input".into(),
+        };
+        assert!(p.check(&json!({"a": 1}), &json!({"a": 1})).is_ok());
+    }
+
+    #[test]
+    fn equals_fails_on_different_values() {
+        let p = Property::Equals {
+            left_field: "output".into(),
+            right_field: "input".into(),
+        };
+        let err = p.check(&json!({"a": 1}), &json!({"a": 2})).unwrap_err();
+        assert!(matches!(err, PropertyViolation::NotEqual { .. }));
+    }
+
+    #[test]
+    fn field_type_in_passes_on_allowed_type() {
+        let p = Property::FieldTypeIn {
+            field: "output.value".into(),
+            allowed: vec!["number".into(), "null".into()],
+        };
+        assert!(p.check(&json!(null), &json!({"value": 42})).is_ok());
+        assert!(p.check(&json!(null), &json!({"value": null})).is_ok());
+    }
+
+    #[test]
+    fn field_type_in_fails_on_disallowed_type() {
+        let p = Property::FieldTypeIn {
+            field: "output.value".into(),
+            allowed: vec!["number".into()],
+        };
+        let err = p
+            .check(&json!(null), &json!({"value": "oops"}))
+            .unwrap_err();
+        assert!(matches!(err, PropertyViolation::TypeNotInAllowed { .. }));
+    }
+
+    #[test]
+    fn new_variants_serde_roundtrip() {
+        let cases = vec![
+            Property::FieldLengthEq {
+                left_field: "output".into(),
+                right_field: "input".into(),
+            },
+            Property::FieldLengthMax {
+                subject_field: "output".into(),
+                bound_field: "input.items".into(),
+            },
+            Property::SubsetOf {
+                subject_field: "output.keys".into(),
+                super_field: "input.keys".into(),
+            },
+            Property::Equals {
+                left_field: "output".into(),
+                right_field: "input".into(),
+            },
+            Property::FieldTypeIn {
+                field: "output.id".into(),
+                allowed: vec!["string".into()],
+            },
+        ];
+        for p in cases {
+            let serialised = serde_json::to_string(&p).unwrap();
+            let parsed: Property = serde_json::from_str(&serialised).unwrap();
+            assert_eq!(p, parsed, "round-trip failed: {serialised}");
+        }
+    }
+
+    #[test]
+    fn new_variants_json_shape_is_tagged_snake_case() {
+        let cases = vec![
+            (
+                Property::FieldLengthEq {
+                    left_field: "output".into(),
+                    right_field: "input".into(),
+                },
+                "field_length_eq",
+            ),
+            (
+                Property::FieldLengthMax {
+                    subject_field: "output".into(),
+                    bound_field: "input".into(),
+                },
+                "field_length_max",
+            ),
+            (
+                Property::SubsetOf {
+                    subject_field: "output".into(),
+                    super_field: "input".into(),
+                },
+                "subset_of",
+            ),
+            (
+                Property::Equals {
+                    left_field: "output".into(),
+                    right_field: "input".into(),
+                },
+                "equals",
+            ),
+            (
+                Property::FieldTypeIn {
+                    field: "output".into(),
+                    allowed: vec!["string".into()],
+                },
+                "field_type_in",
+            ),
+        ];
+        for (p, expected_kind) in cases {
+            let v: serde_json::Value = serde_json::to_value(&p).unwrap();
+            assert_eq!(v["kind"], json!(expected_kind));
+        }
     }
 
     // ── validate_against_types tests ────────────────────────────────
