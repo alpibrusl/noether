@@ -2,6 +2,8 @@
 
 From zero to a running composition in under five minutes.
 
+> **AI agents**: skip this page and read [`AGENTS.md`](../../AGENTS.md) + the [intent-keyed playbooks](../agents/) instead. Or query by intent: `noether agent-docs --search "<your question>"`. This page is narrative; the playbooks are dense, runnable fragments.
+
 ## Install
 
 === "crates.io"
@@ -44,6 +46,14 @@ From zero to a running composition in under five minutes.
 
 **Nix is optional.** You need it only to execute Python / JavaScript / Bash
 stages in a hermetic sandbox. Rust-native stdlib stages run without it.
+
+**bubblewrap is optional but recommended** (v0.7+). When present, `noether run`
+wraps every stage subprocess in a sandbox — fresh namespaces, UID mapped to
+`nobody`, `/work` tmpfs, `--cap-drop ALL`. `--isolate=auto` (the default)
+falls back to unsandboxed with a warning if bwrap is missing. In CI pass
+`--require-isolation` (or `NOETHER_REQUIRE_ISOLATION=1`) to make the
+fallback a hard error. Install with `apt install bubblewrap` /
+`brew install bubblewrap` / nix.
 
 ## Point at the public registry
 

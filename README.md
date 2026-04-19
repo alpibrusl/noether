@@ -2,9 +2,11 @@
 
 **Typed, content-addressed pipelines — reproducible by construction, LLM-assisted by option.**
 
-Decompose computation into stages with structural type signatures. The type checker verifies every edge of a composition graph before execution (topology only — it does not prove stage *bodies* correct). Run stages in a Nix-pinned runtime for byte-identical reproduction. Replay any run from its composition hash.
+Decompose computation into stages with structural type signatures. The type checker verifies every edge of a composition graph before execution (topology only — it does not prove stage *bodies* correct). Run stages in a Nix-pinned runtime for byte-identical reproduction, sandboxed by default (v0.7+) via bubblewrap. Replay any run from its composition hash.
 
-> **Trust model (read first):** the Nix-pinned runtime is a reproducibility boundary, **not** an isolation boundary. Stages run with host-user privileges and can read the filesystem, make network calls, and touch your environment. See [SECURITY.md](./SECURITY.md) before running a stage you did not write.
+> **Trust model (read first):** the Nix-pinned runtime is a reproducibility boundary; the bubblewrap sandbox layer (v0.7 default when `--isolate=auto` finds bwrap) is the isolation boundary. Together they bound what a stage can read, write, and reach. See [SECURITY.md](./SECURITY.md) for the full model and caveats, and [STABILITY.md](./STABILITY.md) for the v1.x wire-format contract.
+
+> **Reading this as an AI agent?** Start at [AGENTS.md](./AGENTS.md) and query playbooks via `noether agent-docs` — dense, intent-keyed, machine-readable. The rest of this README is human-facing narrative.
 
 [![Crates.io](https://img.shields.io/crates/v/noether-cli.svg)](https://crates.io/crates/noether-cli)
 [![Docs](https://img.shields.io/badge/docs-noether.alpibru.com-blue.svg)](https://alpibrusl.github.io/noether/)
@@ -41,7 +43,7 @@ Noether is **not** a workflow orchestrator, request-response framework, or AI ag
 ### When Noether is *not* the right tool
 
 - **You need request/response with SLAs, autoscaling, or sticky sessions.** Use a regular service framework (axum, FastAPI, …). Noether doesn't serve traffic; it runs graphs and returns.
-- **You want a real sandbox for untrusted code.** The Nix-pinned runtime is a reproducibility boundary, not an isolation boundary. If you need to execute code you didn't write, wrap the executor in bwrap/firejail/nsjail yourself — or wait until Noether ships opt-in isolation.
+- **You need a hardened sandbox for hostile, untrusted code on a shared host.** The v0.7 bwrap sandbox is Phase 1 — fresh namespaces, UID-mapped to nobody, cap-drop ALL, sandbox-private tmpfs `/work`. Enough for LLM-synthesized stages you haven't audited, not enough for genuinely hostile adversaries targeting a multi-tenant shared kernel. See [SECURITY.md](./SECURITY.md) for the threat model, and the [`stage-isolation`](./docs/roadmap/2026-04-18-stage-isolation.md) roadmap for Phase 2 (native namespaces + Landlock + seccomp, v0.8).
 - **You're scheduling 30 jobs a day across Airflow/Prefect/Dagster-style DAGs with UI ops + lineage + alerting.** Those tools are mature here and Noether has no UI.
 - **Your pipeline only runs once.** The content-addressing + verification overhead is there so the *second* run is free. If there is no second run, a plain script is simpler.
 - **Your inputs aren't JSON-typable.** Noether's type system is structural over JSON. Streaming video, arbitrary binary, live-network protocols — doable, but you'll fight the model.
@@ -66,7 +68,7 @@ Two binaries ship from this repo:
 | **GitHub Releases** | [Download prebuilt binaries](https://github.com/alpibrusl/noether/releases/latest) — Linux / macOS / Windows, both binaries packaged separately |
 | **Source** | `cargo build --release -p noether-cli -p noether-scheduler` |
 
-Nix is optional; it's required only to execute Python / JavaScript / Bash stages in a Nix-pinned runtime (reproducibility, not isolation). Rust-native stdlib stages run without it.
+Nix is optional; it's required only to execute Python / JavaScript / Bash stages in a Nix-pinned runtime. Rust-native stdlib stages run without it. `bubblewrap` (the v0.7 sandbox backend) is also optional — `--isolate=auto` falls back to unsandboxed with a warning when bwrap is absent; pass `--require-isolation` in CI to turn the fallback into a hard error.
 
 ---
 
