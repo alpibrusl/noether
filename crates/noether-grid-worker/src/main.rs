@@ -487,7 +487,26 @@ async fn run_graph(store: &JsonFileStore, req: ExecuteRequest) -> JobResult {
     // correlating runs across workers sees the same id for the same
     // source graph regardless of which (possibly now-deprecated)
     // implementation it resolved to on any given run.
-    let composition_id = compute_composition_id(&graph).unwrap_or_else(|_| "unknown".into());
+    // Hash the pre-resolution graph. On failure the job can't be
+    // correlated — returning a Failed result with composition_id=None
+    // tells the broker "we got a graph we couldn't hash" rather than
+    // silently attributing the failure to a stringly-typed
+    // "unknown" correlation id that would collide with other
+    // unrelated hash failures.
+    let composition_id = match compute_composition_id(&graph) {
+        Ok(id) => id,
+        Err(e) => {
+            return JobResult {
+                job_id: req.job_id,
+                status: JobStatus::Failed,
+                output: serde_json::Value::Null,
+                spent_cents: 0,
+                composition_id: None,
+                error: Some(format!("failed to hash graph: {e}")),
+                completed_at: Utc::now(),
+            };
+        }
+    };
     if let Err(e) = resolve_pinning(&mut graph.root, store) {
         return JobResult {
             job_id: req.job_id,

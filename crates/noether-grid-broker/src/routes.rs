@@ -415,8 +415,39 @@ async fn dispatch(
             graph.description.clone(),
             split.rewritten,
         );
-        let composition_id =
-            compute_composition_id(&rewritten).unwrap_or_else(|_| "unknown".into());
+        // The rewritten graph was already parsed, type-checked, and
+        // split successfully; a hash failure here is an internal
+        // anomaly (e.g. serde_jcs choking on some edge case). Log
+        // loudly and surface to the job record so operators can
+        // distinguish "hash failed" from "stage failed." Failing a
+        // single in-flight job is preferable to crashing the broker,
+        // and dropping a stringly-typed "unknown" into the envelope
+        // would collide with other unrelated hash failures in
+        // trace-correlation logs.
+        let composition_id = match compute_composition_id(&rewritten) {
+            Ok(id) => id,
+            Err(e) => {
+                tracing::error!(
+                    job_id = %job_id.0,
+                    error = %e,
+                    "failed to hash rewritten graph for composition_id"
+                );
+                let mut jobs = state.jobs.lock().await;
+                if let Some(j) = jobs.get_mut(&job_id) {
+                    j.status = JobStatus::Failed;
+                    j.result = Some(JobResult {
+                        job_id: job_id.clone(),
+                        status: JobStatus::Failed,
+                        output: serde_json::Value::Null,
+                        spent_cents: 0,
+                        composition_id: None,
+                        error: Some(format!("failed to hash graph: {e}")),
+                        completed_at: Utc::now(),
+                    });
+                }
+                return;
+            }
+        };
         let input = spec.input.clone();
         let exec_store = stages_snapshot;
         let comp_id = composition_id.clone();

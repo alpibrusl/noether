@@ -60,7 +60,20 @@ pub fn cmd_run(
     // Trace correlation against specific implementations uses `execution_id`
     // on the trace record (computed after resolution, not yet wired — see
     // #28 follow-up).
-    let composition_id = compute_composition_id(&graph).unwrap_or_else(|_| "unknown".into());
+    // Propagate hash failures loudly rather than falling back to
+    // "unknown" — a silent stringly-typed fallback in the ACLI
+    // envelope would rob the caller of any breadcrumb to the cause.
+    // Matches the post-#32 compose.rs shape.
+    let composition_id = match compute_composition_id(&graph) {
+        Ok(id) => id,
+        Err(e) => {
+            eprintln!(
+                "{}",
+                acli_error(&format!("failed to hash composition graph: {e}"))
+            );
+            std::process::exit(1);
+        }
+    };
 
     // 1a. Resolve stage ID prefixes against the store. Hand-authored graphs
     //     can use the 8-char prefixes that `noether stage list` prints; the

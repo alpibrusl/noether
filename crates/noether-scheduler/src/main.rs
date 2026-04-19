@@ -248,8 +248,20 @@ async fn run_job(job: &ScheduledJob, config: &SchedulerConfig) {
 
         let inline = InlineExecutor::from_store(store.as_ref());
         // composition_id from the pre-resolution graph — stable across
-        // store changes, per #28.
-        let cid = compute_composition_id(&graph).unwrap_or_else(|_| "unknown".into());
+        // store changes, per #28. Hash failures skip the job and log
+        // loudly: a stringly-typed "unknown" fallback would collide
+        // across unrelated failures in the webhook payload and the
+        // cron log, making operator triage harder.
+        let cid = match compute_composition_id(&graph) {
+            Ok(id) => id,
+            Err(e) => {
+                error!(
+                    "Job {} — failed to hash composition graph; skipping: {e}",
+                    job.name
+                );
+                return;
+            }
+        };
         // Resolve pinning against the store snapshot. Signature-pinned
         // refs rewrite to concrete implementation IDs; without this the
         // run would fail inside the executor's store.get() call.
