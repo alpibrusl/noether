@@ -1,3 +1,4 @@
+pub mod agent_docs;
 pub mod build;
 pub mod build_browser;
 pub mod build_mobile;
