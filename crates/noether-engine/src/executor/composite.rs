@@ -48,6 +48,28 @@ impl CompositeExecutor {
         }
     }
 
+    /// Replace the isolation backend on the embedded NixExecutor.
+    /// No-op when Nix isn't installed (synthesized stages can't run
+    /// anyway, so the sandbox question doesn't arise).
+    pub fn with_isolation(mut self, backend: super::isolation::IsolationBackend) -> Self {
+        if let Some(nix) = self.nix.take() {
+            use super::nix::{NixConfig, NixExecutor};
+            // Rebuild NixExecutor with the new isolation setting.
+            // NixExecutor doesn't expose a public with_isolation setter
+            // today because the config field was just added; use the
+            // builder pattern via `NixConfig::with_isolation` at
+            // construction time. Reconstruct by re-reading the existing
+            // config and swapping the backend.
+            let old_config = nix.config_snapshot();
+            let new_config = NixConfig {
+                isolation: backend,
+                ..old_config
+            };
+            self.nix = NixExecutor::rebuild_with_config(nix, new_config);
+        }
+        self
+    }
+
     /// Attach an LLM provider so `llm_complete` / `llm_classify` / `llm_extract`
     /// stages are actually executed instead of returning a config error.
     pub fn with_llm(
@@ -69,11 +91,22 @@ impl CompositeExecutor {
         self
     }
 
-    /// Register a freshly synthesized stage so it can be executed immediately
-    /// without reloading the store.
-    pub fn register_synthesized(&mut self, stage_id: &StageId, code: &str, language: &str) {
+    /// Register a freshly synthesized stage so it can be executed
+    /// immediately without reloading the store. The caller **must**
+    /// supply the stage's declared effects — the isolation policy is
+    /// derived from them, and silently defaulting to
+    /// [`EffectSet::pure`](noether_core::effects::EffectSet::pure)
+    /// would put a Network-effect stage into a no-network sandbox and
+    /// surface as an opaque DNS failure at runtime.
+    pub fn register_synthesized(
+        &mut self,
+        stage_id: &StageId,
+        code: &str,
+        language: &str,
+        effects: noether_core::effects::EffectSet,
+    ) {
         if let Some(nix) = &mut self.nix {
-            nix.register(stage_id, code, language);
+            nix.register_with_effects(stage_id, code, language, effects);
         }
     }
 

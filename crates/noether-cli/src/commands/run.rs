@@ -20,6 +20,8 @@ pub struct RunPolicies<'a> {
     pub effects: &'a EffectPolicy,
     /// Maximum total cost in cents. `None` = no limit.
     pub budget_cents: Option<u64>,
+    /// Isolation backend applied to every Nix-executed stage.
+    pub isolation: noether_engine::executor::isolation::IsolationBackend,
 }
 
 pub fn cmd_run(
@@ -244,7 +246,8 @@ pub fn cmd_run(
 
     // 9. Execute — wrap with BudgetedExecutor when a budget is set so cost
     //    is tracked and enforced at runtime (not just statically pre-flight).
-    let executor = super::executor_builder::build_executor(store);
+    let executor =
+        super::executor_builder::build_executor_with_isolation(store, policies.isolation.clone());
     let result = if let Some(budget) = policies.budget_cents {
         let cost_map = build_cost_map(&graph.root, store);
         let budgeted = BudgetedExecutor::new(executor, cost_map, budget);

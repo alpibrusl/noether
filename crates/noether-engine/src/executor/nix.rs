@@ -69,6 +69,12 @@ pub struct NixConfig {
     /// Maximum number of bytes captured from stderr (for error messages).
     /// Default: 64 KiB.
     pub max_stderr_bytes: usize,
+    /// Isolation backend to wrap each stage subprocess in. When set
+    /// to [`super::isolation::IsolationBackend::None`] (the default
+    /// for back-compat), stages run with full host-user privileges
+    /// — see SECURITY.md. Set via
+    /// [`NixConfig::with_isolation`] or the CLI `--isolate` flag.
+    pub isolation: super::isolation::IsolationBackend,
 }
 
 impl Default for NixConfig {
@@ -77,17 +83,29 @@ impl Default for NixConfig {
             timeout_secs: 30,
             max_output_bytes: 10 * 1024 * 1024,
             max_stderr_bytes: 64 * 1024,
+            isolation: super::isolation::IsolationBackend::None,
         }
+    }
+}
+
+impl NixConfig {
+    /// Set the isolation backend. Returns `self` for chaining.
+    pub fn with_isolation(mut self, backend: super::isolation::IsolationBackend) -> Self {
+        self.isolation = backend;
+        self
     }
 }
 
 // ── Internal stage storage ───────────────────────────────────────────────────
 
-/// Maps stage IDs to their implementation (source code + language tag).
+/// Maps stage IDs to their implementation (source code + language tag +
+/// declared effects — needed so the isolation layer can derive a
+/// policy).
 #[derive(Clone)]
 struct StageImpl {
     code: String,
     language: String,
+    effects: noether_core::effects::EffectSet,
 }
 
 // ── NixExecutor ──────────────────────────────────────────────────────────────
@@ -165,6 +183,7 @@ impl NixExecutor {
                     StageImpl {
                         code: code.clone(),
                         language: lang.clone(),
+                        effects: stage.signature.effects.clone(),
                     },
                 );
             }
@@ -178,13 +197,37 @@ impl NixExecutor {
         })
     }
 
-    /// Register an in-memory synthesized stage without re-querying the store.
-    pub fn register(&mut self, stage_id: &StageId, code: &str, language: &str) {
+    /// Clone the current config (minus the implementations map) for
+    /// callers that want to rebuild with different knobs.
+    pub fn config_snapshot(&self) -> NixConfig {
+        self.config.clone()
+    }
+
+    /// Rebuild a NixExecutor with a replacement config, preserving
+    /// its registered implementations. Returns `Some(..)` or `None`
+    /// when reconstruction fails — today it can't fail, but the
+    /// Option keeps the API forward-compatible.
+    pub fn rebuild_with_config(mut self, config: NixConfig) -> Option<Self> {
+        self.config = config;
+        Some(self)
+    }
+
+    /// Register a stage with explicit declared effects. Used by tests
+    /// and by callers that want to drive the isolation policy without
+    /// going through the full StageStore.
+    pub fn register_with_effects(
+        &mut self,
+        stage_id: &StageId,
+        code: &str,
+        language: &str,
+        effects: noether_core::effects::EffectSet,
+    ) {
         self.implementations.insert(
             stage_id.0.clone(),
             StageImpl {
                 code: code.into(),
                 language: language.into(),
+                effects,
             },
         );
     }
@@ -292,28 +335,102 @@ impl NixExecutor {
 
         let (nix_subcommand, args) = self.build_nix_command(language, script, code);
 
-        // __direct__ means run the binary directly (venv Python), not via nix
-        let mut child = if nix_subcommand == "__direct__" {
-            Command::new(&args[0])
-                .args(&args[1..])
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()
+        // Build the full argv — either raw (no isolation) or wrapped in
+        // `bwrap` when an isolation backend is configured. The wrapped
+        // command spawns bwrap which execs the inner command inside a
+        // fresh sandbox.
+        let raw_argv: Vec<String> = if nix_subcommand == "__direct__" {
+            args.clone()
         } else {
-            Command::new(&self.nix_bin)
-                .arg(&nix_subcommand)
-                .args(["--no-write-lock-file", "--quiet"])
-                .args(&args)
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()
-        }
-        .map_err(|e| ExecutionError::StageFailed {
-            stage_id: stage_id.clone(),
-            message: format!("failed to spawn process: {e}"),
-        })?;
+            let mut v = vec![self.nix_bin.display().to_string(), nix_subcommand.clone()];
+            v.push("--no-write-lock-file".into());
+            v.push("--quiet".into());
+            v.extend(args.iter().cloned());
+            v
+        };
+
+        let mut spawn = match &self.config.isolation {
+            super::isolation::IsolationBackend::None => {
+                // No sandbox — legacy behaviour.
+                let mut cmd = Command::new(&raw_argv[0]);
+                cmd.args(&raw_argv[1..]);
+                cmd
+            }
+            super::isolation::IsolationBackend::Bwrap { bwrap_path } => {
+                // /work is a sandbox-private tmpfs (set by
+                // `IsolationPolicy::from_effects` default) — no host-side
+                // tmpdir to manage, no cleanup, no race.
+                let mut policy = super::isolation::IsolationPolicy::from_effects(
+                    self.implementations
+                        .get(&stage_id.0)
+                        .map(|i| &i.effects)
+                        .unwrap_or(&noether_core::effects::EffectSet::pure()),
+                );
+                // Expose the stage-script cache (where this invocation's
+                // wrapped `.py` / `.sh` / `.js` file lives). Scoped to
+                // `cache_dir` so the sandbox sees noether's own
+                // workspace and nothing else from the host user's home.
+                policy
+                    .ro_binds
+                    .push((self.cache_dir.to_path_buf(), self.cache_dir.to_path_buf()));
+                // Nix binary visibility inside the sandbox has three cases:
+                //
+                // 1. `nix_bin` is under `/nix/store` — covered by the
+                //    default `/nix/store` bind. Nothing to add.
+                // 2. `nix_bin` is under `cache_dir` — covered by the
+                //    `cache_dir` bind above. Nothing to add.
+                // 3. `nix_bin` is a distro-packaged install (e.g.
+                //    `/usr/bin/nix`, `/usr/local/bin/nix`). The
+                //    binary is dynamically linked against glibc,
+                //    libcrypto, and readline living in `/usr/lib*`.
+                //    Binding just the nix executable file would let
+                //    the sandbox exec it but immediately fail
+                //    resolving `ld-linux-x86-64.so.2` — the kernel
+                //    can't find the dynamic loader.
+                //
+                //    Widening the bind set to include `/usr/lib*`
+                //    re-exposes the full suid-binary surface the
+                //    hardening closed. Instead: refuse to run, with
+                //    a clear message pointing the operator at the
+                //    Nix-native install path. The trust model here
+                //    is "nix belongs to the same reproducibility
+                //    boundary as the stages it dispatches;" a
+                //    distro-packaged nix violates that boundary
+                //    anyway.
+                if !self.nix_bin.starts_with("/nix/store")
+                    && !self.nix_bin.starts_with(&self.cache_dir)
+                {
+                    return Err(ExecutionError::StageFailed {
+                        stage_id: stage_id.clone(),
+                        message: format!(
+                            "stage isolation is enabled but nix is installed at \
+                             {} (outside /nix/store). A distro-packaged nix is \
+                             dynamically linked against host libraries; binding \
+                             those into the sandbox would defeat isolation. \
+                             Install nix via the Determinate / upstream \
+                             installer (places nix under /nix/store) or pass \
+                             --isolate=none to run without the sandbox.",
+                            self.nix_bin.display()
+                        ),
+                    });
+                }
+                // `build_bwrap_command` emits `--setenv` args for
+                // the sandbox's env allowlist (HOME=/work,
+                // USER=nobody, + inherited). Nothing else to do here.
+                super::isolation::build_bwrap_command(bwrap_path, &policy, &raw_argv)
+            }
+        };
+
+        let mut child = spawn
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| ExecutionError::StageFailed {
+                stage_id: stage_id.clone(),
+                message: format!("failed to spawn process: {e}"),
+            })?;
+        let _ = raw_argv;
 
         // Write stdin in a background thread so we don't deadlock when the
         // child's stdin pipe fills before we start reading stdout.
@@ -812,6 +929,35 @@ mod tests {
     }
 
     #[test]
+    fn register_with_effects_preserves_network_effect() {
+        // Regression guard on the synthesized-stage effects path.
+        // Pre-hardening, `register_synthesized` → `NixExecutor::register`
+        // dropped the declared effects and stamped `EffectSet::pure()`
+        // onto the stored `StageImpl`. A Network-effect stage ended
+        // up with a no-network sandbox and failed with DNS errors at
+        // runtime. The `register()` shim is gone; this test locks in
+        // that `register_with_effects` is the only registration path
+        // and that it threads the effects through verbatim.
+        use noether_core::effects::{Effect, EffectSet};
+        let mut exec = make_executor();
+        let id = StageId("sig_network".into());
+        let effects = EffectSet::new([Effect::Pure, Effect::Network]);
+        exec.register_with_effects(&id, "code", "python", effects.clone());
+        let stored = exec
+            .implementations
+            .get(&id.0)
+            .expect("stage should be registered");
+        assert_eq!(
+            stored.effects, effects,
+            "declared effects must survive register_with_effects"
+        );
+        assert!(
+            stored.effects.iter().any(|e| matches!(e, Effect::Network)),
+            "Network must be preserved so the sandbox opens the net ns"
+        );
+    }
+
+    #[test]
     fn validate_pip_spec_accepts_pinned() {
         assert!(validate_pip_spec("pandas==2.0.0").is_ok());
         assert!(validate_pip_spec("scikit-learn==1.5.1").is_ok());
@@ -1042,6 +1188,7 @@ mod tests {
                     StageImpl {
                         code: code.into(),
                         language: "python".into(),
+                        effects: noether_core::effects::EffectSet::pure(),
                     },
                 );
                 m
@@ -1085,6 +1232,7 @@ mod tests {
                     StageImpl {
                         code: code.into(),
                         language: "python".into(),
+                        effects: noether_core::effects::EffectSet::pure(),
                     },
                 );
                 m

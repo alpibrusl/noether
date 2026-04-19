@@ -231,7 +231,12 @@ fn emit_result(store: &mut dyn StageStore, ctx: EmitCtx<'_>) {
 
     let mut executor = super::executor_builder::build_executor_with_embeddings(store);
     for syn in ctx.synthesized {
-        executor.register_synthesized(&syn.stage_id, &syn.implementation, &syn.language);
+        executor.register_synthesized(
+            &syn.stage_id,
+            &syn.implementation,
+            &syn.language,
+            syn.effects.clone(),
+        );
     }
 
     if !ctx.synthesized.is_empty() && !executor.nix_available() {

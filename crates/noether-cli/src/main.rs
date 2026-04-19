@@ -64,6 +64,26 @@ enum Commands {
         /// Reject compositions whose estimated cost exceeds this value (in cents).
         #[arg(long)]
         budget_cents: Option<u64>,
+        /// Sandbox every stage subprocess. `auto` (default, v0.7+)
+        /// picks bubblewrap when available, falls back to `none` with
+        /// a warning. `bwrap` requires bubblewrap; fails hard if
+        /// missing. `none` disables isolation entirely — warns unless
+        /// `--unsafe-no-isolation` is also passed.
+        #[arg(long, env = "NOETHER_ISOLATION", default_value = "auto")]
+        isolate: String,
+        /// Silence the "isolation disabled" warning when `--isolate=none`.
+        /// Required in CI/scripts that deliberately opt out.
+        #[arg(long)]
+        unsafe_no_isolation: bool,
+        /// Fail-closed when isolation is unavailable. With this flag
+        /// set (or `NOETHER_REQUIRE_ISOLATION=1` in env), the
+        /// `--isolate=auto` fallback to `none` becomes a hard error
+        /// instead of a warning — stage execution refuses to start
+        /// unless a real sandbox backend is in place. Intended for
+        /// CI and production environments where running a stage
+        /// unsandboxed is never the right answer.
+        #[arg(long, env = "NOETHER_REQUIRE_ISOLATION")]
+        require_isolation: bool,
     },
     /// Retrieve execution trace for a past composition
     Trace {
@@ -603,6 +623,9 @@ fn main() {
             allow_capabilities,
             allow_effects,
             budget_cents,
+            isolate,
+            unsafe_no_isolation,
+            require_isolation,
         } => {
             let store = build_store(registry);
             let mut trace_store = init_trace_store();
@@ -616,6 +639,55 @@ fn main() {
             };
             let policy = parse_capability_policy(allow_capabilities.as_deref());
             let effect_policy = parse_effect_policy(allow_effects.as_deref());
+
+            // Parse --isolate / NOETHER_ISOLATION. Warn loudly on
+            // --isolate=none unless --unsafe-no-isolation is also set.
+            use noether_engine::executor::isolation::IsolationBackend;
+            let (isolation_backend, isolation_warning) = match IsolationBackend::from_flag(&isolate)
+            {
+                Ok((b, w)) => (b, w),
+                Err(e) => {
+                    eprintln!(
+                        "{}",
+                        crate::output::acli_error(&format!("invalid --isolate value: {e}"))
+                    );
+                    std::process::exit(2);
+                }
+            };
+            // Fail-closed: when `--require-isolation` /
+            // NOETHER_REQUIRE_ISOLATION is set, an unsandboxed
+            // backend (either explicit `--isolate=none` or the
+            // `auto` → `none` fallback on a host without bwrap) is
+            // a hard error. Intended for CI and production: "run
+            // the stage unsandboxed" is never the right answer
+            // there, so upgrade the usual warning to an exit.
+            if require_isolation && matches!(isolation_backend, IsolationBackend::None) {
+                let why = isolation_warning.as_deref().unwrap_or(
+                    "--isolate=none explicitly selected while \
+                     --require-isolation is in effect",
+                );
+                eprintln!(
+                    "{}",
+                    crate::output::acli_error(&format!("refusing to run without isolation: {why}"))
+                );
+                std::process::exit(2);
+            }
+            if let Some(w) = &isolation_warning {
+                eprintln!("Warning: {w}");
+            }
+            if matches!(isolation_backend, IsolationBackend::None)
+                && isolation_warning.is_none()
+                && !unsafe_no_isolation
+            {
+                eprintln!(
+                    "Warning: --isolate=none runs stages with host-user \
+                     privileges. A malicious stage can read ~/.ssh, make \
+                     network calls, and write anywhere you can. Pass \
+                     --unsafe-no-isolation to silence this warning, or \
+                     --require-isolation to turn it into a hard error."
+                );
+            }
+
             commands::run::cmd_run(
                 store.as_ref(),
                 &mut trace_store,
@@ -626,6 +698,7 @@ fn main() {
                     capabilities: &policy,
                     effects: &effect_policy,
                     budget_cents,
+                    isolation: isolation_backend,
                 },
             );
         }

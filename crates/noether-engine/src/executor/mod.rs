@@ -2,6 +2,8 @@
 #[cfg(feature = "native")]
 pub mod composite;
 #[cfg(feature = "native")]
+pub mod isolation;
+#[cfg(feature = "native")]
 pub mod nix;
 #[cfg(feature = "native")]
 pub mod runtime;
