@@ -1,0 +1,19 @@
+[package]
+name = "noether-sandbox"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Thin binary: read an IsolationPolicy (JSON on stdin), run the argv after `--` inside the bubblewrap sandbox. For non-Rust consumers (Python, Node, Go, shell) that want to delegate to noether's sandbox without embedding the crate."
+
+[[bin]]
+name = "noether-sandbox"
+path = "src/main.rs"
+
+[dependencies]
+noether-core      = { path = "../noether-core", version = "0.7" }
+noether-isolation = { path = "../noether-isolation", version = "0.7" }
+serde_json        = { workspace = true }

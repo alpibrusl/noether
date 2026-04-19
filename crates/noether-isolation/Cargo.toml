@@ -1,0 +1,19 @@
+[package]
+name = "noether-isolation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Stage-execution sandbox policy + bubblewrap command builder. Extracted from noether-engine for consumers that want isolation without the full composition engine."
+
+[dependencies]
+noether-core = { path = "../noether-core", version = "0.7" }
+serde        = { workspace = true }
+thiserror    = { workspace = true }
+tracing      = "0.1"
+
+[dev-dependencies]
+serde_json   = { workspace = true }

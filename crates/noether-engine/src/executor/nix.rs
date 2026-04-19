@@ -370,9 +370,10 @@ impl NixExecutor {
                 // wrapped `.py` / `.sh` / `.js` file lives). Scoped to
                 // `cache_dir` so the sandbox sees noether's own
                 // workspace and nothing else from the host user's home.
-                policy
-                    .ro_binds
-                    .push((self.cache_dir.to_path_buf(), self.cache_dir.to_path_buf()));
+                policy.ro_binds.push(noether_isolation::RoBind::new(
+                    self.cache_dir.to_path_buf(),
+                    self.cache_dir.to_path_buf(),
+                ));
                 // Nix binary visibility inside the sandbox has three cases:
                 //
                 // 1. `nix_bin` is under `/nix/store` — covered by the
