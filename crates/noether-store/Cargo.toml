@@ -10,7 +10,7 @@ categories.workspace = true
 description = "Noether stage store: immutable content-addressed registry of stages with lifecycle management"
 
 [dependencies]
-noether-core = { path = "../noether-core", version = "0.6" }
+noether-core = { path = "../noether-core", version = "0.7" }
 serde        = { workspace = true }
 serde_json   = { workspace = true }
 thiserror    = { workspace = true }
