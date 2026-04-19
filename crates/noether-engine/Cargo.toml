@@ -30,6 +30,7 @@ regex = { workspace = true }
 chrono = { workspace = true }
 ed25519-dalek = { workspace = true }
 rand = { workspace = true }
+tracing = "0.1"
 rusqlite = { version = "0.39.0", features = ["bundled"], optional = true }
 arrow = { version = "58", optional = true, default-features = false, features = ["ipc"] }
 base64 = { version = "0.22", optional = true }

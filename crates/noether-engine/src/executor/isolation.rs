@@ -29,6 +29,7 @@
 use noether_core::effects::{Effect, EffectSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Which isolation backend to use for a stage execution.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -253,17 +254,66 @@ pub fn build_bwrap_command(
     c
 }
 
-/// Locate the `bwrap` binary. Returns `None` if it's not on `PATH`.
+/// Locate the `bwrap` binary.
+///
+/// Checks a fixed list of trusted system paths first, because they're
+/// owned by root on every mainstream Linux distro and therefore can't
+/// be planted by a non-privileged attacker. Only if none of those
+/// exist does the search fall back to walking `$PATH` — at which
+/// point a `tracing::warn!` fires (once per process) so operators can
+/// notice that isolation is trusting an attacker-plantable lookup.
+///
+/// Returns `None` if `bwrap` is not installed anywhere we know to look.
 pub fn find_bwrap() -> Option<PathBuf> {
+    for trusted in TRUSTED_BWRAP_PATHS {
+        let candidate = PathBuf::from(trusted);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+
+    // Fallback: $PATH walk. Operators with a properly-provisioned
+    // host should never hit this branch; if they do, either `bwrap`
+    // was installed somewhere non-standard or the host's `$PATH` is
+    // pointing at attacker-writable directories (user shell rc files,
+    // container bind-mount mishaps, etc.).
     let path_env = std::env::var_os("PATH")?;
     for dir in std::env::split_paths(&path_env) {
         let candidate = dir.join("bwrap");
         if candidate.is_file() {
+            if !PATH_FALLBACK_WARNED.swap(true, Ordering::Relaxed) {
+                tracing::warn!(
+                    resolved = %candidate.display(),
+                    "bwrap resolved via $PATH — none of the trusted \
+                     system paths contained it. If this host's PATH \
+                     includes a user-writable directory, isolation can \
+                     be trivially bypassed. Install bwrap to /usr/bin \
+                     (distro package) or your system Nix profile."
+                );
+            }
             return Some(candidate);
         }
     }
     None
 }
+
+static PATH_FALLBACK_WARNED: AtomicBool = AtomicBool::new(false);
+
+/// Root-owned locations where `bwrap` lives on a correctly-provisioned
+/// Linux host. Order matters: NixOS system profile first (nix hosts
+/// almost always have this), then the Determinate / single-user nix
+/// profile, then distro-packaged `/usr/bin`, then manual installs.
+///
+/// A non-root attacker can't write to any of these on a standard
+/// system, so resolving through them short-circuits the `$PATH`
+/// planting vector.
+pub(crate) const TRUSTED_BWRAP_PATHS: &[&str] = &[
+    "/run/current-system/sw/bin/bwrap",
+    "/nix/var/nix/profiles/default/bin/bwrap",
+    "/usr/bin/bwrap",
+    "/usr/local/bin/bwrap",
+    "/opt/homebrew/bin/bwrap",
+];
 
 #[cfg(test)]
 mod tests {
@@ -395,6 +445,27 @@ mod tests {
             .position(|a| a == "--gid")
             .expect("--gid missing");
         assert_eq!(argv[gid_pos + 1], "65534");
+    }
+
+    #[test]
+    fn trusted_bwrap_paths_are_all_root_owned_locations() {
+        // This is a compile-time contract check: every entry in
+        // TRUSTED_BWRAP_PATHS must point at a directory that is
+        // conventionally root-owned on mainstream Linux hosts. If
+        // someone adds a user-writable path here (e.g. `~/.local/bin`)
+        // they re-introduce the vector `find_bwrap` was written to
+        // close. Keep it literal and reviewable — no interpolation.
+        for p in TRUSTED_BWRAP_PATHS {
+            assert!(
+                p.starts_with("/run/")
+                    || p.starts_with("/nix/var/")
+                    || p.starts_with("/usr/")
+                    || p.starts_with("/opt/"),
+                "TRUSTED_BWRAP_PATHS entry '{p}' looks user-writable; \
+                 anything outside /run /nix/var /usr /opt is not a \
+                 standard root-owned location"
+            );
+        }
     }
 
     #[test]
