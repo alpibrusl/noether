@@ -47,6 +47,59 @@
 
 use serde::{Deserialize, Serialize};
 
+/// The six JSON runtime-value kinds. Used by
+/// [`Property::FieldTypeIn`] to declare a field's acceptable kinds.
+///
+/// Typed rather than a free-form `String` so that wire-format typos
+/// (`"bolean"`, `"interger"`) fail at deserialisation with a clear
+/// serde error rather than silently making every example violate
+/// the property. Wire format is unchanged from M2.5 round-1:
+/// `"allowed": ["number", "string"]` — snake_case strings matching
+/// the serde-renamed variant names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum JsonKind {
+    Null,
+    Bool,
+    Number,
+    String,
+    Array,
+    Object,
+}
+
+impl JsonKind {
+    /// Return the kind of a given JSON value.
+    pub fn of(v: &serde_json::Value) -> Self {
+        match v {
+            serde_json::Value::Null => JsonKind::Null,
+            serde_json::Value::Bool(_) => JsonKind::Bool,
+            serde_json::Value::Number(_) => JsonKind::Number,
+            serde_json::Value::String(_) => JsonKind::String,
+            serde_json::Value::Array(_) => JsonKind::Array,
+            serde_json::Value::Object(_) => JsonKind::Object,
+        }
+    }
+
+    /// The wire-format string for this kind — same bytes that
+    /// serde emits. Used for human-readable error messages.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            JsonKind::Null => "null",
+            JsonKind::Bool => "bool",
+            JsonKind::Number => "number",
+            JsonKind::String => "string",
+            JsonKind::Array => "array",
+            JsonKind::Object => "object",
+        }
+    }
+}
+
+impl std::fmt::Display for JsonKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// A declarative property claim on a stage.
 ///
 /// The wire format is a tagged union on the `"kind"` field. Unknown
@@ -81,10 +134,16 @@ pub enum Property {
         max: Option<f64>,
     },
     /// The length of the value at `left_field` equals the length of the
-    /// value at `right_field`. "Length" is defined as:
-    /// - UTF-8 character count for strings
-    /// - element count for arrays
-    /// - key count for objects
+    /// value at `right_field`. "Length" is:
+    ///
+    /// - **String**: UTF-8 **code-point** count (`str::chars().count()`),
+    ///   not byte count and not grapheme cluster count. `"a̐"` has
+    ///   length 2 (two codepoints: `a` + combining accent); `"👨‍👩‍👧"`
+    ///   has length 5 (three emoji + two zero-width joiners).
+    /// - **Array**: element count.
+    /// - **Object**: key count.
+    /// - **Other scalars (number, bool, null)**: not measurable; the
+    ///   property fails with [`PropertyViolation::NotMeasurable`].
     ///
     /// Added in M2.5 to express length-preservation invariants
     /// (`text_reverse`, `text_upper`, `map`, etc.).
@@ -102,13 +161,28 @@ pub enum Property {
         subject_field: String,
         bound_field: String,
     },
-    /// Every element of `subject_field` appears (by JSON-value
-    /// equality) in `super_field`. Arrays are treated as sets;
-    /// duplicates in subject are allowed as long as the value is
-    /// present in super.
+    /// Every element / key / character of `subject_field` appears in
+    /// `super_field`. Semantics depend on the runtime JSON shape of
+    /// the two values — all three branches are useful in practice,
+    /// but they're different checks:
     ///
-    /// Useful for `sort` (output is a permutation of input), stages
-    /// that project or re-group a subset of input fields.
+    /// - **Array vs Array**: every element of `subject` appears (by
+    ///   JSON-value equality) in `super`. Duplicates allowed as long
+    ///   as the value is present. Useful for `sort`, `filter`,
+    ///   `project` — output elements are drawn from input.
+    /// - **Object vs Object**: every `(key, value)` of `subject`
+    ///   appears with an equal value in `super` — *stricter* than
+    ///   key-presence. `{"a": 1}` is NOT a subset of `{"a": 2}`.
+    /// - **String vs String**: `subject` is a **contiguous
+    ///   substring** of `super` — not a character set. So
+    ///   `SubsetOf { subject: "abc", super: "bac" }` is false (`abc`
+    ///   is not a substring of `bac`) even though every character in
+    ///   `abc` appears somewhere in `bac`. This matches the
+    ///   "output string is a quote from the input" use case; declare
+    ///   a `Range` or `FieldLengthMax` if you want a weaker claim.
+    ///
+    /// Mixed-type pairs (`Array` vs `Object`, scalar vs anything) and
+    /// scalar-only pairs produce [`PropertyViolation::NotCollectionForSubset`].
     ///
     /// Added in M2.5.
     SubsetOf {
@@ -126,13 +200,16 @@ pub enum Property {
         right_field: String,
     },
     /// The runtime JSON type at `field` is one of the allowed kinds.
-    /// Kinds are the strings `"null"`, `"bool"`, `"number"`,
-    /// `"string"`, `"array"`, `"object"`. Bridges the gap between
-    /// the structural type system's compile-time view and the
-    /// actual runtime shape.
+    /// Kinds are enumerated by [`JsonKind`] (typed rather than
+    /// free-form strings, so wire-format typos fail at
+    /// deserialisation). Bridges the gap between the structural type
+    /// system's compile-time view and the actual runtime shape.
     ///
     /// Added in M2.5.
-    FieldTypeIn { field: String, allowed: Vec<String> },
+    FieldTypeIn {
+        field: String,
+        allowed: Vec<JsonKind>,
+    },
     /// A property kind this reader doesn't know how to evaluate.
     /// Produced by the deserialiser for forward compatibility when a
     /// future minor release adds a new `kind` variant; the original
@@ -245,8 +322,8 @@ pub enum PropertyViolation {
     )]
     TypeNotInAllowed {
         path: String,
-        actual: String,
-        allowed: Vec<String>,
+        actual: JsonKind,
+        allowed: Vec<JsonKind>,
     },
 }
 
@@ -304,6 +381,35 @@ impl Property {
     /// should treat these as skips, not passes or failures.
     pub fn is_unknown(&self) -> bool {
         matches!(self, Property::Unknown { .. })
+    }
+
+    /// If this property came out as [`Property::Unknown`] but its raw
+    /// `"kind"` matches a KNOWN variant name, return the known kind
+    /// string. This captures the case where a user typo'd a field
+    /// *within* a known kind (e.g. `allowed: ["bolean"]` inside a
+    /// valid `field_type_in`) and serde fell through to the
+    /// forward-compat `Unknown` variant instead of surfacing the
+    /// error. Downstream ingest paths (stage add, `validate_spec`)
+    /// should treat `Some(...)` here as a hard error — the user
+    /// intended a known property kind but wrote something malformed,
+    /// and the `Unknown` escape hatch would silently drop the check.
+    pub fn shadowed_known_kind(&self) -> Option<&str> {
+        const KNOWN_KINDS: &[&str] = &[
+            "set_member",
+            "range",
+            "field_length_eq",
+            "field_length_max",
+            "subset_of",
+            "equals",
+            "field_type_in",
+        ];
+        match self {
+            Property::Unknown { raw } => raw
+                .get("kind")
+                .and_then(|k| k.as_str())
+                .filter(|k| KNOWN_KINDS.contains(k)),
+            _ => None,
+        }
     }
 
     /// Validate that this property's field path is reachable in the
@@ -561,13 +667,13 @@ impl Property {
             }
             Property::FieldTypeIn { field, allowed } => {
                 let value = resolve_path(field, input, output)?;
-                let actual = json_type_name(value);
-                if allowed.iter().any(|a| a == actual) {
+                let actual = JsonKind::of(value);
+                if allowed.contains(&actual) {
                     Ok(())
                 } else {
                     Err(PropertyViolation::TypeNotInAllowed {
                         path: field.clone(),
-                        actual: actual.to_string(),
+                        actual,
                         allowed: allowed.clone(),
                     })
                 }
@@ -667,19 +773,6 @@ fn check_subset(
                 subject.clone()
             },
         }),
-    }
-}
-
-/// Map a serde_json::Value to one of the six canonical type-name
-/// strings used by `Property::FieldTypeIn`.
-fn json_type_name(v: &serde_json::Value) -> &'static str {
-    match v {
-        serde_json::Value::Null => "null",
-        serde_json::Value::Bool(_) => "bool",
-        serde_json::Value::Number(_) => "number",
-        serde_json::Value::String(_) => "string",
-        serde_json::Value::Array(_) => "array",
-        serde_json::Value::Object(_) => "object",
     }
 }
 
@@ -1007,6 +1100,64 @@ mod tests {
     }
 
     #[test]
+    fn subset_of_strings_is_substring_not_character_set() {
+        // Pinning test for the round-2 review finding: `SubsetOf`
+        // on strings means **contiguous substring**, not a
+        // character-set subset. This test contrasts the two
+        // interpretations so the chosen semantics can't drift.
+        //
+        // "abc" ⊂ "bac" under character-subset (every char of "abc"
+        //   appears in "bac") — but we DO NOT want that match.
+        // "abc" ⊂ "zabcz" under both substring and char-subset.
+        let p = Property::SubsetOf {
+            subject_field: "output".into(),
+            super_field: "input".into(),
+        };
+
+        // input = "bac" contains the chars a,b,c but not the
+        // substring "abc". Property must fail — the docstring's
+        // substring contract is the authoritative one.
+        let err = p
+            .check(&json!("bac"), &json!("abc"))
+            .expect_err("expected substring check to reject 'abc' ⊄ 'bac'");
+        assert!(
+            matches!(err, PropertyViolation::NotSubset { .. }),
+            "expected NotSubset, got {err:?}"
+        );
+
+        // input = "zabcz" contains the substring "abc" — passes.
+        assert!(p.check(&json!("zabcz"), &json!("abc")).is_ok());
+
+        // Identity (trivial substring of self) passes.
+        assert!(p.check(&json!("abc"), &json!("abc")).is_ok());
+    }
+
+    #[test]
+    fn subset_of_rejects_mixed_collection_kinds() {
+        // Array-vs-object and collection-vs-scalar both surface as
+        // NotCollectionForSubset rather than a false pass/fail.
+        let p = Property::SubsetOf {
+            subject_field: "output".into(),
+            super_field: "input".into(),
+        };
+        let err = p
+            .check(&json!({"a": 1}), &json!([1, 2]))
+            .expect_err("array subject vs object super must fail");
+        assert!(matches!(
+            err,
+            PropertyViolation::NotCollectionForSubset { .. }
+        ));
+
+        let err = p
+            .check(&json!(42), &json!([1, 2, 3]))
+            .expect_err("scalar super vs array subject must fail");
+        assert!(matches!(
+            err,
+            PropertyViolation::NotCollectionForSubset { .. }
+        ));
+    }
+
+    #[test]
     fn equals_passes_on_identical_values() {
         let p = Property::Equals {
             left_field: "output".into(),
@@ -1029,7 +1180,7 @@ mod tests {
     fn field_type_in_passes_on_allowed_type() {
         let p = Property::FieldTypeIn {
             field: "output.value".into(),
-            allowed: vec!["number".into(), "null".into()],
+            allowed: vec![JsonKind::Number, JsonKind::Null],
         };
         assert!(p.check(&json!(null), &json!({"value": 42})).is_ok());
         assert!(p.check(&json!(null), &json!({"value": null})).is_ok());
@@ -1039,12 +1190,77 @@ mod tests {
     fn field_type_in_fails_on_disallowed_type() {
         let p = Property::FieldTypeIn {
             field: "output.value".into(),
-            allowed: vec!["number".into()],
+            allowed: vec![JsonKind::Number],
         };
         let err = p
             .check(&json!(null), &json!({"value": "oops"}))
             .unwrap_err();
         assert!(matches!(err, PropertyViolation::TypeNotInAllowed { .. }));
+    }
+
+    #[test]
+    fn field_type_in_typo_surfaces_as_shadowed_known_kind() {
+        // The `JsonKind` enum catches typos at the Rust API level
+        // (code that constructs `Property::FieldTypeIn { allowed: ... }`
+        // can't pass a bad string). But wire-format typos fall
+        // through to `Property::Unknown` via serde's forward-compat
+        // untagged fallback — we don't want to break loading
+        // v0.8 graphs in a v0.7 reader just because a new kind
+        // was added.
+        //
+        // `shadowed_known_kind` splits the two cases: an unknown
+        // variant with a truly unknown `kind` is fine (v0.8
+        // forward-compat); an unknown variant with a KNOWN `kind`
+        // means the user mistyped inside a known property and
+        // should be rejected at ingest time.
+        let bad = r#"{
+            "kind": "field_type_in",
+            "field": "output.x",
+            "allowed": ["bolean"]
+        }"#;
+        let p: Property = serde_json::from_str(bad).unwrap();
+        assert!(
+            matches!(p, Property::Unknown { .. }),
+            "typo falls through to Unknown via serde untagged fallback"
+        );
+        assert_eq!(
+            p.shadowed_known_kind(),
+            Some("field_type_in"),
+            "shadow of a known kind must be detectable; ingest paths \
+             should reject properties that report this non-None"
+        );
+    }
+
+    #[test]
+    fn genuinely_unknown_kind_does_not_shadow() {
+        // A hypothetical v0.8 kind that v0.7 doesn't know about
+        // must NOT be flagged as shadowing — forward compat.
+        let future = r#"{
+            "kind": "v08_implication",
+            "premise": "input.x",
+            "conclusion": "output.y"
+        }"#;
+        let p: Property = serde_json::from_str(future).unwrap();
+        assert!(matches!(p, Property::Unknown { .. }));
+        assert_eq!(
+            p.shadowed_known_kind(),
+            None,
+            "truly unknown kinds must not be flagged as shadowing"
+        );
+    }
+
+    #[test]
+    fn field_type_in_wire_format_is_snake_case_strings() {
+        // Regression guard on the `#[serde(rename_all = "snake_case")]`
+        // contract — the byte-count argument in the round-1 review
+        // depends on `JsonKind::Number` serialising as `"number"`,
+        // not `"Number"` or some other casing.
+        let p = Property::FieldTypeIn {
+            field: "output.x".into(),
+            allowed: vec![JsonKind::Bool, JsonKind::Null],
+        };
+        let json = serde_json::to_value(&p).unwrap();
+        assert_eq!(json["allowed"], serde_json::json!(["bool", "null"]));
     }
 
     #[test]
@@ -1068,7 +1284,7 @@ mod tests {
             },
             Property::FieldTypeIn {
                 field: "output.id".into(),
-                allowed: vec!["string".into()],
+                allowed: vec![JsonKind::String],
             },
         ];
         for p in cases {
@@ -1112,7 +1328,7 @@ mod tests {
             (
                 Property::FieldTypeIn {
                     field: "output".into(),
-                    allowed: vec!["string".into()],
+                    allowed: vec![JsonKind::String],
                 },
                 "field_type_in",
             ),
