@@ -3,8 +3,10 @@ resolver = "2"
 members = [
     "crates/noether-core",
     "crates/noether-store",
+    "crates/noether-isolation",
     "crates/noether-engine",
     "crates/noether-cli",
+    "crates/noether-sandbox",
     "crates/noether-scheduler",
     # Grid — shipped in v0.4.0. See docs/research/grid.md + crates/noether-grid-broker/README.md.
     "crates/noether-grid-protocol",
@@ -13,7 +15,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.7.0"
+version = "0.7.1"
 edition = "2021"
 license = "EUPL-1.2"
 repository = "https://github.com/alpibrusl/noether"

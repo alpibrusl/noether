@@ -4,6 +4,57 @@ Notable changes to Noether. Follows [Keep a Changelog](https://keepachangelog.co
 
 ## Unreleased
 
+## 0.7.1 — 2026-04-19
+
+Small release: extract the isolation primitive into its own crate and ship a standalone sandbox binary for non-Rust consumers.
+
+### Added — `noether-isolation` crate
+
+All the sandbox-policy types from v0.7.0 live in a new `noether-isolation` crate instead of buried inside `noether-engine`:
+
+- `IsolationBackend::{None, Bwrap{bwrap_path}}` + `auto()` + `from_flag()`
+- `IsolationError::{UnknownBackend, BackendUnavailable}`
+- `IsolationPolicy` (now `Serialize + Deserialize` for cross-process use)
+- `IsolationPolicy::from_effects(&EffectSet)` / `IsolationPolicy::with_work_host(PathBuf)`
+- `build_bwrap_command(bwrap, policy, inner_cmd) -> Command`
+- `find_bwrap()` with trusted-path-first discovery
+- Constants: `NOBODY_UID`, `NOBODY_GID`, `TRUSTED_BWRAP_PATHS`
+
+Dependency footprint: `noether-core` (for `Effect` / `EffectSet`), `serde`, `thiserror`, `tracing`. Downstream consumers that want the sandbox primitive without the full composition engine now depend on this crate directly.
+
+`noether-engine::executor::isolation` is a thin re-export — existing callers see no API change.
+
+### Added — `noether-sandbox` binary
+
+Thin glue binary (~150 LOC) for non-Rust callers:
+
+```bash
+echo '{"ro_binds":[["/nix/store","/nix/store"]], "network":true, "env_allowlist":["PATH","LANG"]}' \
+  | noether-sandbox -- claude-code -p "hello"
+```
+
+- Reads an `IsolationPolicy` as JSON on stdin (empty stdin → default pure-effect policy).
+- `--isolate=auto|bwrap|none` flag mirrors the `noether run` CLI; also reads `NOETHER_ISOLATION` env.
+- Propagates the child's exit code verbatim.
+- stdin / stdout / stderr pass through to the sandboxed child.
+
+Intended for Python / Node / Go / shell callers (notably agentspec — tracked in [#36](https://github.com/alpibrusl/noether/issues/36)) that want to delegate to noether's sandbox without embedding a Rust toolchain.
+
+### Changed — `IsolationPolicy` is now Serde-enabled
+
+Wire format:
+
+```json
+{
+  "ro_binds": [["/nix/store", "/nix/store"]],
+  "work_host": null,
+  "network": false,
+  "env_allowlist": ["PATH", "HOME", "USER", "LANG", "LC_ALL", "LC_CTYPE", "NIX_PATH", "NIX_SSL_CERT_FILE", "SSL_CERT_FILE", "NOETHER_LOG_LEVEL", "RUST_LOG"]
+}
+```
+
+Round-trip pinned by a test. `work_host: null` is the same as omitting the field (sandbox-private tmpfs).
+
 ## 0.7.0 — 2026-04-19
 
 M2 close-out: property DSL reaches parity with the "what does this stage guarantee?" use case, the resolver runs at every graph-ingest entry point, the store enforces its Active-per-signature invariant, and stage subprocesses now execute inside a real sandbox by default. The v1.x stability contract ([STABILITY.md](STABILITY.md)) applies from this release.
