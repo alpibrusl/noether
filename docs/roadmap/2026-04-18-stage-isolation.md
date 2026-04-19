@@ -180,6 +180,16 @@ Env-var fallback: `NOETHER_ISOLATION=<auto|bwrap|none>`.
   `--isolate=auto` falls back to `none` with a platform-warning.
   Native sandbox primitives (`sandbox-exec` on macOS, AppContainer
   on Windows) are explicit v0.9+ work.
+- **Filesystem effect variants.** Phase 1 derives `network` from
+  `Effect::Network` and nothing else. `Effect` in v0.6 has no
+  `FsRead(path)` / `FsWrite(path)` variants — the type system can't
+  express "this stage needs `/etc/ssl` but nothing else in `/etc`."
+  The Phase 1 sandbox compensates with a strict default: only
+  `/nix/store`, the executor cache, and the nix binary are bound.
+  Stages that legitimately need a specific host path cannot run
+  under isolation today. Extending `Effect` with pathful filesystem
+  variants and teaching `IsolationPolicy::from_effects` to translate
+  them into bind mounts is Phase 2 work (tracked below).
 
 ## Design — Phase 2 (v0.8)
 
@@ -197,6 +207,13 @@ callable from Rust with no external binary:
 
 Zero user-facing changes beyond faster execution. `--isolate=bwrap`
 stays as a compatibility flag.
+
+Phase 2 is also the natural home for **pathful filesystem effects**.
+Add `Effect::FsRead(PathBuf)` and `Effect::FsWrite(PathBuf)` to
+`noether-core`, teach `IsolationPolicy::from_effects` to push each
+path onto `ro_binds` / RW binds respectively, and let stage authors
+declare exactly the host paths they need. Until then the Phase 1
+"strict default, no per-stage opt-in" shape holds.
 
 ## Design — Phase 3 (v0.9+ or later)
 

@@ -21,10 +21,27 @@
 //! ## Policy derivation
 //!
 //! An [`IsolationPolicy`] is derived from a stage's declared
-//! `EffectSet`: stages without `Effect::Network` get a fresh empty
-//! network namespace; all stages get read-only `/nix/store` and a
-//! per-invocation `/work` tmpdir. Host capabilities are dropped;
-//! the host's HOME, SSH keys, and credentials files are unreachable.
+//! `EffectSet`. Phase 1 surfaces exactly one axis from the effect
+//! vocabulary — `Effect::Network` toggles whether the sandbox
+//! inherits the host's network namespace. Every other effect
+//! variant (`Pure`, `Fallible`, `Llm`, `NonDeterministic`, `Process`,
+//! `Cost`, `Unknown`) produces the same baseline policy: RO
+//! `/nix/store` bind, a sandbox-private `/work` tmpfs,
+//! `--cap-drop ALL`, UID/GID mapped to nobody, `--clearenv` with a
+//! short allowlist.
+//!
+//! ### Filesystem effects — not yet expressible
+//!
+//! The v0.6 `Effect` enum has no `FsRead(path)` / `FsWrite(path)`
+//! variants, so there is no way for a stage to declare "I need to
+//! read `/etc/ssl` but nothing else." The sandbox compensates by
+//! allowing *nothing* outside `/nix/store`, the executor's cache
+//! dir, and the nix binary. That is the strictest sane default —
+//! but it means stages that legitimately need a specific host path
+//! cannot run under isolation today. Planned for v0.8: extend
+//! `Effect` with `FsRead` / `FsWrite` path variants, then expand
+//! `from_effects` to translate them into bind mounts. Tracked in
+//! `docs/roadmap/2026-04-18-stage-isolation.md`.
 
 use noether_core::effects::{Effect, EffectSet};
 use std::path::{Path, PathBuf};
