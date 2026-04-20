@@ -187,6 +187,8 @@ line**: a bugfix that changes `implementation_hash` changes `StageId` but never
 pick up implementation fixes automatically.
 
 > **Naming note.** Prior to v0.6.0 this field was called `canonical_id` and the
-> type was `CanonicalId`. Both the old name (as a JSON field alias and a
-> deprecated type alias) and the new one are accepted in v0.6.x; the old
-> names are removed in v0.7.0.
+> type was `CanonicalId`. As of v0.7.1 the Rust type alias is gone, but the
+> JSON field name `canonical_id` is still accepted as a deserialisation
+> alias for `signature_id` so v0.5.x-authored stage JSONs keep loading.
+> The wire-format alias will be removed in v0.8; authors writing new
+> specs should use `signature_id` directly.

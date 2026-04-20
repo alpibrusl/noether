@@ -3,13 +3,28 @@
 Nix provides a reproducible, pinned runtime for Python, JavaScript, and bash
 stages. It is Noether's L1 — the layer below the stage store.
 
-!!! danger "Reproducibility, not isolation"
-    Nix pins the runtime's binaries and libraries so you always get the same
-    Python, the same NumPy, the same everything. It does **not** run the
-    stage inside a sandbox. The subprocess inherits the host user's
-    privileges, filesystem, and network. A stage can call `os.system(...)`,
-    read files outside its working directory, and make arbitrary HTTP
-    requests. Treat stages you did not write as untrusted code.
+!!! info "Reproducibility and isolation are separate boundaries (v0.7+)"
+    Nix pins the runtime's binaries and libraries so you always get
+    the same Python, NumPy, everything — that's the **reproducibility**
+    boundary. The **isolation** boundary is separate: from v0.7,
+    `noether run --isolate=auto` (the default) wraps every stage
+    subprocess in bubblewrap with UID mapped to `nobody`, `--cap-drop
+    ALL`, sandbox-private `/work` tmpfs, and network unshared unless
+    the stage declares `Effect::Network`. See
+    [`noether-isolation`](https://github.com/alpibrusl/noether/tree/main/crates/noether-isolation)
+    for the crate, [`SECURITY.md`](https://github.com/alpibrusl/noether/blob/main/SECURITY.md)
+    for the threat model, and
+    [`docs/roadmap/2026-04-18-stage-isolation.md`](../roadmap/2026-04-18-stage-isolation.md)
+    for Phase-2 (native namespaces + Landlock + seccomp, v0.8).
+
+    Opt out with `--isolate=none --unsafe-no-isolation`. In CI, pass
+    `--require-isolation` (or `NOETHER_REQUIRE_ISOLATION=1`) to turn
+    the `auto → none` fallback into a hard error when bwrap is missing.
+
+    Distro-packaged `nix` at `/usr/bin/nix` can't run under isolation
+    (dynamically linked against host libs that aren't bound) — the
+    executor refuses cleanly. Install via Determinate / upstream so
+    `nix` lives in `/nix/store`.
 
 ---
 
