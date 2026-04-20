@@ -4,6 +4,23 @@ Notable changes to Noether. Follows [Keep a Changelog](https://keepachangelog.co
 
 ## Unreleased
 
+## 0.7.3 — 2026-04-20
+
+Release-pipeline repair. **No source changes in this version — it exists to re-publish crates and ship a new set of release tarballs through the fixed workflow.**
+
+### Fixed — release-workflow drift ([#51](https://github.com/alpibrusl/noether/issues/51), [#52](https://github.com/alpibrusl/noether/pull/52))
+
+The `publish-crates` job has been silently failing since v0.7.1 because `noether-engine` depends on `noether-isolation` (introduced in v0.7.0) but the publish chain never included it. Every release cut since shipped green Build jobs, red Publish job — tags landed on GitHub while crates.io stayed behind at 0.7.0 for `noether-engine` / `noether-cli` / `noether-scheduler`, with `noether-isolation` and `noether-sandbox` never published at all.
+
+The v0.7.3 workflow:
+
+- Publishes in the correct dep order: `core → isolation → store → engine → cli → scheduler → sandbox`.
+- Ships a `noether-sandbox-<version>-<linux-target>.tar.gz` tarball on the GitHub release for each Linux target. Built on every target as a compile-check; only packaged on Linux because bubblewrap is Linux-only.
+
+### Downstream impact
+
+If you were pinned via `cargo install noether-cli` or `cargo install noether-scheduler` before v0.7.3, you were stuck on 0.7.0 and missing everything from v0.7.1 (`noether-isolation` crate, `noether-sandbox` binary) and v0.7.2 (`rw_binds`, executor panic-to-error conversions, tutorial pages, coverage CI). A `cargo install --force` after the v0.7.3 publish lifts you to the full current state.
+
 ## 0.7.2 — 2026-04-20
 
 Maintenance release — one small feature, hardening, docs audit, CI coverage.
