@@ -4,6 +4,14 @@ Notable changes to Noether. Follows [Keep a Changelog](https://keepachangelog.co
 
 ## Unreleased
 
+### Added — `canonical_structural` optimizer pass (M3 second slice)
+
+Lifts the M1 canonical-form structural rewrites (flatten nested `Sequential`, collapse singleton `Sequential`, fuse adjacent `Retry`) from hash-time into the execution pipeline. Today `canonicalise` shapes the form we hash; this pass makes the **executor** see the same canonical form, removing pointless wrapper nodes from plans and traces.
+
+Pass list in `cmd_run` now runs `CanonicalStructural` first, then `DeadBranchElimination` — order chosen so dead-branch can fold `Branch` nodes that were hidden inside a collapsible singleton Sequential wrapper.
+
+The rewrites delegate to the existing `canonicalise` function, whose semantics are locked by the M1 law tests. Seven new unit tests cover each rule individually plus the "idempotent after one pass" property that the fixpoint runner relies on.
+
 ### Added — graph optimizer framework + `dead_branch` pass (M3 first slice)
 
 A structural AST rewrite layer between type-check and plan generation:

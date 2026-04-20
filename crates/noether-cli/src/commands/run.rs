@@ -9,7 +9,10 @@ use noether_engine::executor::runner::run_composition;
 use noether_engine::lagrange::{
     compute_composition_id, parse_graph, resolve_stage_prefixes, CompositionGraph,
 };
-use noether_engine::optimizer::{self, dead_branch::DeadBranchElimination, OptimizerReport};
+use noether_engine::optimizer::{
+    self, canonical_structural::CanonicalStructural, dead_branch::DeadBranchElimination,
+    OptimizerReport,
+};
 use noether_engine::planner::plan_graph;
 use noether_engine::trace::JsonFileTraceStore;
 use noether_store::StageStore;
@@ -222,9 +225,13 @@ pub fn cmd_run(
             hit_iteration_cap: false,
         }
     } else {
+        // Pass ordering matters: CanonicalStructural first so
+        // DeadBranchElimination sees the flattened form and can
+        // fold Branches that were hidden inside a collapsible
+        // singleton Sequential wrapper.
         let (rewritten, report) = optimizer::optimize(
             graph.root,
-            &[&DeadBranchElimination],
+            &[&CanonicalStructural, &DeadBranchElimination],
             optimizer::DEFAULT_MAX_ITERATIONS,
         );
         graph.root = rewritten;
