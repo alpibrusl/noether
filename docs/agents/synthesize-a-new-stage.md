@@ -42,7 +42,7 @@ Author a new stage from scratch — either (a) automatically via the Composition
    The CLI computes the content hash, signs the id with your key, validates examples against the declared signature, rejects typo'd property kinds (`Property::shadowed_known_kind`), and stores under the local tenant.
 3. **Verify**:
    ```bash
-   noether stage verify <id> --with-properties
+   noether stage verify <id>   # signatures + properties by default
    ```
    Runs every declared example through the executor and checks each property claim. Fails loudly if any example mismatches or a property is violated.
 4. **Promote to Active** if it was registered as Draft:

@@ -113,8 +113,9 @@ semantics are expressible, testable claims — not docstring prose.
   - Universally-quantified implications over examples:
     `for all examples, if input.battery.soc_percent is null then output is null`
   - No higher-order quantification, no type-class predicates in M2
-- `noether stage verify --with-properties` — runs stage against
-  property-based inputs plus the declared predicates
+- `noether stage verify` — checks the Ed25519 signature and the
+  declared properties against the stage's examples by default;
+  `--signatures` / `--properties` restrict to one side
 - Registry stores both IDs; clients resolve `signature → latest
   implementation` by default
 

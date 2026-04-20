@@ -28,7 +28,7 @@ Noether shifted from sequential "phase" numbering to milestone tracking with the
 | Milestone | Name | Status | Shipped as | Key deliverables |
 |---|---|---|---|---|
 | M1 | Semantics + Canonical Form | ✅ Done | v0.5.0 | `canonicalise` for every composition op, pre-resolution `composition_id` contract, `laws.rs` property tests |
-| M2 | Stability + Versioning + Property Predicates | ✅ Done | v0.6.0 + v0.7.0 | Stage identity split (`signature_id` + `implementation_id`), graph-level pinning, declarative properties DSL (7 kinds), resolver pass, `stage verify --with-properties`, STABILITY.md, store ≤1-Active-per-signature invariant |
+| M2 | Stability + Versioning + Property Predicates | ✅ Done | v0.6.0 + v0.7.0 | Stage identity split (`signature_id` + `implementation_id`), graph-level pinning, declarative properties DSL (7 kinds), resolver pass, `stage verify` checks signatures + properties by default, STABILITY.md, store ≤1-Active-per-signature invariant |
 | M2.4 | Stage execution isolation — Phase 1 | ✅ Done | v0.7.0 | Bubblewrap sandbox by default, UID mapping to `nobody`, sandbox-private `/work` tmpfs, trusted `bwrap` path discovery, `--require-isolation` CI gate, DNS/TLS binds when network declared, adversarial escape-test suite |
 | M2.5 | Property DSL expansion | ✅ Done | v0.7.0 | `FieldLengthEq` / `FieldLengthMax` / `SubsetOf` / `Equals` / `FieldTypeIn`, typed `JsonKind` enum, shadowed-kind ingest rejection |
 | M2.x | `noether-isolation` crate extraction | ✅ Done | v0.7.1 | Standalone crate + `noether-sandbox` binary for non-Rust consumers (agentspec, future Python/Node/Go bindings) |

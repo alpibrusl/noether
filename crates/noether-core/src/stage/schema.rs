@@ -133,10 +133,11 @@ pub struct Stage {
 
     /// Declarative properties the stage claims to satisfy for every
     /// `(input, output)` pair. Checked against examples at registration
-    /// time (`noether stage verify --with-properties`) and optionally
-    /// at runtime. Types say *what shape* the output has; properties
-    /// say *which values* it may actually take. See
-    /// [`crate::stage::property`] for the DSL.
+    /// time (`noether stage verify` — or `noether stage verify --properties`
+    /// to restrict the run to property checks) and optionally at runtime.
+    /// Types say *what shape* the output has; properties say *which
+    /// values* it may actually take. See [`crate::stage::property`] for
+    /// the DSL.
     ///
     /// Not part of the content hash — a stage's properties can be
     /// strengthened in a follow-up release without forcing a new
@@ -177,7 +178,8 @@ impl Stage {
     /// through on under-specified stages.
     ///
     /// This is the CI-time check the M2 roadmap promises. `noether
-    /// stage verify --with-properties` wraps this with CLI reporting.
+    /// stage verify` (or `--properties` to restrict) wraps this with
+    /// CLI reporting.
     pub fn check_properties(&self) -> Result<(), CheckPropertiesError> {
         if self.properties.is_empty() {
             return Ok(());

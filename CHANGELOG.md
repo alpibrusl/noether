@@ -4,6 +4,10 @@ Notable changes to Noether. Follows [Keep a Changelog](https://keepachangelog.co
 
 ## Unreleased
 
+## 0.7.2 — 2026-04-20
+
+Maintenance release — one small feature, hardening, docs audit, CI coverage.
+
 ### Added — `IsolationPolicy.rw_binds` ([#39](https://github.com/alpibrusl/noether/issues/39))
 
 Optional `Vec<RwBind>` on `IsolationPolicy`, mirroring `ro_binds`. Consumers with a richer filesystem trust model (agentspec's `filesystem: scoped`, the "agent operates on my `~/projects/foo` RW" pattern) can now declare read-write bind mounts without routing through `work_host` — which is reserved for the single sandbox scratch dir.
@@ -13,9 +17,31 @@ Optional `Vec<RwBind>` on `IsolationPolicy`, mirroring `ro_binds`. Consumers wit
 - `build_bwrap_command` emits `--bind <host> <sandbox>` per entry, in a documented order: **`rw_binds` → `ro_binds` → `work_host`.** RW first lets a narrower RO entry shadow a broader RW parent (the `workdir RW, .ssh RO` case); `work_host` renders last so its `/work` mapping wins.
 - `from_effects` does **not** produce `rw_binds`. The `EffectSet` vocabulary has no `FsWrite(path)` variant to drive it, so any `RwBind` is a caller-authored trust decision. The `RwBind` rustdoc spells this out — the crate can't validate whether binding `/home/user` RW is sensible; that responsibility lives with the caller.
 
-### Notes for downstream consumers
-
 agentspec's `TrustSpec.filesystem: scoped` mode can now delegate to `noether-sandbox` via a policy carrying explicit `rw_binds` — see [agentspec #22](https://github.com/alpibrusl/agentspec/pull/22) for the integration path.
+
+### Changed — CLI-reachable `unwrap()` / `expect()` in executor + index converted to `Result` ([#42](https://github.com/alpibrusl/noether/issues/42))
+
+Thread-join panics in `Parallel` and `Let` branches no longer propagate as process-level panics; they surface as typed `ExecutionError::StageFailed` with synthetic `parallel:<name>` / `let:<name>` stage ids so the ACLI envelope shape stays structured. The `CachedEmbeddingProvider` short-read panic was hardened into a typed `EmbeddingError::Provider` with an upstream length check that catches the real failure mode before the in-memory cache lookup. `NixExecutor::extract_pip_requirements` lost its `strip_prefix(...).unwrap()` via an `if let Some(...) = ... else { continue }` rewrite.
+
+Seven in-scope modules now carry `#![warn(clippy::unwrap_used)]` with the standard `#[cfg_attr(test, allow(...))]` pairing, preventing regression on newly-added panics. An audit table — one row per `unwrap`/`expect` call site in the in-scope files — lives at `docs/engineering/unwrap-audit-issue-42.md`, distinguishing converted vs invariant-safe. Out-of-scope hot paths (`executor/runtime.rs`, `executor/budget.rs`, `executor/stages/*`, `planner.rs`, `checker.rs`, grid/scheduler/cli crates) are flagged for a follow-up.
+
+### Changed — `noether stage verify` flag-name drift cleaned up
+
+Earlier release notes and three agent playbooks referred to `--with-properties` / `--signatures-only` flags that never landed. The real v0.7.0+ CLI uses `--signatures` (restricts to signature checks) and `--properties` (restricts to property checks); invoking `stage verify` with no flag runs both. The docs, CHANGELOG, roadmap, and `Stage::check_properties` rustdoc now match the shipped CLI.
+
+No code change — the drift was docs-only. Called out here so readers of the v0.7.0 entry don't trip over the old wording.
+
+### Docs — mkdocs audit + human tutorial section ([#41](https://github.com/alpibrusl/noether/pull/41))
+
+Systematic pass over `docs/` to catch content that had drifted against v0.7.x state. The `docs/index.md` trust-model callout, `nix-execution.md` reproducibility-vs-isolation admonition, and `stage-identity.md` `canonical_id`-removal phrasing all got corrected. Added a milestones table to `roadmap.md` (M1 / M2 / M2.4 / M2.5 / M2.x / M3) alongside the existing phase table, and 0.7.0 + 0.7.1 entries to `docs/changelog.md` with a pointer at root CHANGELOG.md as authoritative.
+
+New three-page human tutorial section: `concepts.md` (5-minute mental model — stage identity, structural types, effects, composition, reproducibility vs isolation), `llm-compose.md` (end-to-end `noether compose` workflow), `when-things-go-wrong.md` (exit-code contract, isolation failures, diagnosis recipes). The existing `citecheck` walkthrough gains a front-of-page warning admonition flagging that the body uses CLI shapes (`noether lint`, `--stage`, `noether skill`, pre-Lagrange graph format) that never landed — rewrite deferred.
+
+### CI — coverage reporting via cargo-llvm-cov ([#43](https://github.com/alpibrusl/noether/issues/43))
+
+New `coverage` job in CI runs `cargo-llvm-cov` on `noether-core`, `noether-engine --lib`, and `noether-store`, uploads to Codecov. `codecov.yml` at repo root defines thresholds: 80% blocking on the three stable crates, 60% informational (non-blocking) on `noether-grid-broker` / `noether-grid-worker` / `noether-scheduler` to avoid red-walling the baseline against known-empty data.
+
+**Operators:** add `CODECOV_TOKEN` as a repo secret before relying on Codecov dashboards; `fail_ci_if_error: false` is set so missing token silently no-ops the upload step rather than red-lining CI.
 
 ## 0.7.1 — 2026-04-19
 
@@ -142,9 +168,11 @@ Composition graphs pin by `signature_id` by default (new `Pinning::Signature` on
 
 Stages on the wire now carry both `id` and `signature_id` fields. `canonical_id` is accepted on deserialization as a deprecated alias for `signature_id` (removal scheduled for 0.7.x) for v0.6.x back-compat.
 
-### Added — `noether stage verify --with-properties`
+### Added — properties checked by default in `noether stage verify`
 
-`noether stage verify <id>` now checks both signatures and declarative properties (against the stage's own `examples`) by default. Pass `--signatures-only` for the v0.6 behaviour.
+`noether stage verify <id>` now checks both the Ed25519 signature and the declarative properties (against the stage's own `examples`) by default. Passing `--signatures` restricts the run to signature checks; `--properties` restricts to properties. Passing both (or neither) runs both checks, as does the default invocation.
+
+(Early drafts of these release notes referred to `--with-properties` / `--signatures-only`. Those flag names never landed — the shipped CLI uses `--signatures` / `--properties` as described above.)
 
 ### Added — [STABILITY.md](STABILITY.md)
 

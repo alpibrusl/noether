@@ -70,9 +70,11 @@ New `DeprecationReport { rewrites, events }` distinguishes routine rewrites from
 
 Two content-addressed IDs per stage: `signature_id = SHA-256(name + input + output + effects)` (stable across bugfix-only impl rewrites) and `implementation_id` aka `StageId = SHA-256(signature_id + implementation_hash)`. Graphs pin by `signature_id` by default (`Pinning::Signature`); `Pinning::Both` requires exact impl match.
 
-### Added — `noether stage verify --with-properties`
+### Added — properties checked by default in `noether stage verify`
 
-Default now checks both signatures and declarative properties against declared examples. Pass `--signatures-only` for the v0.6 behaviour.
+Default now checks both Ed25519 signatures and declarative properties against declared examples. `--signatures` restricts to signatures; `--properties` restricts to properties. Default or both flags → both checks.
+
+(Early drafts of these notes referred to `--with-properties` / `--signatures-only`; those flag names never landed.)
 
 ### Added — STABILITY.md
 
