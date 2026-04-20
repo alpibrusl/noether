@@ -57,7 +57,7 @@ See [architecture/type-system.md](../architecture/type-system.md) for the full t
 
 ## 3. Effects are declared, not inferred at run time
 
-Every stage's signature carries an `EffectSet`:
+Every stage's signature carries an `EffectSet`. The kinds the engine currently recognises:
 
 - `Pure` — deterministic, no side effects.
 - `Fallible` — can return an error value.
@@ -65,6 +65,10 @@ Every stage's signature carries an `EffectSet`:
 - `Llm` — calls an LLM provider.
 - `Cost` — consumes paid credits (LLM tokens, API quota).
 - `NonDeterministic` — reads time, entropy, or process state.
+- `Process` — spawns a subprocess.
+- `Unknown` — effects haven't been declared (typically pre-`noether stage add` validation).
+
+The canonical list lives in `noether_core::effects::EffectKind`.
 
 Effects are authored in the stage spec, not inferred from the source. The **composition engine** sums the effects of every stage in the graph before execution and compares against the allowed set:
 

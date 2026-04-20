@@ -91,7 +91,10 @@ That stage is now in your store. The next composition with the same need hits it
 ```bash
 noether stage get c41f2
 noether stage test c41f2        # re-run the declared examples
-noether stage verify c41f2 --properties   # check any declared properties hold
+noether stage verify c41f2      # v0.7+: checks Ed25519 signature AND declared
+                                # properties by default. Pass --signatures to
+                                # restrict to signatures only, or --properties
+                                # to restrict to properties only.
 ```
 
 Synthesised stages are signed with your local signing key (generated on first run at `~/.noether/signing_key`). Their lifecycle starts at `Draft`; promote to `Active` with `noether stage activate <id>` when you're confident.

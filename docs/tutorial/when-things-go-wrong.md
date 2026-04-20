@@ -162,7 +162,7 @@ From v0.7, stages run in a bubblewrap sandbox by default. The relevant failure m
 | `bwrap resolved via $PATH` (warning) | bwrap found outside a system-owned path | Install to `/usr/bin` or a trusted Nix profile. Flags a PATH-planting risk |
 | `nix is installed at /usr/bin/nix (outside /nix/store)` | Distro-packaged Nix needs host libs the sandbox can't bind | Install via the Determinate/upstream installer (places `nix` under `/nix/store`), or run with `--isolate=none` |
 | `refusing to run without isolation` | `--require-isolation` / `NOETHER_REQUIRE_ISOLATION=1` set, bwrap unavailable | Install bwrap; or drop the flag if the strict requirement doesn't apply |
-| Network declared but DNS fails inside the sandbox | `/etc/resolv.conf` / `/etc/hosts` / `/etc/nsswitch.conf` missing on host | The sandbox binds these via `--ro-bind-try` — if they don't exist on the host, DNS won't resolve |
+| Network effect declared but DNS silently fails inside the sandbox | Missing `/etc/resolv.conf` / `/etc/hosts` / `/etc/nsswitch.conf` on host | The sandbox binds these via `--ro-bind-try`, which is a *no-op* when the host file is absent (rather than an error). Symptom: connects by IP work but names don't. Fix: create the missing file(s) on the host (a one-line `/etc/resolv.conf` with `nameserver 1.1.1.1` is enough for a smoke test) |
 
 See [SECURITY.md](https://github.com/alpibrusl/noether/blob/main/SECURITY.md) for the full isolation model.
 
