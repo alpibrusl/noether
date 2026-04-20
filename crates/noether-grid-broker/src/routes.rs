@@ -430,7 +430,7 @@ async fn dispatch(
                 tracing::error!(
                     job_id = %job_id.0,
                     error = %e,
-                    "failed to hash rewritten graph for composition_id"
+                    "failed to hash composition graph (rewritten)"
                 );
                 let mut jobs = state.jobs.lock().await;
                 if let Some(j) = jobs.get_mut(&job_id) {
@@ -441,10 +441,11 @@ async fn dispatch(
                         output: serde_json::Value::Null,
                         spent_cents: 0,
                         composition_id: None,
-                        error: Some(format!("failed to hash graph: {e}")),
+                        error: Some(format!("failed to hash composition graph: {e}")),
                         completed_at: Utc::now(),
                     });
                 }
+                drop(jobs);
                 return;
             }
         };

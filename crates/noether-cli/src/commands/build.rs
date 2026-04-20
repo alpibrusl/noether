@@ -526,17 +526,24 @@ fn bootstrap() -> (
     let graph = parse_graph(GRAPH_JSON).expect("embedded graph is invalid");
     // The graph is baked in at `noether build` time — a hash
     // failure here means the build step produced a broken binary.
-    // Panicking with a clear message beats silently shipping a
-    // stringly-typed "embedded" placeholder that would collide in
-    // any post-build correlation log. This path only runs once, at
-    // the generated binary's startup.
-    let composition_id = compute_composition_id(&graph).unwrap_or_else(|e| {
-        panic!(
-            "embedded composition graph failed to hash: {e}. \
-             The binary produced by `noether build` is malformed — \
-             rebuild from a current noether release."
-        )
-    });
+    // Matches run.rs's shape (clean stderr + exit 1) rather than a
+    // panic with a backtrace — easier for operators to read, and
+    // still hard-fails the bogus binary loudly. Silently shipping a
+    // stringly-typed "embedded" placeholder would collide in any
+    // post-build correlation log.
+    let composition_id = match compute_composition_id(&graph) {
+        Ok(id) => id,
+        Err(e) => {
+            eprintln!(
+                "{}",
+                acli_error(&format!(
+                    "failed to hash composition graph: {e} — the binary produced by \
+                     `noether build` is malformed; rebuild from a current noether release."
+                ))
+            );
+            std::process::exit(1);
+        }
+    };
 
     let (llm, _) = providers::build_llm_provider();
     let executor = Arc::new(

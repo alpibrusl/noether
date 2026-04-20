@@ -7,9 +7,10 @@
 use axum::{extract::State, http::StatusCode, routing, Json, Router};
 use chrono::Utc;
 use clap::Parser;
+use noether_engine::lagrange::CompositionGraph;
 use noether_grid_protocol::{
-    AuthVia, ExecuteRequest, Heartbeat, JobResult, JobStatus, LlmCapability, WorkerAdvertisement,
-    WorkerId,
+    AuthVia, ExecuteRequest, Heartbeat, JobId, JobResult, JobStatus, LlmCapability,
+    WorkerAdvertisement, WorkerId,
 };
 use noether_store::{JsonFileStore, StageStore};
 use serde_json::json;
@@ -456,6 +457,48 @@ async fn execute_single_stage(
     }
 }
 
+/// Hash the pre-resolution graph or return a ready-made failure
+/// `JobResult` describing why we couldn't hash it.
+///
+/// Extracted from [`run_graph`] so the error path (contract:
+/// `status == Failed` + `composition_id == None` + non-empty
+/// `error`) can be exercised by a unit test without fabricating a
+/// serde_jcs-hostile `serde_json::Value` — the test injects a
+/// closure that returns `Err` directly.
+///
+/// The contract this helper encodes:
+/// - `Ok(id)` on successful hash — never the literal `"unknown"`.
+/// - `Err(JobResult)` on hash failure, with `composition_id: None`
+///   (so broker correlation can distinguish "unhashable" from any
+///   real composition id) and a structured error message.
+//
+// `result_large_err` fires because `JobResult` is chunky (Value +
+// timestamps + JobId); boxing it here would obscure the helper's
+// intent for essentially zero runtime payoff — the failure path
+// only fires on serde_jcs anomalies, which are exceptional.
+#[allow(clippy::result_large_err)]
+fn hash_or_build_failure<H>(
+    graph: &CompositionGraph,
+    job_id: &JobId,
+    hasher: H,
+) -> Result<String, JobResult>
+where
+    H: FnOnce(&CompositionGraph) -> Result<String, serde_json::Error>,
+{
+    match hasher(graph) {
+        Ok(id) => Ok(id),
+        Err(e) => Err(JobResult {
+            job_id: job_id.clone(),
+            status: JobStatus::Failed,
+            output: serde_json::Value::Null,
+            spent_cents: 0,
+            composition_id: None,
+            error: Some(format!("failed to hash composition graph: {e}")),
+            completed_at: Utc::now(),
+        }),
+    }
+}
+
 async fn run_graph(store: &JsonFileStore, req: ExecuteRequest) -> JobResult {
     use noether_engine::executor::composite::CompositeExecutor;
     use noether_engine::executor::runner::run_composition;
@@ -486,26 +529,14 @@ async fn run_graph(store: &JsonFileStore, req: ExecuteRequest) -> JobResult {
     // including failures surfaced by the resolver itself. A broker
     // correlating runs across workers sees the same id for the same
     // source graph regardless of which (possibly now-deprecated)
-    // implementation it resolved to on any given run.
-    // Hash the pre-resolution graph. On failure the job can't be
-    // correlated — returning a Failed result with composition_id=None
-    // tells the broker "we got a graph we couldn't hash" rather than
-    // silently attributing the failure to a stringly-typed
-    // "unknown" correlation id that would collide with other
-    // unrelated hash failures.
-    let composition_id = match compute_composition_id(&graph) {
+    // implementation it resolved to on any given run. The one
+    // exception is `hash_or_build_failure` returning `Err` below,
+    // where no id can be produced — we record `composition_id:
+    // None` rather than shipping a stringly-typed "unknown" that
+    // would collide with other unrelated hash failures.
+    let composition_id = match hash_or_build_failure(&graph, &req.job_id, compute_composition_id) {
         Ok(id) => id,
-        Err(e) => {
-            return JobResult {
-                job_id: req.job_id,
-                status: JobStatus::Failed,
-                output: serde_json::Value::Null,
-                spent_cents: 0,
-                composition_id: None,
-                error: Some(format!("failed to hash graph: {e}")),
-                completed_at: Utc::now(),
-            };
-        }
+        Err(result) => return result,
     };
     if let Err(e) = resolve_pinning(&mut graph.root, store) {
         return JobResult {
@@ -557,5 +588,67 @@ async fn run_graph(store: &JsonFileStore, req: ExecuteRequest) -> JobResult {
             error: Some(format!("task panicked: {e}")),
             completed_at: Utc::now(),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use noether_core::stage::StageId;
+    use noether_engine::lagrange::{compute_composition_id, CompositionNode, Pinning};
+
+    fn dummy_graph() -> CompositionGraph {
+        CompositionGraph::new(
+            "test",
+            CompositionNode::Stage {
+                id: StageId("abc".into()),
+                pinning: Pinning::Signature,
+                config: None,
+            },
+        )
+    }
+
+    // serde_jcs rejects very little that serde_json's own `Value`
+    // can represent (non-finite floats are already rejected at
+    // `Value` construction time, so they never reach the
+    // canonicaliser). Injecting a hasher that returns `Err` is the
+    // contract-level way to exercise the failure path — the
+    // reviewer on PR #40 explicitly listed "mock
+    // compute_composition_id to return Err" as acceptable.
+    #[test]
+    fn hash_failure_yields_failed_jobresult_with_no_composition_id() {
+        let graph = dummy_graph();
+        let job_id = JobId("job-1".into());
+        let failing_hasher =
+            |_: &CompositionGraph| Err(serde_json::from_str::<()>("not json").unwrap_err());
+
+        let outcome = hash_or_build_failure(&graph, &job_id, failing_hasher);
+        let failure = outcome.expect_err("hash should have failed");
+
+        assert_eq!(failure.status, JobStatus::Failed);
+        assert_eq!(failure.composition_id, None);
+        assert_eq!(failure.output, serde_json::Value::Null);
+        assert_eq!(failure.spent_cents, 0);
+        assert_eq!(failure.job_id.0, "job-1");
+        let err = failure.error.as_deref().expect("error must be populated");
+        assert!(
+            err.contains("failed to hash composition graph"),
+            "error message should identify the failure: {err}"
+        );
+        // Guard against the pre-fix behaviour sneaking back in.
+        assert!(
+            !err.contains("unknown"),
+            "error should not stringly-type to 'unknown': {err}"
+        );
+    }
+
+    #[test]
+    fn successful_hash_returns_composition_id() {
+        let graph = dummy_graph();
+        let job_id = JobId("job-2".into());
+        let outcome = hash_or_build_failure(&graph, &job_id, compute_composition_id);
+        let id = outcome.expect("real hasher should succeed on a trivial graph");
+        assert!(!id.is_empty());
+        assert_ne!(id, "unknown");
     }
 }

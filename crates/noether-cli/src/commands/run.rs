@@ -6,11 +6,38 @@ use noether_engine::checker::{
 };
 use noether_engine::executor::budget::{build_cost_map, BudgetedExecutor};
 use noether_engine::executor::runner::run_composition;
-use noether_engine::lagrange::{compute_composition_id, parse_graph, resolve_stage_prefixes};
+use noether_engine::lagrange::{
+    compute_composition_id, parse_graph, resolve_stage_prefixes, CompositionGraph,
+};
 use noether_engine::planner::plan_graph;
 use noether_engine::trace::JsonFileTraceStore;
 use noether_store::StageStore;
 use serde_json::json;
+
+/// Hash the graph or return a ready-made ACLI error line.
+///
+/// Extracted so the error path (contract: stderr message starts
+/// with the ACLI error prefix, contains "failed to hash composition
+/// graph", and does NOT contain the pre-fix "unknown" placeholder)
+/// can be exercised by a unit test without fabricating a
+/// serde_jcs-hostile `serde_json::Value` — the test injects a
+/// closure that returns `Err` directly.
+///
+/// The caller is responsible for `eprintln!` + `exit(1)`.
+fn compute_composition_id_or_error_line<H>(
+    graph: &CompositionGraph,
+    hasher: H,
+) -> Result<String, String>
+where
+    H: FnOnce(&CompositionGraph) -> Result<String, serde_json::Error>,
+{
+    match hasher(graph) {
+        Ok(id) => Ok(id),
+        Err(e) => Err(acli_error(&format!(
+            "failed to hash composition graph: {e}"
+        ))),
+    }
+}
 
 /// Pre-flight policies for a single `noether run` invocation.
 pub struct RunPolicies<'a> {
@@ -64,13 +91,11 @@ pub fn cmd_run(
     // "unknown" — a silent stringly-typed fallback in the ACLI
     // envelope would rob the caller of any breadcrumb to the cause.
     // Matches the post-#32 compose.rs shape.
-    let composition_id = match compute_composition_id(&graph) {
+    let composition_id = match compute_composition_id_or_error_line(&graph, compute_composition_id)
+    {
         Ok(id) => id,
-        Err(e) => {
-            eprintln!(
-                "{}",
-                acli_error(&format!("failed to hash composition graph: {e}"))
-            );
+        Err(line) => {
+            eprintln!("{line}");
             std::process::exit(1);
         }
     };
@@ -262,5 +287,68 @@ pub fn cmd_run(
             eprintln!("{}", acli_error(&format!("execution failed: {e}")));
             std::process::exit(3);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use noether_core::stage::StageId;
+    use noether_engine::lagrange::{CompositionNode, Pinning};
+
+    fn dummy_graph() -> CompositionGraph {
+        CompositionGraph::new(
+            "t",
+            CompositionNode::Stage {
+                id: StageId("abc".into()),
+                pinning: Pinning::Signature,
+                config: None,
+            },
+        )
+    }
+
+    // Contract: on hash failure, the CLI surfaces a single ACLI
+    // error line mentioning "failed to hash composition graph" and
+    // never the pre-fix literal "unknown". The caller then
+    // `exit(1)`s; this helper's return value is the full line
+    // operators will see on stderr. See PR #40 review for why
+    // "mock compute_composition_id to return Err" is the chosen
+    // test strategy (serde_jcs-hostile `serde_json::Value`s can't
+    // be constructed through `Number::from_f64`).
+    #[test]
+    fn hash_failure_produces_acli_error_line() {
+        let graph = dummy_graph();
+        let failing_hasher =
+            |_: &CompositionGraph| Err(serde_json::from_str::<()>("not json").unwrap_err());
+
+        let outcome = compute_composition_id_or_error_line(&graph, failing_hasher);
+        let line = outcome.expect_err("hash should have failed");
+
+        assert!(
+            line.contains("failed to hash composition graph"),
+            "line should identify the failure: {line}"
+        );
+        assert!(
+            !line.contains("unknown"),
+            "line should not stringly-type to 'unknown': {line}"
+        );
+        // ACLI error envelope contract: ok=false + error field.
+        assert!(
+            line.contains("\"ok\":false") || line.contains("\"ok\": false"),
+            "expected ACLI error envelope shape: {line}"
+        );
+        assert!(
+            line.contains("\"error\""),
+            "expected ACLI error field: {line}"
+        );
+    }
+
+    #[test]
+    fn hash_success_returns_non_empty_non_unknown_id() {
+        let graph = dummy_graph();
+        let outcome = compute_composition_id_or_error_line(&graph, compute_composition_id);
+        let id = outcome.expect("real hasher should succeed on a trivial graph");
+        assert!(!id.is_empty());
+        assert_ne!(id, "unknown");
     }
 }
