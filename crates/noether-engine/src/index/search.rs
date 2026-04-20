@@ -1,3 +1,6 @@
+#![warn(clippy::unwrap_used)]
+#![cfg_attr(test, allow(clippy::unwrap_used))]
+
 use super::embedding::Embedding;
 use noether_core::stage::StageId;
 

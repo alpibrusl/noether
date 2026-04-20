@@ -1,3 +1,6 @@
+#![warn(clippy::unwrap_used)]
+#![cfg_attr(test, allow(clippy::unwrap_used))]
+
 use super::{ExecutionError, StageExecutor};
 use crate::executor::pure_cache::PureStageCache;
 use crate::lagrange::CompositionNode;
@@ -157,6 +160,11 @@ fn execute_node<E: StageExecutor + Sync>(
             // Execute all branches concurrently. Each branch gets its own
             // trace list; the Pure cache is NOT shared across parallel branches
             // to avoid any locking overhead.
+            //
+            // A panicking worker thread surfaces as a typed
+            // `ExecutionError::StageFailed` rather than propagating the
+            // panic — CLI callers rely on `Result` propagation to emit
+            // structured ACLI errors with non-zero exit codes.
             let branch_results = std::thread::scope(|s| {
                 let handles: Vec<_> = branch_data
                     .iter()
@@ -178,7 +186,20 @@ fn execute_node<E: StageExecutor + Sync>(
                     .collect();
                 handles
                     .into_iter()
-                    .map(|h| h.join().expect("parallel branch panicked"))
+                    .zip(branch_data.iter())
+                    .map(|(h, (name, _, _))| match h.join() {
+                        Ok(tuple) => tuple,
+                        Err(_panic) => (
+                            *name,
+                            Err(ExecutionError::StageFailed {
+                                stage_id: StageId(format!("parallel:{name}")),
+                                message: format!(
+                                    "parallel branch {name:?} panicked during execution"
+                                ),
+                            }),
+                            Vec::new(),
+                        ),
+                    })
                     .collect::<Vec<_>>()
             });
 
@@ -270,6 +291,9 @@ fn execute_node<E: StageExecutor + Sync>(
             let bindings_vec: Vec<(&str, &CompositionNode)> =
                 bindings.iter().map(|(n, b)| (n.as_str(), b)).collect();
 
+            // A panicking binding thread surfaces as a typed
+            // `ExecutionError::StageFailed` rather than propagating the
+            // panic (same rationale as Parallel above).
             let binding_results = std::thread::scope(|s| {
                 let handles: Vec<_> = bindings_vec
                     .iter()
@@ -285,7 +309,18 @@ fn execute_node<E: StageExecutor + Sync>(
                     .collect();
                 handles
                     .into_iter()
-                    .map(|h| h.join().expect("Let binding panicked"))
+                    .zip(bindings_vec.iter())
+                    .map(|(h, (name, _))| match h.join() {
+                        Ok(tuple) => tuple,
+                        Err(_panic) => (
+                            *name,
+                            Err(ExecutionError::StageFailed {
+                                stage_id: StageId(format!("let:{name}")),
+                                message: format!("let binding {name:?} panicked during execution"),
+                            }),
+                            Vec::new(),
+                        ),
+                    })
                     .collect::<Vec<_>>()
             });
 
@@ -533,6 +568,45 @@ mod tests {
         };
         let result = run_composition(&node, &json!("in"), &executor, "test").unwrap();
         assert_eq!(result.output, json!(["r1", "r2"]));
+    }
+
+    /// Executor that panics for a configured stage id. Used to exercise the
+    /// parallel/Let branch panic-to-error conversion.
+    struct PanickingExecutor {
+        panic_on: String,
+    }
+
+    impl StageExecutor for PanickingExecutor {
+        fn execute(&self, stage_id: &StageId, _input: &Value) -> Result<Value, ExecutionError> {
+            if stage_id.0 == self.panic_on {
+                panic!("intentional test panic");
+            }
+            Ok(Value::Null)
+        }
+    }
+
+    #[test]
+    fn parallel_branch_panic_becomes_execution_error() {
+        // A panicking stage inside a parallel branch must surface as a typed
+        // ExecutionError — not propagate the panic up to the CLI process.
+        let executor = PanickingExecutor {
+            panic_on: "boom".into(),
+        };
+        let node = CompositionNode::Parallel {
+            branches: BTreeMap::from([
+                ("left".into(), stage("boom")),
+                ("right".into(), stage("ok")),
+            ]),
+        };
+        let result = run_composition(&node, &json!({}), &executor, "test");
+        assert!(
+            matches!(
+                result,
+                Err(ExecutionError::StageFailed { ref message, .. })
+                    if message.contains("panicked")
+            ),
+            "expected StageFailed with panic marker, got: {result:?}"
+        );
     }
 
     #[test]

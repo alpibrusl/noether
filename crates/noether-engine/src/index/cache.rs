@@ -1,3 +1,6 @@
+#![warn(clippy::unwrap_used)]
+#![cfg_attr(test, allow(clippy::unwrap_used))]
+
 use super::embedding::{Embedding, EmbeddingError, EmbeddingProvider};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -169,6 +172,19 @@ impl CachedEmbeddingProvider {
                     std::thread::sleep(inter_batch_delay);
                 }
                 let part = self.inner.embed_batch(slice)?;
+                // A well-behaved provider returns exactly one embedding per
+                // input text. A misbehaving one (truncated response, rate-
+                // limit short-read, etc.) would desync `consumed` against
+                // `miss_indices` and leave some cache slots unfilled — the
+                // final `cache.get(h).expect(..)` used to panic here. Bail
+                // as a typed provider error instead.
+                if part.len() != slice.len() {
+                    return Err(EmbeddingError::Provider(format!(
+                        "embed_batch returned {} embeddings for {} inputs",
+                        part.len(),
+                        slice.len()
+                    )));
+                }
                 for (j, emb) in part.into_iter().enumerate() {
                     let idx = miss_indices[consumed + j];
                     self.cache.insert(hashes[idx].clone(), emb);
@@ -179,10 +195,20 @@ impl CachedEmbeddingProvider {
             }
         }
 
-        Ok(hashes
-            .iter()
-            .map(|h| self.cache.get(h).cloned().expect("just inserted"))
-            .collect())
+        let mut out = Vec::with_capacity(hashes.len());
+        for h in &hashes {
+            match self.cache.get(h).cloned() {
+                Some(e) => out.push(e),
+                None => {
+                    return Err(EmbeddingError::Provider(
+                        "embedding cache missing an entry after batch fill; provider or cache \
+                         layer returned inconsistent results"
+                            .to_string(),
+                    ));
+                }
+            }
+        }
+        Ok(out)
     }
 
     /// Backward-compatible wrapper: no inter-batch sleep, single final flush.
@@ -193,5 +219,44 @@ impl CachedEmbeddingProvider {
         chunk_size: usize,
     ) -> Result<Vec<Embedding>, EmbeddingError> {
         self.embed_batch_cached_paced(texts, chunk_size, std::time::Duration::ZERO)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Provider that returns fewer embeddings than requested on the first
+    /// batch — simulates a misbehaving remote that truncates responses.
+    struct ShortBatchProvider;
+
+    impl EmbeddingProvider for ShortBatchProvider {
+        fn dimensions(&self) -> usize {
+            4
+        }
+        fn embed(&self, _text: &str) -> Result<Embedding, EmbeddingError> {
+            Ok(vec![0.0; 4])
+        }
+        fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Embedding>, EmbeddingError> {
+            // Deliberately drop the last entry.
+            Ok(texts
+                .iter()
+                .take(texts.len().saturating_sub(1))
+                .map(|_| vec![0.0; 4])
+                .collect())
+        }
+    }
+
+    #[test]
+    fn short_batch_becomes_provider_error_not_panic() {
+        let tmp = std::env::temp_dir().join("noether-cache-short-batch-test.json");
+        let _ = std::fs::remove_file(&tmp);
+        let mut cp = CachedEmbeddingProvider::new(Box::new(ShortBatchProvider), tmp);
+        let texts = ["a", "b", "c"];
+        let r = cp.embed_batch_cached(&texts, 8);
+        assert!(
+            matches!(r, Err(EmbeddingError::Provider(ref m)) if m.contains("embed_batch returned")),
+            "expected Provider error, got: {r:?}"
+        );
     }
 }

@@ -1,3 +1,6 @@
+#![warn(clippy::unwrap_used)]
+#![cfg_attr(test, allow(clippy::unwrap_used))]
+
 use sha2::{Digest, Sha256};
 
 pub type Embedding = Vec<f32>;

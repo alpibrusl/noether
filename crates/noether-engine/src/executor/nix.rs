@@ -1,3 +1,6 @@
+#![warn(clippy::unwrap_used)]
+#![cfg_attr(test, allow(clippy::unwrap_used))]
+
 //! Nix-based executor for synthesized stages.
 //!
 //! Runs stage implementations as subprocesses using `nix run nixpkgs#<runtime>`,
@@ -634,35 +637,36 @@ impl NixExecutor {
     fn extract_pip_requirements(code: &str) -> Option<String> {
         for line in code.lines() {
             let trimmed = line.trim();
-            if trimmed.starts_with("# requires:") {
-                let reqs = trimmed.strip_prefix("# requires:").unwrap().trim();
-                if reqs.is_empty() {
-                    continue;
-                }
-                let valid: Vec<String> = reqs
-                    .split(',')
-                    .map(|s| s.trim())
-                    .filter(|s| !s.is_empty())
-                    .filter(|s| match validate_pip_spec(s) {
-                        Ok(()) => true,
-                        Err(reason) => {
-                            eprintln!(
-                                "[noether] rejected `# requires:` entry {s:?} ({reason}); skipping"
-                            );
-                            false
-                        }
-                    })
-                    .map(|s| s.to_string())
-                    .collect();
-
-                if valid.is_empty() {
-                    eprintln!(
-                        "[noether] all `# requires:` entries rejected (raw={reqs:?}); falling back to default Nix runtime"
-                    );
-                    return None;
-                }
-                return Some(valid.join(", "));
+            let Some(reqs_raw) = trimmed.strip_prefix("# requires:") else {
+                continue;
+            };
+            let reqs = reqs_raw.trim();
+            if reqs.is_empty() {
+                continue;
             }
+            let valid: Vec<String> = reqs
+                .split(',')
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .filter(|s| match validate_pip_spec(s) {
+                    Ok(()) => true,
+                    Err(reason) => {
+                        eprintln!(
+                            "[noether] rejected `# requires:` entry {s:?} ({reason}); skipping"
+                        );
+                        false
+                    }
+                })
+                .map(|s| s.to_string())
+                .collect();
+
+            if valid.is_empty() {
+                eprintln!(
+                    "[noether] all `# requires:` entries rejected (raw={reqs:?}); falling back to default Nix runtime"
+                );
+                return None;
+            }
+            return Some(valid.join(", "));
         }
         None
     }
