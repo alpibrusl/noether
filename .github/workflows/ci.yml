@@ -63,3 +63,56 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Run doc tests
         run: cargo test --doc -p noether-core -p noether-store
+
+  coverage:
+    name: Coverage (cargo-llvm-cov)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+      # Collect coverage per crate so each upload carries a flag. The
+      # selection mirrors the `test` job — only crates whose tests run on
+      # CI today are instrumented. `codecov.yml` targets reference these
+      # flags. First run on main produces the baseline; do not assert a
+      # specific percentage in PR descriptions.
+      - name: Coverage — noether-core
+        run: |
+          cargo llvm-cov -p noether-core \
+            --lcov --output-path coverage-core.lcov \
+            --ignore-filename-regex '(tests?/|examples/)'
+      - name: Coverage — noether-store
+        run: |
+          cargo llvm-cov -p noether-store \
+            --lcov --output-path coverage-store.lcov \
+            --ignore-filename-regex '(tests?/|examples/)'
+      - name: Coverage — noether-engine
+        run: |
+          cargo llvm-cov -p noether-engine --lib \
+            --lcov --output-path coverage-engine.lcov \
+            --ignore-filename-regex '(tests?/|examples/)'
+      - name: Upload noether-core coverage
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage-core.lcov
+          flags: core
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+      - name: Upload noether-store coverage
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage-store.lcov
+          flags: store
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+      - name: Upload noether-engine coverage
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage-engine.lcov
+          flags: engine
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}

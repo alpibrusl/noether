@@ -1,0 +1,128 @@
+# Codecov config — wired by ci/issue-43-coverage (closes #43).
+#
+# Coverage is collected in .github/workflows/ci.yml, job `coverage`, via
+# `cargo llvm-cov`. The first run on main produces the baseline — the
+# numbers in this file are initial targets, not observed values.
+
+codecov:
+  require_ci_to_pass: true
+  notify:
+    # Wait until the coverage job has uploaded before posting the PR
+    # comment so reviewers see numbers, not a pending state.
+    wait_for_ci: true
+
+coverage:
+  precision: 2
+  round: down
+  range: "60...90"
+
+  status:
+    # Project-wide gate: total line coverage must not regress by more
+    # than 1 percentage point against `main`. First run establishes the
+    # baseline; informational until then.
+    project:
+      default:
+        target: auto
+        threshold: 1%
+        base: auto
+      # Stable crates — the composition engine's trusted core. Worth a
+      # fixed floor, not just a regression gate.
+      core:
+        target: 80%
+        threshold: 1%
+        flags:
+          - core
+      engine:
+        target: 80%
+        threshold: 1%
+        flags:
+          - engine
+      store:
+        target: 80%
+        threshold: 1%
+        flags:
+          - store
+
+    # Patch coverage: new lines touched by a PR should be reasonably
+    # tested. `auto` makes this advisory at first — we'll tighten once
+    # the baseline settles.
+    patch:
+      default:
+        target: auto
+        threshold: 1%
+
+# Component management lets codecov split the workspace report by crate
+# without requiring per-crate flag uploads. `flags` above still work for
+# status gates; `component_management` drives the UI breakdown and the
+# informational (non-blocking) targets for the research-stage crates.
+component_management:
+  individual_components:
+    - component_id: core
+      name: noether-core
+      paths:
+        - crates/noether-core/**
+    - component_id: engine
+      name: noether-engine
+      paths:
+        - crates/noether-engine/**
+    - component_id: store
+      name: noether-store
+      paths:
+        - crates/noether-store/**
+    # Research-stage crates — the v0.4 grid and the cron scheduler have
+    # sparse tests today (noether-scheduler and noether-grid-worker are
+    # binary-only; noether-grid-broker has one e2e test). Floor is set
+    # low and informational so the first baseline isn't a red wall; the
+    # floor tightens once tests land.
+    - component_id: grid-broker
+      name: noether-grid-broker
+      paths:
+        - crates/noether-grid-broker/**
+      statuses:
+        - type: project
+          target: 60%
+          informational: true
+    - component_id: grid-worker
+      name: noether-grid-worker
+      paths:
+        - crates/noether-grid-worker/**
+      statuses:
+        - type: project
+          target: 60%
+          informational: true
+    - component_id: scheduler
+      name: noether-scheduler
+      paths:
+        - crates/noether-scheduler/**
+      statuses:
+        - type: project
+          target: 60%
+          informational: true
+
+# Exclude generated/test-only files from the report so uncovered error
+# paths aren't diluted. Mirrors the --ignore-filename-regex used in CI.
+ignore:
+  - "**/tests/**"
+  - "**/examples/**"
+  - "crates/noether-cli/**"       # needs Nix at runtime; not run under cov
+  - "crates/noether-sandbox/**"   # needs bwrap; not run under cov
+  - "crates/noether-isolation/**" # covered separately when tests expand
+
+flags:
+  core:
+    paths:
+      - crates/noether-core/
+    carryforward: true
+  engine:
+    paths:
+      - crates/noether-engine/
+    carryforward: true
+  store:
+    paths:
+      - crates/noether-store/
+    carryforward: true
+
+comment:
+  layout: "header, diff, components, files"
+  behavior: default
+  require_changes: false
