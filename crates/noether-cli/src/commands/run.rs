@@ -5,7 +5,8 @@ use noether_engine::checker::{
     verify_signatures, CapabilityPolicy, EffectPolicy,
 };
 use noether_engine::executor::budget::{build_cost_map, BudgetedExecutor};
-use noether_engine::executor::runner::run_composition;
+use noether_engine::executor::pure_cache::PureStageCache;
+use noether_engine::executor::runner::run_composition_with_cache;
 use noether_engine::lagrange::{
     compute_composition_id, parse_graph, resolve_stage_prefixes, CompositionGraph,
 };
@@ -288,19 +289,47 @@ pub fn cmd_run(
 
     // 9. Execute — wrap with BudgetedExecutor when a budget is set so cost
     //    is tracked and enforced at runtime (not just statically pre-flight).
+    //    A PureStageCache is built from the store so repeated (stage, input)
+    //    pairs within a single run skip re-execution (M3 memoize_pure).
+    //    Opt out via NOETHER_NO_MEMOIZE=1 for benchmarks or bug repros
+    //    where the literal dispatch path matters.
     let executor =
         super::executor_builder::build_executor_with_isolation(store, policies.isolation.clone());
+    let memoize_disabled = std::env::var("NOETHER_NO_MEMOIZE")
+        .ok()
+        .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
+    let mut pure_cache = if memoize_disabled {
+        None
+    } else {
+        Some(PureStageCache::from_store(store))
+    };
     let result = if let Some(budget) = policies.budget_cents {
         let cost_map = build_cost_map(&graph.root, store);
         let budgeted = BudgetedExecutor::new(executor, cost_map, budget);
-        let r = run_composition(&graph.root, input, &budgeted, &composition_id);
+        let r = run_composition_with_cache(
+            &graph.root,
+            input,
+            &budgeted,
+            &composition_id,
+            pure_cache.as_mut(),
+        );
         r.map(|mut cr| {
             cr.spent_cents = budgeted.spent_cents();
             cr
         })
     } else {
-        run_composition(&graph.root, input, &executor, &composition_id)
+        run_composition_with_cache(
+            &graph.root,
+            input,
+            &executor,
+            &composition_id,
+            pure_cache.as_mut(),
+        )
     };
+    let pure_cache_stats = pure_cache
+        .as_ref()
+        .map(|c| (c.hits, c.misses))
+        .unwrap_or((0, 0));
 
     match result {
         Ok(result) => {
@@ -316,6 +345,19 @@ pub fn cmd_run(
             });
             if result.spent_cents > 0 {
                 resp["spent_cents"] = json!(result.spent_cents);
+            }
+            // Cache stats are informational — only surface them when
+            // they say something useful (i.e. at least one hit or the
+            // feature was explicitly disabled). A pure-composition
+            // run with zero hits and zero misses would otherwise
+            // clutter the envelope with a `memoize` field that
+            // conveys nothing.
+            if pure_cache_stats.0 > 0 || memoize_disabled {
+                resp["memoize"] = json!({
+                    "enabled": !memoize_disabled,
+                    "hits": pure_cache_stats.0,
+                    "misses": pure_cache_stats.1,
+                });
             }
             println!("{}", acli_ok(resp));
         }
