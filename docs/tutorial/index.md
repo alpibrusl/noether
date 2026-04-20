@@ -1,4 +1,7 @@
-# Tutorial: turn `citecheck` into verified Noether stages
+# Walkthrough: turn `citecheck` into verified Noether stages
+
+!!! warning "This walkthrough runs ahead of the current CLI"
+    Parts of this page — `noether lint`, `noether run --stage <name>`, `noether skill`, and the `{"sequence": …, "parallel": …, "bind": …}` graph shape — describe an older / aspirational CLI surface. The real v0.7.x commands and Lagrange graph format are documented in [Core concepts](concepts.md) and [When things go wrong](when-things-go-wrong.md); a working end-to-end narrative is in [Compose with an LLM](llm-compose.md). A rewrite of this page against the current CLI is pending — track it on the project roadmap. Read this page as narrative for now, not as commands to copy.
 
 In the [ACLI tutorial](https://alpibrusl.github.io/acli/tutorial/) we built `citecheck`, a CLI that verifies citations in Markdown. The logic was straightforward but monolithic: one Python file, `verify()` calls `_fetch()` calls `_extract_text()` calls `_contains_claim()`.
 

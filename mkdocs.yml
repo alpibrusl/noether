@@ -91,7 +91,11 @@ nav:
     - CLI Commands: cli/commands.md
     - ACLI Output Format: cli/acli.md
     - Stdlib Catalogue: stdlib/catalogue.md
-  - Tutorial: tutorial/index.md
+  - Tutorial:
+    - Core concepts: tutorial/concepts.md
+    - Walkthrough — citecheck as stages: tutorial/index.md
+    - Compose with an LLM: tutorial/llm-compose.md
+    - When things go wrong: tutorial/when-things-go-wrong.md
   - Examples:
     - Demo Gallery: demo.md
     - Example Index: examples/index.md
