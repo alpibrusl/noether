@@ -14,7 +14,7 @@ description = "Noether composition engine: Lagrange graph AST, type checker, pla
 # SQLite KV store, LLM providers, semantic index, and registry client.
 # When building for wasm32 (browser target), compile with --no-default-features.
 default = ["native"]
-native = ["dep:reqwest", "dep:rusqlite", "dep:arrow", "dep:base64"]
+native = ["dep:reqwest", "dep:rusqlite", "dep:arrow", "dep:base64", "dep:llm-here-core"]
 
 [dependencies]
 noether-core = { path = "../noether-core", version = "0.7" }
@@ -36,6 +36,10 @@ rusqlite = { version = "0.39.0", features = ["bundled"], optional = true }
 arrow = { version = "58", optional = true, default-features = false, features = ["ipc"] }
 base64 = { version = "0.22", optional = true }
 wasm-bindgen = { version = "0.2", optional = true }
+# CLI detection + dispatch delegated to llm-here (shared across caloron,
+# agentspec, and noether-grid — see docs/research/llm-here.md). Pinned to
+# a tag until llm-here lands on crates.io.
+llm-here-core = { git = "https://github.com/alpibrusl/llm-here", tag = "v0.4.0", optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.4", features = ["wasm_js"] }
