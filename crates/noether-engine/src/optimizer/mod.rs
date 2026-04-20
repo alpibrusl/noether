@@ -32,12 +32,18 @@
 //!
 //! # Current passes
 //!
+//! - [`canonical_structural::CanonicalStructural`] — lift the M1
+//!   structural canonicalisation rules (flatten Sequential, collapse
+//!   singleton Sequential, fuse nested Retry) onto the execution
+//!   graph so the executor sees the canonical form, not just the
+//!   hasher.
 //! - [`dead_branch::DeadBranchElimination`] — fold
 //!   `Branch { predicate: Const(bool), … }` into the selected arm.
 //!
 //! Future passes per M3 in `docs/roadmap.md`:
 //! `fuse_pure_sequential`, `hoist_invariant`, `memoize_pure`.
 
+pub mod canonical_structural;
 pub mod dead_branch;
 
 use crate::lagrange::CompositionNode;
