@@ -4,6 +4,19 @@ Notable changes to Noether. Follows [Keep a Changelog](https://keepachangelog.co
 
 ## Unreleased
 
+### Added — `IsolationPolicy.rw_binds` ([#39](https://github.com/alpibrusl/noether/issues/39))
+
+Optional `Vec<RwBind>` on `IsolationPolicy`, mirroring `ro_binds`. Consumers with a richer filesystem trust model (agentspec's `filesystem: scoped`, the "agent operates on my `~/projects/foo` RW" pattern) can now declare read-write bind mounts without routing through `work_host` — which is reserved for the single sandbox scratch dir.
+
+- New `RwBind { host, sandbox }` struct — same shape and `From<(PathBuf, PathBuf)>` convenience as `RoBind`.
+- `rw_binds: Vec<RwBind>` field on `IsolationPolicy`, `#[serde(default)]` + `skip_serializing_if = "Vec::is_empty"`. Policies on the wire that predate 0.7.2 deserialise to an empty vec; the field doesn't emit when unused.
+- `build_bwrap_command` emits `--bind <host> <sandbox>` per entry, in a documented order: **`rw_binds` → `ro_binds` → `work_host`.** RW first lets a narrower RO entry shadow a broader RW parent (the `workdir RW, .ssh RO` case); `work_host` renders last so its `/work` mapping wins.
+- `from_effects` does **not** produce `rw_binds`. The `EffectSet` vocabulary has no `FsWrite(path)` variant to drive it, so any `RwBind` is a caller-authored trust decision. The `RwBind` rustdoc spells this out — the crate can't validate whether binding `/home/user` RW is sensible; that responsibility lives with the caller.
+
+### Notes for downstream consumers
+
+agentspec's `TrustSpec.filesystem: scoped` mode can now delegate to `noether-sandbox` via a policy carrying explicit `rw_binds` — see [agentspec #22](https://github.com/alpibrusl/agentspec/pull/22) for the integration path.
+
 ## 0.7.1 — 2026-04-19
 
 Small release: extract the isolation primitive into its own crate and ship a standalone sandbox binary for non-Rust consumers.
