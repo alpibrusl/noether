@@ -4,6 +4,36 @@ Notable changes to Noether. Follows [Keep a Changelog](https://keepachangelog.co
 
 ## Unreleased
 
+### Added — filesystem-scoped effects (M3.x, [#39](https://github.com/alpibrusl/noether/issues/39) follow-up)
+
+Two new variants on `noether_core::effects::Effect`:
+
+- `Effect::FsRead { path: PathBuf }` — stage reads a specific host path.
+- `Effect::FsWrite { path: PathBuf }` — stage writes to a specific host path.
+
+`EffectKind::FsRead` / `EffectKind::FsWrite` mirror the variants; `Effect::kind()` and `EffectKind::fmt` know about them. CLI `--allow-effects` accepts `fs-read` / `fs-write` tokens.
+
+### Changed — `IsolationPolicy::from_effects` now drives bind mounts from effects
+
+The function now scans the `EffectSet` for path-bearing filesystem effects:
+
+- `FsRead(p)` appends `RoBind { host: p, sandbox: p }` to `ro_binds`.
+- `FsWrite(p)` appends `RwBind { host: p, sandbox: p }` to `rw_binds`.
+
+`/nix/store` is still unconditionally bound read-only (Nix-pinned runtimes need it). Multiple effects of the same variant produce multiple binds — declaring `FsRead(/etc)` and `FsRead(/usr/share)` yields two `--ro-bind` entries. The mount-order contract from [#39](https://github.com/alpibrusl/noether/pull/47) (rw → ro → work_host) still holds when binds are effect-driven.
+
+### Closes the gap #39 flagged
+
+When `#39` landed, `from_effects` produced empty `rw_binds` — the `EffectSet` vocabulary simply had no way to express "stage writes to /tmp/out". Consumers (agentspec's `filesystem: scoped`, agent-coding runtimes) had to construct `IsolationPolicy` by hand. With this milestone, a stage can declare its filesystem surface in the signature and `from_effects` does the right thing without caller intervention.
+
+This is a deliberate trust-widening surface on the effect side. Binding `/home/user` RW still grants broad host access — the rustdoc on the new variants keeps the same framing as `RwBind`: the crate cannot validate whether a declared path is sensible to share; that's a caller-authored policy decision.
+
+### Back-compat
+
+- Existing stages that don't declare `FsRead` / `FsWrite` are bit-identical on the wire. Their `StageId` is unchanged.
+- Adding a new filesystem effect to an existing stage changes that stage's `StageId` (as it should — the behaviour just changed).
+- Wire format: `{"effect": "FsRead", "path": "/etc"}` matches the existing `#[serde(tag = "effect")]` shape the other variants use. Non-Rust consumers (the Python bindings agentspec will grow against `noether-sandbox`) get a uniform schema.
+
 ## 0.7.3 — 2026-04-20
 
 Release-pipeline repair. **No source changes in this version — it exists to re-publish crates and ship a new set of release tarballs through the fixed workflow.**

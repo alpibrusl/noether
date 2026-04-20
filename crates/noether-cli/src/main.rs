@@ -70,7 +70,8 @@ enum Commands {
         #[arg(long)]
         allow_capabilities: Option<String>,
         /// Comma-separated list of effect kinds to allow
-        /// (pure, fallible, llm, network, non-deterministic, cost, unknown).
+        /// (pure, fallible, fs-read, fs-write, llm, network,
+        /// non-deterministic, cost, process, unknown).
         /// Default: all effects are allowed.
         #[arg(long)]
         allow_effects: Option<String>,
@@ -500,6 +501,8 @@ fn parse_effect_policy(raw: Option<&str>) -> EffectPolicy {
             let kinds = s.split(',').filter_map(|token| match token.trim() {
                 "pure" => Some(EffectKind::Pure),
                 "fallible" => Some(EffectKind::Fallible),
+                "fs-read" | "fsread" => Some(EffectKind::FsRead),
+                "fs-write" | "fswrite" => Some(EffectKind::FsWrite),
                 "llm" => Some(EffectKind::Llm),
                 "network" => Some(EffectKind::Network),
                 "non-deterministic" | "nondeterministic" => Some(EffectKind::NonDeterministic),
