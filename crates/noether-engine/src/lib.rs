@@ -17,6 +17,7 @@ pub mod checker;
 pub mod error;
 pub mod executor;
 pub mod lagrange;
+pub mod optimizer;
 pub mod planner;
 pub mod stage_test;
 pub mod trace;

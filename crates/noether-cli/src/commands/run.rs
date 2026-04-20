@@ -9,6 +9,7 @@ use noether_engine::executor::runner::run_composition;
 use noether_engine::lagrange::{
     compute_composition_id, parse_graph, resolve_stage_prefixes, CompositionGraph,
 };
+use noether_engine::optimizer::{self, dead_branch::DeadBranchElimination, OptimizerReport};
 use noether_engine::planner::plan_graph;
 use noether_engine::trace::JsonFileTraceStore;
 use noether_store::StageStore;
@@ -202,6 +203,41 @@ pub fn cmd_run(
         std::process::exit(2);
     }
 
+    // 7a. Optimize — structural rewrites that preserve semantics
+    //     (M3, see crates/noether-engine/src/optimizer/). Runs after
+    //     type-check so the passes see a well-formed graph, and
+    //     before the planner so the plan is built from the rewritten
+    //     tree. `composition_id` was computed on the pre-resolution
+    //     canonical form (step 1b), so it stays stable across
+    //     optimization. Env-gate `NOETHER_NO_OPTIMIZE=1` disables for
+    //     anyone who needs the literal graph to reach the executor
+    //     (trace debugging, bug repros).
+    let opt_report: OptimizerReport = if std::env::var("NOETHER_NO_OPTIMIZE")
+        .ok()
+        .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+    {
+        OptimizerReport {
+            passes_applied: Vec::new(),
+            iterations: 0,
+            hit_iteration_cap: false,
+        }
+    } else {
+        let (rewritten, report) = optimizer::optimize(
+            graph.root,
+            &[&DeadBranchElimination],
+            optimizer::DEFAULT_MAX_ITERATIONS,
+        );
+        graph.root = rewritten;
+        if report.hit_iteration_cap {
+            eprintln!(
+                "[noether] optimizer hit iteration cap ({} iters, passes touched: {:?}) — \
+                 treat the rewritten graph as suspect and re-run with NOETHER_NO_OPTIMIZE=1 to compare",
+                report.iterations, report.passes_applied
+            );
+        }
+        report
+    };
+
     // 8. Plan
     let plan = plan_graph(&graph.root, store);
 
@@ -224,6 +260,11 @@ pub fn cmd_run(
                 "output": format!("{}", check.resolved.output),
             },
             "effects": inferred_kinds,
+            "optimizer": {
+                "passes_applied": opt_report.passes_applied,
+                "iterations": opt_report.iterations,
+                "hit_cap": opt_report.hit_iteration_cap,
+            },
             "plan": {
                 "steps": plan.steps.len(),
                 "parallel_groups": plan.parallel_groups.len(),

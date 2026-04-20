@@ -4,6 +4,30 @@ Notable changes to Noether. Follows [Keep a Changelog](https://keepachangelog.co
 
 ## Unreleased
 
+### Added — graph optimizer framework + `dead_branch` pass (M3 first slice)
+
+A structural AST rewrite layer between type-check and plan generation:
+
+```text
+parse → resolve → check_graph → [optimize] → plan → execute
+```
+
+Optimizer passes are **semantics-preserving** — they reshape the tree, never the leaf stage identities. `composition_id` is computed on the pre-resolution canonical form, so it stays stable across optimization regardless of what passes run.
+
+- `noether_engine::optimizer::OptimizerPass` trait: `name()` + `rewrite(node) -> (node, changed)`.
+- `noether_engine::optimizer::optimize(node, passes, max_iterations)` — fixpoint runner. Returns an `OptimizerReport` listing which passes fired and whether the iteration cap was hit (guards against oscillating passes).
+- Default iteration cap: `DEFAULT_MAX_ITERATIONS = 16`.
+
+**First pass:** `dead_branch::DeadBranchElimination`. When a `Branch`'s `predicate` is a `Const(Bool)` node, fold the `Branch` to the selected arm and recurse into it. Non-constant predicates and non-bool constants are left alone. Common on agent-generated graphs where the LLM emits a defensive `Branch(Const(true), real, fallback)` shape; folding lets the planner skip wiring the dead arm entirely.
+
+Other optimizer passes listed in the M3 milestone (`fuse_pure_sequential`, `hoist_invariant`, `memoize_pure`) land as separate PRs — the framework makes each of them a ~300-LOC increment.
+
+### Changed — `noether run` optimizes graphs by default
+
+`cmd_run` now invokes the optimizer between type-check and plan. Set `NOETHER_NO_OPTIMIZE=1` (or `NOETHER_NO_OPTIMIZE=true`) to disable — intended for trace debugging and bug repros where the literal graph must reach the executor unchanged.
+
+The dry-run ACLI envelope gains an `optimizer` field reporting `passes_applied`, `iterations`, and `hit_cap` so operators can see what the optimizer did without re-running with the env var set.
+
 ### Added — filesystem-scoped effects (M3.x, [#39](https://github.com/alpibrusl/noether/issues/39) follow-up)
 
 Two new variants on `noether_core::effects::Effect`:
