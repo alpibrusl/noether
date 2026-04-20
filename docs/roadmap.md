@@ -33,7 +33,7 @@ Noether shifted from sequential "phase" numbering to milestone tracking with the
 | M2.5 | Property DSL expansion | ✅ Done | v0.7.0 | `FieldLengthEq` / `FieldLengthMax` / `SubsetOf` / `Equals` / `FieldTypeIn`, typed `JsonKind` enum, shadowed-kind ingest rejection |
 | M2.x | `noether-isolation` crate extraction | ✅ Done | v0.7.1 | Standalone crate + `noether-sandbox` binary for non-Rust consumers (agentspec, future Python/Node/Go bindings) |
 | M3 | Optimizer + Richer Types | ⏳ Next | targeting v0.8.0 | Graph optimizer (`fuse_pure_sequential`, `hoist_invariant`, `dead_branch`, `memoize_pure`), parametric polymorphism on stage signatures, row polymorphism on records, refinement types with runtime check |
-| M3.x | Filesystem-scoped effects | ⏳ Planned | targeting v0.8.0 | `Effect::FsRead(path)` / `FsWrite(path)` variants so the sandbox can grant targeted filesystem access per stage |
+| M3.x | Filesystem-scoped effects | ✅ Done | unreleased (next tag) | `Effect::FsRead(path)` / `FsWrite(path)` variants wired through `IsolationPolicy::from_effects` so path-scoped binds fall out of the signature — closes the gap [#39](https://github.com/alpibrusl/noether/issues/39) flagged around `from_effects` being unable to drive `rw_binds` |
 | M4 | Stdlib Curation + Vertical Depth + 1.0 | ⏳ Planned | targeting 1.0.0 | Stdlib audit, vertical depth in a chosen domain, freeze |
 | Phase 2 isolation | Native namespaces + Landlock + seccomp | ⏳ Planned | targeting v0.8.0 | Replace bwrap subprocess with direct `unshare` + Landlock + seccomp; same `IsolationPolicy` surface, ~10× lower startup |
 

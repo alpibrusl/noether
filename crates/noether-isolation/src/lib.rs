@@ -290,9 +290,24 @@ impl IsolationPolicy {
     /// [`Self::with_work_host`].
     pub fn from_effects(effects: &EffectSet) -> Self {
         let has_network = effects.iter().any(|e| matches!(e, Effect::Network));
+        // M3.x: path-scoped filesystem effects drive bind-mount
+        // generation. `Effect::FsRead(p)` → `RoBind { p, p }`,
+        // `Effect::FsWrite(p)` → `RwBind { p, p }`. Multiple entries
+        // of each variant produce multiple binds. `/nix/store` is
+        // always bound read-only because Nix-pinned runtimes need to
+        // resolve regardless of declared effects.
+        let mut ro_binds = vec![RoBind::new("/nix/store", "/nix/store")];
+        let mut rw_binds = Vec::new();
+        for effect in effects.iter() {
+            match effect {
+                Effect::FsRead { path } => ro_binds.push(RoBind::new(path.clone(), path.clone())),
+                Effect::FsWrite { path } => rw_binds.push(RwBind::new(path.clone(), path.clone())),
+                _ => {}
+            }
+        }
         Self {
-            ro_binds: vec![RoBind::new("/nix/store", "/nix/store")],
-            rw_binds: Vec::new(),
+            ro_binds,
+            rw_binds,
             work_host: None,
             network: has_network,
             env_allowlist: vec![
@@ -765,6 +780,108 @@ mod tests {
         assert!(
             work_bind_idx > ro_ssh_idx,
             "work_host must render last so its /work mapping wins"
+        );
+    }
+
+    #[test]
+    fn fs_read_effect_becomes_ro_bind() {
+        // M3.x: a stage declaring `Effect::FsRead(p)` should see `p`
+        // bound read-only at the same path inside the sandbox, no
+        // caller intervention required. Pairs with the CHANGELOG's
+        // "effects drive policy" framing.
+        let policy = IsolationPolicy::from_effects(&EffectSet::new([
+            Effect::Pure,
+            Effect::FsRead {
+                path: PathBuf::from("/etc/ssl/certs"),
+            },
+        ]));
+        let bound = policy
+            .ro_binds
+            .iter()
+            .find(|b| b.host == Path::new("/etc/ssl/certs"))
+            .expect("FsRead path must appear in ro_binds");
+        assert_eq!(bound.sandbox, Path::new("/etc/ssl/certs"));
+        assert!(policy.rw_binds.is_empty(), "FsRead must not trigger RW");
+    }
+
+    #[test]
+    fn fs_write_effect_becomes_rw_bind() {
+        let policy = IsolationPolicy::from_effects(&EffectSet::new([
+            Effect::Pure,
+            Effect::FsWrite {
+                path: PathBuf::from("/tmp/agent-output"),
+            },
+        ]));
+        let bound = policy
+            .rw_binds
+            .iter()
+            .find(|b| b.host == Path::new("/tmp/agent-output"))
+            .expect("FsWrite path must appear in rw_binds");
+        assert_eq!(bound.sandbox, Path::new("/tmp/agent-output"));
+        // /nix/store is still in ro_binds; FsWrite shouldn't disturb
+        // the baseline read-only mounts.
+        assert!(policy
+            .ro_binds
+            .iter()
+            .any(|b| b.sandbox == Path::new("/nix/store")));
+    }
+
+    #[test]
+    fn multiple_fs_effects_produce_multiple_binds() {
+        // A stage can declare several FsRead / FsWrite paths. Each
+        // becomes its own bind entry — the BTreeSet semantics of
+        // EffectSet keep distinct-path effects distinct.
+        let policy = IsolationPolicy::from_effects(&EffectSet::new([
+            Effect::FsRead {
+                path: PathBuf::from("/etc"),
+            },
+            Effect::FsRead {
+                path: PathBuf::from("/usr/share"),
+            },
+            Effect::FsWrite {
+                path: PathBuf::from("/tmp/out"),
+            },
+            Effect::FsWrite {
+                path: PathBuf::from("/var/log/agent"),
+            },
+        ]));
+        let ro_paths: Vec<&Path> = policy.ro_binds.iter().map(|b| b.host.as_path()).collect();
+        assert!(ro_paths.contains(&Path::new("/etc")));
+        assert!(ro_paths.contains(&Path::new("/usr/share")));
+        assert!(ro_paths.contains(&Path::new("/nix/store")));
+        let rw_paths: Vec<&Path> = policy.rw_binds.iter().map(|b| b.host.as_path()).collect();
+        assert!(rw_paths.contains(&Path::new("/tmp/out")));
+        assert!(rw_paths.contains(&Path::new("/var/log/agent")));
+    }
+
+    #[test]
+    fn bwrap_command_emits_fs_effect_binds() {
+        // End-to-end: FsRead / FsWrite declared in the effect set
+        // should show up as --ro-bind / --bind argv entries. This
+        // pins the full pipeline from Effect → Policy → argv.
+        let policy = IsolationPolicy::from_effects(&EffectSet::new([
+            Effect::FsRead {
+                path: PathBuf::from("/etc/ssl/certs"),
+            },
+            Effect::FsWrite {
+                path: PathBuf::from("/tmp/agent-output"),
+            },
+        ]));
+        let cmd = build_bwrap_command(Path::new("/usr/bin/bwrap"), &policy, &["python3".into()]);
+        let argv: Vec<String> = cmd.get_args().map(|a| a.to_string_lossy().into()).collect();
+
+        let ro_idx = argv
+            .windows(3)
+            .position(|w| w[0] == "--ro-bind" && w[1] == "/etc/ssl/certs")
+            .expect("FsRead should render as --ro-bind");
+        let rw_idx = argv
+            .windows(3)
+            .position(|w| w[0] == "--bind" && w[1] == "/tmp/agent-output")
+            .expect("FsWrite should render as --bind");
+        // Mount-order contract still holds with effect-driven binds.
+        assert!(
+            rw_idx < ro_idx,
+            "rw_binds must still render before ro_binds when both come from effects"
         );
     }
 }
