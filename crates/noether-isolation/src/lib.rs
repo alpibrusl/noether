@@ -168,6 +168,54 @@ impl From<(PathBuf, PathBuf)> for RoBind {
     }
 }
 
+/// A single read-write bind mount. The exact counterpart of [`RoBind`]
+/// for the `rw_binds` field — same wire shape, same ergonomics, same
+/// `From<(PathBuf, PathBuf)>` convenience.
+///
+/// # Trust semantics
+///
+/// `RwBind` is a deliberate trust widening. The crate's default
+/// posture — `work_host: None` with a sandbox-private tmpfs `/work`,
+/// and `ro_binds` containing only `/nix/store` — is what
+/// [`IsolationPolicy::from_effects`] produces, and it's the shape
+/// that keeps the sandbox meaningful.
+///
+/// The moment a caller adds an `RwBind` to the policy, the stage
+/// inside the sandbox can write to the corresponding host path. The
+/// crate does not — cannot — validate whether that's a sensible
+/// thing to share. Binding `/home/user` RW gives the stage the
+/// caller's entire home directory; binding a project workdir RW is
+/// the whole point of an agent-coding tool. Both use exactly the
+/// same mechanism. The *policy* decision lives with the caller.
+///
+/// No `from_effects` variant produces an `RwBind`. The `EffectSet`
+/// vocabulary has no `FsWrite(path)` variant (noted in the
+/// module-level rustdoc), so effects alone can't drive the shape.
+/// Consumers that want RW binds construct the policy directly and
+/// take responsibility for the trust decision.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RwBind {
+    /// Host-side path. Must exist; `bwrap` will fail otherwise.
+    pub host: PathBuf,
+    /// Path inside the sandbox where the host dir/file appears.
+    pub sandbox: PathBuf,
+}
+
+impl RwBind {
+    pub fn new(host: impl Into<PathBuf>, sandbox: impl Into<PathBuf>) -> Self {
+        Self {
+            host: host.into(),
+            sandbox: sandbox.into(),
+        }
+    }
+}
+
+impl From<(PathBuf, PathBuf)> for RwBind {
+    fn from((host, sandbox): (PathBuf, PathBuf)) -> Self {
+        Self { host, sandbox }
+    }
+}
+
 /// What the sandbox does and doesn't let a stage reach.
 ///
 /// Derived from a stage's `EffectSet` via
@@ -181,6 +229,35 @@ pub struct IsolationPolicy {
     /// Read-only bind mounts. Always includes `/nix/store` so
     /// Nix-pinned runtimes resolve inside the sandbox.
     pub ro_binds: Vec<RoBind>,
+    /// Read-write bind mounts. Empty by default; never populated by
+    /// [`Self::from_effects`] (effects alone don't carry enough
+    /// information to justify a trust widening — see [`RwBind`]).
+    ///
+    /// # Interaction with `ro_binds` and `work_host` (mount order)
+    ///
+    /// `bwrap` processes bind flags in argv order; a later flag whose
+    /// sandbox path sits under an earlier flag's sandbox path shadows
+    /// the earlier one for that subtree. [`build_bwrap_command`]
+    /// emits binds in this fixed order:
+    ///
+    /// 1. `rw_binds` (this field) — `--bind <host> <sandbox>` per entry.
+    /// 2. `ro_binds` — `--ro-bind <host> <sandbox>` per entry.
+    /// 3. `work_host` — `--bind <host> /work` (if `Some`), else
+    ///    `--dir /work` (sandbox-private tmpfs).
+    ///
+    /// Why RW-then-RO: the agentspec-ish pattern is *"this agent
+    /// operates on my `~/projects/foo` directory RW, but its `.ssh`
+    /// subdirectory stays RO."* With RW emitted first, the narrower
+    /// RO shadows the broader RW — which is the default-ergonomic
+    /// outcome. Reversing the order would make the RW bind silently
+    /// override an attempt to protect a subpath.
+    ///
+    /// `work_host` renders *after* both vectors, so a `work_host`
+    /// that happens to sit under an earlier bind wins at `/work`.
+    /// This matches the pre-existing behaviour on `ro_binds` alone
+    /// and is the mapping the executor expects.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rw_binds: Vec<RwBind>,
     /// Scratch directory strategy for `/work` inside the sandbox.
     ///
     /// - `None` (recommended, and the default from [`Self::from_effects`])
@@ -215,6 +292,7 @@ impl IsolationPolicy {
         let has_network = effects.iter().any(|e| matches!(e, Effect::Network));
         Self {
             ro_binds: vec![RoBind::new("/nix/store", "/nix/store")],
+            rw_binds: Vec::new(),
             work_host: None,
             network: has_network,
             env_allowlist: vec![
@@ -267,9 +345,14 @@ pub const NOBODY_GID: u32 = 65534;
 ///   bind-mount misconfiguration).
 /// - `--die-with-parent` — if the parent dies, so does the sandbox.
 /// - `--proc /proc`, `--dev /dev` — standard Linux mounts.
+/// - `--bind <host> <sandbox>` — writable bind mounts from the
+///   policy's `rw_binds`. Emitted **before** `ro_binds` so a
+///   narrower RO bind can shadow a broader RW parent — see the
+///   mount-order contract on [`IsolationPolicy::rw_binds`].
 /// - `--ro-bind <host> <sandbox>` — read-only mounts from the
 ///   policy's `ro_binds`. Always includes `/nix/store`.
-/// - `--bind <work_host> /work` — writable scratch.
+/// - `--bind <work_host> /work` — writable scratch. Emitted last,
+///   so a `work_host` that sits under an earlier bind wins at `/work`.
 /// - `--chdir /work` — subprocess starts in the scratch dir.
 /// - `--clearenv` — wipe the environment; the executor re-adds the
 ///   allowlisted variables via `.env(...)`.
@@ -321,6 +404,14 @@ pub fn build_bwrap_command(
         ] {
             c.arg("--ro-bind-try").arg(etc_path).arg(etc_path);
         }
+    }
+
+    // Mount-order contract (documented on IsolationPolicy::rw_binds):
+    // rw_binds → ro_binds → work_host. Emitting RW first lets a
+    // narrower RO entry shadow a broader RW parent — the
+    // "workdir RW, .ssh RO" pattern is the default-ergonomic case.
+    for bind in &policy.rw_binds {
+        c.arg("--bind").arg(&bind.host).arg(&bind.sandbox);
     }
 
     for bind in &policy.ro_binds {
@@ -576,13 +667,104 @@ mod tests {
         // Policy crosses a process boundary for consumers like the
         // noether-sandbox binary (stdin JSON + argv). Pin the shape so
         // a future field reorder / rename on the wire is deliberate.
-        let policy = IsolationPolicy::from_effects(&EffectSet::pure())
+        //
+        // Exercises a non-empty rw_binds on purpose — the field landed
+        // in v0.7.2 behind #[serde(default)], and regressing it to
+        // "always empty on the wire" would silently strip caller
+        // trust-widening decisions without an error.
+        let mut policy = IsolationPolicy::from_effects(&EffectSet::pure())
             .with_work_host(PathBuf::from("/tmp/work"));
+        policy
+            .rw_binds
+            .push(RwBind::new("/home/user/project", "/work/project"));
+        policy
+            .rw_binds
+            .push(RwBind::new("/tmp/output", "/tmp/output"));
+
         let json = serde_json::to_string(&policy).unwrap();
         let back: IsolationPolicy = serde_json::from_str(&json).unwrap();
         assert_eq!(back.network, policy.network);
         assert_eq!(back.work_host, policy.work_host);
         assert_eq!(back.ro_binds, policy.ro_binds);
+        assert_eq!(back.rw_binds, policy.rw_binds);
         assert_eq!(back.env_allowlist, policy.env_allowlist);
+    }
+
+    #[test]
+    fn rw_binds_default_to_empty_and_are_omitted_from_json() {
+        // #[serde(default)] + #[serde(skip_serializing_if = "Vec::is_empty")]
+        // is the back-compat contract: policies on the wire that predate
+        // v0.7.2 deserialise to an empty vec; policies with no rw_binds
+        // don't emit the field at all, keeping JSON compact.
+        let policy = IsolationPolicy::from_effects(&EffectSet::pure());
+        assert!(
+            policy.rw_binds.is_empty(),
+            "from_effects must produce zero rw_binds; trust widening \
+             is opt-in"
+        );
+
+        let json = serde_json::to_string(&policy).unwrap();
+        assert!(
+            !json.contains("rw_binds"),
+            "empty rw_binds should not appear on the wire: {json}"
+        );
+
+        // A v0.7.1-shaped payload (no rw_binds field) must still
+        // deserialise cleanly.
+        let legacy = r#"{
+            "ro_binds": [{"host": "/nix/store", "sandbox": "/nix/store"}],
+            "network": false,
+            "env_allowlist": []
+        }"#;
+        let back: IsolationPolicy = serde_json::from_str(legacy).unwrap();
+        assert!(back.rw_binds.is_empty());
+    }
+
+    #[test]
+    fn bwrap_command_emits_rw_binds_before_ro_binds() {
+        // The mount-order contract documented on IsolationPolicy::rw_binds:
+        // rw → ro → work_host, so a narrower RO can shadow a broader
+        // RW parent. Pin this order at argv-emission time — reversing
+        // it would silently flip the shadowing semantics the doc
+        // promises callers.
+        let mut policy = IsolationPolicy::from_effects(&EffectSet::pure());
+        policy
+            .rw_binds
+            .push(RwBind::new("/home/user/project", "/work/project"));
+        policy
+            .ro_binds
+            .push(RoBind::new("/home/user/project/.ssh", "/work/project/.ssh"));
+        policy = policy.with_work_host(PathBuf::from("/tmp/workdir"));
+
+        let cmd = build_bwrap_command(Path::new("/usr/bin/bwrap"), &policy, &["python3".into()]);
+        let argv: Vec<String> = cmd.get_args().map(|a| a.to_string_lossy().into()).collect();
+
+        // Find the first --bind (should be the RW project dir) and
+        // the --ro-bind for the .ssh subdir. RW index must come before
+        // RO index.
+        let rw_project_idx = argv
+            .windows(3)
+            .position(|w| w[0] == "--bind" && w[1] == "/home/user/project")
+            .expect("rw_binds entry must render as --bind <host> <sandbox>");
+        let ro_ssh_idx = argv
+            .windows(3)
+            .position(|w| w[0] == "--ro-bind" && w[1] == "/home/user/project/.ssh")
+            .expect("ro_binds entry must render as --ro-bind <host> <sandbox>");
+        assert!(
+            rw_project_idx < ro_ssh_idx,
+            "rw_binds must render before ro_binds so narrower RO shadows \
+             broader RW parent; got rw={rw_project_idx} ro={ro_ssh_idx}"
+        );
+
+        // work_host (/tmp/workdir → /work) must come after both so
+        // its mapping wins at /work.
+        let work_bind_idx = argv
+            .windows(3)
+            .position(|w| w[0] == "--bind" && w[1] == "/tmp/workdir" && w[2] == "/work")
+            .expect("work_host bind missing");
+        assert!(
+            work_bind_idx > ro_ssh_idx,
+            "work_host must render last so its /work mapping wins"
+        );
     }
 }
