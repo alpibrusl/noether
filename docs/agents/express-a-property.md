@@ -30,7 +30,7 @@ Attach one or more declarative property claims to a stage so its behaviour is ve
 4. **Validate at registration**:
    ```bash
    noether stage add spec.json          # ingest rejects unsatisfiable / typo'd properties
-   noether stage verify <id> --with-properties   # re-run properties against every example
+   noether stage verify <id> --properties        # re-run only the property checks against every example
    ```
 
 5. **Re-check against runtime traces** (optional but encouraged in CI):

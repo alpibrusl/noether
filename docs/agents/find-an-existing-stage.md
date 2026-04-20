@@ -28,7 +28,7 @@ Find a stage already in the store that matches a given type signature or intent,
    Returns the full `Stage` struct: signature, effects, examples, properties, capabilities, cost estimate.
 4. **Verify behaviourally** when the stakes are high — run the stage's own declared examples through the executor:
    ```bash
-   noether stage verify <id> --with-properties
+   noether stage verify <id>   # signatures + properties by default; --signatures / --properties restrict
    ```
 5. **Use the stage in a graph** by dropping its id (full or 8-char prefix) into a `CompositionNode::Stage`. Default pinning is `Signature` (the resolver picks the currently-Active implementation at execution time), stable across bugfix rewrites.
 
