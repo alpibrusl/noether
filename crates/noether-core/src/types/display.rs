@@ -47,6 +47,10 @@ impl fmt::Display for NType {
                 }
                 write!(f, "...<{rest}> }}")
             }
+            // Refined types print as `Base | Refinement` — the pipe
+            // matches common refinement-type notation from ML / Liquid
+            // Haskell / etc.
+            NType::Refined { base, refinement } => write!(f, "{base} | {refinement}"),
         }
     }
 }

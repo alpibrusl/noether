@@ -694,6 +694,9 @@ fn contains_var(ty: &NType) -> bool {
         // definition unbound until unified. Treat it as "has a Var" so
         // edges involving one route through unification.
         NType::RecordWith { .. } => true,
+        // Refined types delegate to their base — the refinement
+        // doesn't participate in unification.
+        NType::Refined { base, .. } => contains_var(base),
         _ => false,
     }
 }
@@ -774,6 +777,14 @@ fn apply_subst_to_ntype(subst: &Substitution, ty: &NType) -> NType {
                 },
             }
         }
+        // Refined types: apply to the base, keep the refinement. A
+        // substitution that binds something inside the base can still
+        // tighten the declared shape; the refinement predicate
+        // transfers verbatim.
+        NType::Refined { base, refinement } => NType::Refined {
+            base: Box::new(apply_subst_to_ntype(subst, base)),
+            refinement: refinement.clone(),
+        },
         _ => ty.clone(),
     }
 }

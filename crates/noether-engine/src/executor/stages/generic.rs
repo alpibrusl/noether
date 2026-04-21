@@ -67,6 +67,24 @@ pub fn mark_done(input: &Value) -> Result<Value, ExecutionError> {
     Ok(Value::Object(cloned))
 }
 
+/// `clamp_percent: Number | Range(0..=100) -> Number | Range(0..=100)`
+/// — pass-through. The refinement lives in the type; validation
+/// happens elsewhere. If a caller asks for a value outside `[0, 100]`,
+/// that's caught at `stage verify` time by the properties this stage
+/// declares (executor-level enforcement is a follow-up).
+pub fn clamp_percent(input: &Value) -> Result<Value, ExecutionError> {
+    // Defensive: return a StageFailed rather than silently passing
+    // non-Numbers through. The type checker should never let this
+    // fire, but a misconfigured inline-dispatch could.
+    if !input.is_number() {
+        return Err(ExecutionError::StageFailed {
+            stage_id: StageId("clamp_percent".into()),
+            message: format!("expected Number, got {input}"),
+        });
+    }
+    Ok(input.clone())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

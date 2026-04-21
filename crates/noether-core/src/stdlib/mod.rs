@@ -50,9 +50,9 @@ mod tests {
     #[test]
     fn load_stdlib_returns_expected_stage_count() {
         let stages = load_stdlib();
-        // 76 existing + 4 process + 4 generic (M3 slice 3: identity,
-        // head, tail + row-poly slice: mark_done)
-        assert_eq!(stages.len(), 84);
+        // 76 existing + 4 process + 5 generic (slice 3 identity/head/tail
+        // + row-poly mark_done + refinement clamp_percent)
+        assert_eq!(stages.len(), 85);
     }
 
     #[test]

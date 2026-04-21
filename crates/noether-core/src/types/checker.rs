@@ -115,6 +115,51 @@ pub fn is_subtype_of(sub: &NType, sup: &NType) -> TypeCompatibility {
         return Compatible;
     }
 
+    // Refined types (M3 refinement types).
+    //
+    // The conservative rule:
+    //   - `Refined { base: T, _ } <: U`        → delegate to `T <: U`.
+    //     Dropping a refinement is safe — the value is still a T.
+    //   - `U <: Refined { base: T, r }`        → only when the sub is
+    //     literally a `Refined` with the SAME refinement and a base
+    //     that is a subtype. We don't try to prove predicate
+    //     implication from scratch (e.g., `Range(0..=10)` refining
+    //     `Range(0..=100)`); that's value-level reasoning for a
+    //     follow-up milestone.
+    //   - `Refined { T, r1 } <: Refined { T', r2 }` where `r1 == r2`
+    //     delegates to `T <: T'`; otherwise Incompatible.
+    match (sub, sup) {
+        (
+            Refined {
+                base: sb,
+                refinement: sr,
+            },
+            Refined {
+                base: tb,
+                refinement: tr,
+            },
+        ) => {
+            if sr == tr {
+                return is_subtype_of(sb, tb);
+            } else {
+                return Incompatible(PrimitiveMismatch {
+                    expected: format!("{}", sup),
+                    got: format!("{}", sub),
+                });
+            }
+        }
+        (Refined { base, .. }, _) => {
+            return is_subtype_of(base, sup);
+        }
+        (_, Refined { .. }) => {
+            return Incompatible(PrimitiveMismatch {
+                expected: format!("{}", sup),
+                got: format!("{}", sub),
+            });
+        }
+        _ => {}
+    }
+
     match (sub, sup) {
         // Identical primitives
         (Text, Text)
@@ -604,5 +649,62 @@ mod tests {
         let sup = NType::record([("name", NType::Text), ("extra", NType::Var("T".into()))]);
         let sub = NType::record([("name", NType::Text)]);
         assert!(compatible(&sub, &sup));
+    }
+
+    // ── Refinement subtyping (M3 refinement slice) ────────────────
+
+    #[test]
+    fn refined_sub_delegates_to_base() {
+        // Refined(T, r) <: U iff T <: U — dropping a refinement is safe.
+        use crate::types::Refinement;
+        let refined_number = NType::refined(
+            NType::Number,
+            Refinement::Range {
+                min: Some(0.0),
+                max: Some(100.0),
+            },
+        );
+        assert!(compatible(&refined_number, &NType::Number));
+    }
+
+    #[test]
+    fn concrete_cannot_widen_to_refined_without_proof() {
+        // Number is NOT automatically a subtype of Refined(Number, …)
+        // — the type system can't prove every Number satisfies the
+        // predicate, so the widening is rejected at subtype level.
+        // The callers' job: validate the value, or declare the type
+        // refined upstream.
+        use crate::types::Refinement;
+        let refined_number = NType::refined(
+            NType::Number,
+            Refinement::Range {
+                min: Some(0.0),
+                max: Some(100.0),
+            },
+        );
+        assert!(!compatible(&NType::Number, &refined_number));
+    }
+
+    #[test]
+    fn refined_to_refined_requires_equal_refinement() {
+        // Two refined types with IDENTICAL refinements are
+        // compatible (delegating to base); with different
+        // refinements we conservatively say Incompatible.
+        use crate::types::Refinement;
+        let r = Refinement::Range {
+            min: Some(0.0),
+            max: Some(100.0),
+        };
+        let a = NType::refined(NType::Number, r.clone());
+        let b = NType::refined(NType::Number, r);
+        let c = NType::refined(
+            NType::Number,
+            Refinement::Range {
+                min: Some(0.0),
+                max: Some(50.0),
+            },
+        );
+        assert!(compatible(&a, &b));
+        assert!(!compatible(&a, &c)); // different refinement → Incompatible
     }
 }

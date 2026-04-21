@@ -4,6 +4,59 @@ Notable changes to Noether. Follows [Keep a Changelog](https://keepachangelog.co
 
 ## Unreleased
 
+### Added — refinement types (M3 last slice)
+
+`NType::Refined { base, refinement }` attaches a runtime-checkable predicate to any base type. A refinement is one of:
+
+- **`Refinement::Range { min, max }`** — numeric bounds (open on either end).
+- **`Refinement::OneOf { options }`** — closed-set / enum-like membership by JSON equality.
+- **`Refinement::NonEmpty`** — string / array / object non-emptiness.
+
+Together these cover the cases agent-composed graphs hit most often. More kinds (regex, length bounds) can land additively — the existing variants keep their meaning across 1.x.
+
+### Subtyping
+
+Conservative and safe:
+
+- `Refined { base: T, _ } <: U` — delegates to `T <: U`. Dropping a refinement is always sound.
+- `U <: Refined { base: T, r }` — **Incompatible** unless `U` is literally a `Refined` with the same refinement. The type system doesn't try to prove predicate implication from scratch (e.g. `Range(0..=10)` refining `Range(0..=100)`); that's value-level reasoning for a future milestone.
+- `Refined { T, r1 } <: Refined { T', r2 }` — compatible iff `r1 == r2` and `T <: T'`.
+
+### Runtime validator
+
+`noether_core::types::validate_refinement(&Value, &Refinement) -> Result<(), String>` returns `Ok(())` when the value satisfies the predicate, or a short human-readable reason otherwise. Callers decide how to surface violations.
+
+### Integration with `validate_stage`
+
+Example-level validation (what `noether stage add` runs) now peels refinements off the declared type for the structural subtype check, then invokes `validate_refinement` on each refinement layer against the example's concrete value. A value outside the declared refinement surfaces as an `InputTypeMismatch` / `OutputTypeMismatch` with the refinement name and reason, so the existing error-reporting path carries it.
+
+### Stdlib
+
+- **`clamp_percent: Number | Range(0..=100) → Number | Range(0..=100)`** (Pure). Pass-through stage with refined input+output. Demonstrates that the type system correctly rejects piping a bare `Number` into a refined-`Number` input without explicit validation upstream.
+
+### Tests
+
+- **10 in the `types::refinement` module** — range accepts / rejects inside / outside bounds (including unbounded), one-of exact / non-member / object-equality, non-empty accepts / rejects / non-measurable, serde round-trip, Display.
+- **3 in `types::checker`** — `refined_sub_delegates_to_base`, `concrete_cannot_widen_to_refined_without_proof`, `refined_to_refined_requires_equal_refinement`.
+- **2 in `types::primitive`** — round-trip + Ord placement.
+
+### What this does NOT do
+
+- **No automatic runtime enforcement at stage boundaries.** The validator is available; wiring it into `run_composition` so every stage input / output with a refined type is checked at execute time is a follow-up. Today's refinements are declared-and-verified-at-`stage verify`, not auto-enforced at `noether run`.
+- **No predicate implication.** `Range(0..=10) <: Range(0..=100)` — same shape, different refinement — fires `Incompatible`. Correct rule exists but requires SMT-style value-level reasoning; deferred.
+- **No new refinement kinds.** Regex, length bounds, etc. — additive future work.
+
+### M3 status: ✅ Done
+
+The four tracks in the M3 row of `docs/roadmap.md`:
+
+- ✅ Optimizer (framework + `dead_branch` + `canonical_structural` + `memoize_pure`; `fuse_pure_sequential` / `hoist_invariant` moved to planner follow-ups)
+- ✅ Parametric polymorphism (unification + `NType::Var` + `check_graph` threading + generic stdlib stages)
+- ✅ Row polymorphism (`NType::RecordWith` + Record↔RecordWith unification + `mark_done` stdlib)
+- ✅ **Refinement types with runtime check** (this slice)
+
+Next up: v0.8.0 tag.
+
 ### Added — row polymorphism (M3 row-poly slice)
 
 New `NType::RecordWith { fields, rest }` variant: an open record with **known fields plus a row-variable tail** capturing whatever other fields the concrete counterpart carries. Unification binds the row variable; substitution collapses it back to a closed record.

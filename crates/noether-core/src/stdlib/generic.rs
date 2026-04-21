@@ -19,7 +19,7 @@
 use crate::effects::{Effect, EffectSet};
 use crate::stage::property::Property;
 use crate::stage::{Stage, StageBuilder};
-use crate::types::NType;
+use crate::types::{NType, Refinement};
 use ed25519_dalek::SigningKey;
 use serde_json::json;
 
@@ -146,6 +146,66 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
             .tag("pure")
             .alias("mark_visited")
             .alias("set_done")
+            .build_stdlib(key)
+            .unwrap(),
+        // clamp_percent : Number | Range(0..=100) -> Number | Range(0..=100)
+        //
+        // The refinement-types demonstrator (M3 refinement slice).
+        // Takes a Number that's already declared-to-be in [0, 100]
+        // and returns it unchanged. At type-check time, a graph
+        // composing a plain `Number` into this stage's input fails
+        // (a bare Number isn't provably in range) — the type system
+        // makes the caller clamp or validate upstream. A graph that
+        // produces `Number | Range(0..=100)` all the way in wires
+        // cleanly.
+        //
+        // Runtime validation via `noether_core::types::validate_refinement`
+        // is available but not yet auto-enforced at stage boundaries;
+        // executor wiring lands in a follow-up.
+        StageBuilder::new("clamp_percent")
+            .input(NType::refined(
+                NType::Number,
+                Refinement::Range {
+                    min: Some(0.0),
+                    max: Some(100.0),
+                },
+            ))
+            .output(NType::refined(
+                NType::Number,
+                Refinement::Range {
+                    min: Some(0.0),
+                    max: Some(100.0),
+                },
+            ))
+            .pure()
+            // Properties here are redundant with the refinement but
+            // are still useful at `stage verify` time because the
+            // executor doesn't auto-enforce refinements yet. Removing
+            // them once executor enforcement lands is a follow-up.
+            .property(Property::Range {
+                field: "input".into(),
+                min: Some(0.0),
+                max: Some(100.0),
+            })
+            .property(Property::Range {
+                field: "output".into(),
+                min: Some(0.0),
+                max: Some(100.0),
+            })
+            .description(
+                "Pass through a percentage value. Input and output are refined to Number in [0, 100].",
+            )
+            .example(json!(0), json!(0))
+            .example(json!(50), json!(50))
+            .example(json!(100), json!(100))
+            .example(json!(42.5), json!(42.5))
+            .example(json!(1), json!(1))
+            .tag("generic")
+            .tag("polymorphic")
+            .tag("refinement")
+            .tag("pure")
+            .alias("pct_identity")
+            .alias("percentage_pass")
             .build_stdlib(key)
             .unwrap(),
     ]

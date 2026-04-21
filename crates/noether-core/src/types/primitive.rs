@@ -1,3 +1,4 @@
+use crate::types::refinement::Refinement;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -77,6 +78,36 @@ pub enum NType {
         fields: BTreeMap<String, NType>,
         rest: String,
     },
+    /// A base type with a runtime-checkable predicate attached
+    /// (M3 refinement types). `Refined { base: Number, refinement:
+    /// Range { min: 0, max: 100 } }` reads as "a Number between 0
+    /// and 100 inclusive."
+    ///
+    /// # Subtyping
+    ///
+    /// - `Refined { base: T, _ } <: U` iff `T <: U` — dropping a
+    ///   refinement is safe (the value is still a T).
+    /// - `U <: Refined { base: T, _ }` is **not** automatic — we
+    ///   can't prove every T satisfies the predicate without
+    ///   value-level reasoning. Current behaviour: compatible only
+    ///   when the sub is literally a `Refined` with the same
+    ///   refinement and a compatible base.
+    ///
+    /// # Runtime enforcement
+    ///
+    /// [`crate::types::refinement::validate`] is the validator
+    /// callers invoke to check a `serde_json::Value` against the
+    /// refinement. Wiring it into the executor at stage boundaries
+    /// is a follow-up — for now, refinements shape the type system
+    /// and surface at `stage verify` time but are not auto-enforced
+    /// at graph-execute time.
+    ///
+    /// Placed at the end of the enum so the discriminant ordering
+    /// of every pre-existing variant is preserved.
+    Refined {
+        base: Box<NType>,
+        refinement: Refinement,
+    },
 }
 
 impl NType {
@@ -124,6 +155,14 @@ impl NType {
         NType::RecordWith {
             fields: fields.into_iter().map(|(k, v)| (k.into(), v)).collect(),
             rest: rest.into(),
+        }
+    }
+
+    /// Convenience constructor for a refined type.
+    pub fn refined(base: NType, refinement: Refinement) -> NType {
+        NType::Refined {
+            base: Box::new(base),
+            refinement,
         }
     }
 }
@@ -245,5 +284,32 @@ mod tests {
         let rw = NType::record_with([("a", NType::Text)], "R");
         assert!(rw > NType::Var("T".into()));
         assert!(rw > NType::Text);
+    }
+
+    // ── Refinement types (M3 refinement slice) ─────────────────────
+
+    #[test]
+    fn refined_round_trips_through_json() {
+        // Refinement variants all round-trip via `#[serde(tag = "kind")]`.
+        let t = NType::refined(
+            NType::Number,
+            Refinement::Range {
+                min: Some(0.0),
+                max: Some(100.0),
+            },
+        );
+        let json = serde_json::to_string(&t).unwrap();
+        let back: NType = serde_json::from_str(&json).unwrap();
+        assert_eq!(t, back);
+    }
+
+    #[test]
+    fn refined_ord_is_deterministic() {
+        // Refined is the newest variant (after RecordWith) so its
+        // discriminant sorts last. Pre-existing variants keep their
+        // slots.
+        let refined = NType::refined(NType::Number, Refinement::NonEmpty);
+        assert!(refined > NType::record_with(Vec::<(String, NType)>::new(), "R"));
+        assert!(refined > NType::Var("T".into()));
     }
 }

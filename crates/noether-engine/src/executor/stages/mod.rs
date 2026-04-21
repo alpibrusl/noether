@@ -35,6 +35,9 @@ pub fn find_implementation(description: &str) -> Option<StageFn> {
         "Return the input record with `done: true` added; preserves any other fields via row polymorphism." => {
             Some(generic::mark_done)
         }
+        "Pass through a percentage value. Input and output are refined to Number in [0, 100]." => {
+            Some(generic::clamp_percent)
+        }
 
         // Scalar
         "Convert any value to its text representation" => Some(scalar::to_text),

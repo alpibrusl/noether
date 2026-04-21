@@ -1,5 +1,6 @@
 use crate::stage::schema::Stage;
-use crate::types::{is_subtype_of, NType};
+use crate::types::refinement::validate as validate_refinement;
+use crate::types::{is_subtype_of, NType, Refinement};
 use std::collections::BTreeMap;
 use std::fmt;
 
@@ -199,6 +200,32 @@ impl fmt::Display for ValidationError {
     }
 }
 
+/// Peel [`NType::Refined`] wrappers down to the concrete base type.
+/// Validation uses the stripped base for the structural subtype
+/// check and invokes [`validate_refinement`] separately for the
+/// predicate side.
+fn strip_refinements(ty: &NType) -> &NType {
+    let mut current = ty;
+    while let NType::Refined { base, .. } = current {
+        current = base;
+    }
+    current
+}
+
+/// Collect every refinement layer attached along a `Refined` chain.
+/// `Refined { base: Refined { base: Number, r1 }, r2 }` yields
+/// `[r2, r1]` — outermost-first, because that's the order the
+/// validator applies them.
+fn collect_refinements(ty: &NType) -> Vec<&Refinement> {
+    let mut out = Vec::new();
+    let mut current = ty;
+    while let NType::Refined { base, refinement } = current {
+        out.push(refinement);
+        current = base;
+    }
+    out
+}
+
 /// Validate a stage's examples against its declared type signature.
 pub fn validate_stage(stage: &Stage, min_examples: usize) -> ValidationResult {
     let mut errors = Vec::new();
@@ -225,30 +252,59 @@ pub fn validate_stage(stage: &Stage, min_examples: usize) -> ValidationResult {
     }
 
     for (i, example) in stage.examples.iter().enumerate() {
-        // Check input
-        let inferred_input = infer_type_with_hint(&example.input, Some(&stage.signature.input));
+        // Check input — subtype check runs against the refinement-
+        // stripped base (predicates are checked separately via the
+        // runtime refinement validator; shape checking is purely
+        // structural here).
+        let declared_input_base = strip_refinements(&stage.signature.input);
+        let inferred_input = infer_type_with_hint(&example.input, Some(declared_input_base));
         if let crate::types::TypeCompatibility::Incompatible(reason) =
-            is_subtype_of(&inferred_input, &stage.signature.input)
+            is_subtype_of(&inferred_input, declared_input_base)
         {
             errors.push(ValidationError::InputTypeMismatch {
                 index: i,
-                inferred: inferred_input,
+                inferred: inferred_input.clone(),
                 declared: stage.signature.input.clone(),
                 reason: format!("{reason}"),
             });
         }
+        // Every refinement layer on the declared input is checked
+        // against the example's concrete value. A violation is
+        // surfaced as an InputTypeMismatch so the existing
+        // reporter path carries it.
+        for refinement in collect_refinements(&stage.signature.input) {
+            if let Err(reason) = validate_refinement(&example.input, refinement) {
+                errors.push(ValidationError::InputTypeMismatch {
+                    index: i,
+                    inferred: inferred_input.clone(),
+                    declared: stage.signature.input.clone(),
+                    reason: format!("refinement {refinement}: {reason}"),
+                });
+            }
+        }
 
-        // Check output
-        let inferred_output = infer_type_with_hint(&example.output, Some(&stage.signature.output));
+        // Check output — same story for the output side.
+        let declared_output_base = strip_refinements(&stage.signature.output);
+        let inferred_output = infer_type_with_hint(&example.output, Some(declared_output_base));
         if let crate::types::TypeCompatibility::Incompatible(reason) =
-            is_subtype_of(&inferred_output, &stage.signature.output)
+            is_subtype_of(&inferred_output, declared_output_base)
         {
             errors.push(ValidationError::OutputTypeMismatch {
                 index: i,
-                inferred: inferred_output,
+                inferred: inferred_output.clone(),
                 declared: stage.signature.output.clone(),
                 reason: format!("{reason}"),
             });
+        }
+        for refinement in collect_refinements(&stage.signature.output) {
+            if let Err(reason) = validate_refinement(&example.output, refinement) {
+                errors.push(ValidationError::OutputTypeMismatch {
+                    index: i,
+                    inferred: inferred_output.clone(),
+                    declared: stage.signature.output.clone(),
+                    reason: format!("refinement {refinement}: {reason}"),
+                });
+            }
         }
     }
 

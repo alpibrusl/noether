@@ -536,6 +536,12 @@ fn ntype_to_ty_inner(t: &NType, counter: &AtomicU64) -> Ty {
                 .collect(),
             rest: rest.clone(),
         },
+        // Refined types strip the predicate when converting to Ty —
+        // unification works on structure, not on value-level
+        // predicates. The predicate is re-applied at runtime via
+        // [`crate::types::refinement::validate`]; type-check only
+        // reasons about the base shape.
+        NType::Refined { base, .. } => ntype_to_ty_inner(base, counter),
     }
 }
 
