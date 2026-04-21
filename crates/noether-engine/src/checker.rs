@@ -2,7 +2,11 @@ use crate::lagrange::{CompositionNode, Pinning};
 use noether_core::capability::Capability;
 use noether_core::effects::{Effect, EffectKind, EffectSet};
 use noether_core::stage::StageId;
-use noether_core::types::{is_subtype_of, IncompatibilityReason, NType, TypeCompatibility};
+use noether_core::types::unification::{ntype_to_ty, try_ty_to_ntype};
+use noether_core::types::{
+    is_subtype_of, unify, IncompatibilityReason, NType, Substitution, TypeCompatibility,
+    UnificationError,
+};
 use noether_store::StageStore;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -592,6 +596,19 @@ pub enum GraphTypeError {
     EmptyNode {
         operator: String,
     },
+    /// A `Var`-bearing edge failed to unify. Carries the pre-unification
+    /// types (after any substitutions accumulated before this edge) and
+    /// the underlying unification failure so operators can tell
+    /// `OccursCheck` apart from `Mismatch` without re-running the check.
+    UnificationFailure {
+        /// Short description of where the edge is (e.g.
+        /// `"sequential position 2"`, `"fanout target 0"`,
+        /// `"let binding \"tmp\""`).
+        edge: String,
+        from: NType,
+        to: NType,
+        error: UnificationError,
+    },
 }
 
 impl fmt::Display for GraphTypeError {
@@ -640,8 +657,124 @@ impl fmt::Display for GraphTypeError {
             GraphTypeError::EmptyNode { operator } => {
                 write!(f, "empty {operator} node")
             }
+            GraphTypeError::UnificationFailure {
+                edge,
+                from,
+                to,
+                error,
+            } => write!(
+                f,
+                "type-variable unification failed at {edge}: cannot unify {from} with {to}: {error}"
+            ),
         }
     }
+}
+
+// ── Substitution threading (M3 parametric polymorphism slice 2b) ──────────
+//
+// The checker carries a `Substitution` through the graph walk. At every
+// edge where either side contains an `NType::Var`, we invoke the unifier
+// to extend the substitution and rewrite downstream types so later edges
+// see the bound concrete form. Edges without any `Var` skip unification
+// entirely and go through the existing `is_subtype_of` path — behaviour
+// for graphs that don't use type variables is byte-identical to the
+// pre-slice-2b state.
+
+/// Return true when `ty` contains at least one `NType::Var` anywhere.
+/// `NType::Any` is NOT considered a Var for this purpose — it still goes
+/// through the width/depth subtyping path, not unification.
+fn contains_var(ty: &NType) -> bool {
+    match ty {
+        NType::Var(_) => true,
+        NType::List(inner) | NType::Stream(inner) => contains_var(inner),
+        NType::Map { key, value } => contains_var(key) || contains_var(value),
+        NType::Union(variants) => variants.iter().any(contains_var),
+        NType::Record(fields) => fields.values().any(contains_var),
+        _ => false,
+    }
+}
+
+/// Walk `ty` and substitute any user-authored `Var(name)` whose binding
+/// exists in `subst`. Implemented directly over `NType` (rather than
+/// round-tripping through `Ty`) so that `NType::Any` stays `NType::Any` —
+/// the `ntype_to_ty` conversion would otherwise freshen Any to
+/// `Var("_any_N")`, and that name would leak into the resolved type.
+fn apply_subst_to_ntype(subst: &Substitution, ty: &NType) -> NType {
+    if subst.is_empty() {
+        return ty.clone();
+    }
+    match ty {
+        NType::Var(name) => match subst.get(name) {
+            Some(bound) => try_ty_to_ntype(bound).unwrap_or_else(|| NType::Var(name.clone())),
+            None => NType::Var(name.clone()),
+        },
+        NType::List(inner) => NType::List(Box::new(apply_subst_to_ntype(subst, inner))),
+        NType::Stream(inner) => NType::Stream(Box::new(apply_subst_to_ntype(subst, inner))),
+        NType::Map { key, value } => NType::Map {
+            key: Box::new(apply_subst_to_ntype(subst, key)),
+            value: Box::new(apply_subst_to_ntype(subst, value)),
+        },
+        NType::Union(variants) => NType::union(
+            variants
+                .iter()
+                .map(|v| apply_subst_to_ntype(subst, v))
+                .collect(),
+        ),
+        NType::Record(fields) => NType::Record(
+            fields
+                .iter()
+                .map(|(k, v)| (k.clone(), apply_subst_to_ntype(subst, v)))
+                .collect(),
+        ),
+        _ => ty.clone(),
+    }
+}
+
+fn apply_subst_to_resolved(subst: &Substitution, r: &ResolvedType) -> ResolvedType {
+    ResolvedType {
+        input: apply_subst_to_ntype(subst, &r.input),
+        output: apply_subst_to_ntype(subst, &r.output),
+    }
+}
+
+/// Attempt to unify `from` against `to` when at least one side carries
+/// a `Var`. Returns `true` if unification was attempted (caller should
+/// skip the normal `is_subtype_of` check — the unifier is stricter).
+/// On success, composes the new bindings into `subst`. On failure,
+/// pushes a [`GraphTypeError::UnificationFailure`] and still returns
+/// `true` so the caller doesn't fall back to subtype-checking the
+/// failed edge (the error is already reported).
+fn try_unify_edge(
+    from: &NType,
+    to: &NType,
+    subst: &mut Substitution,
+    edge: &str,
+    errors: &mut Vec<GraphTypeError>,
+) -> bool {
+    if !contains_var(from) && !contains_var(to) {
+        return false;
+    }
+    let from_ty = ntype_to_ty(from);
+    let to_ty = ntype_to_ty(to);
+    // Apply the running substitution to both sides before unifying so
+    // we never attempt to bind an already-bound Var against a different
+    // RHS than it was first bound to.
+    let from_applied = subst.apply(&from_ty);
+    let to_applied = subst.apply(&to_ty);
+    match unify(&from_applied, &to_applied) {
+        Ok(new_subst) => {
+            *subst = subst.compose(&new_subst);
+        }
+        Err(error) => {
+            errors.push(GraphTypeError::UnificationFailure {
+                edge: edge.to_string(),
+                from: from.clone(),
+                to: to.clone(),
+                error,
+            });
+        }
+    }
+    true
 }
 
 /// Type-check a composition graph against the stage store.
@@ -653,9 +786,17 @@ pub fn check_graph(
     store: &(impl StageStore + ?Sized),
 ) -> Result<CheckResult, Vec<GraphTypeError>> {
     let mut errors = Vec::new();
-    let result = check_node(node, store, &mut errors);
+    // Substitution accumulates Var bindings across every edge in the
+    // graph walk. For graphs that don't use type variables this stays
+    // empty and every helper short-circuits via `contains_var`.
+    let mut subst = Substitution::empty();
+    let result = check_node(node, store, &mut errors, &mut subst);
     if errors.is_empty() {
         let resolved = result.unwrap();
+        // Apply the final substitution so any Var that got bound
+        // during the walk surfaces as its concrete binding in the
+        // returned `ResolvedType`.
+        let resolved = apply_subst_to_resolved(&subst, &resolved);
         let warnings = collect_effect_warnings(node, store, None);
         Ok(CheckResult { resolved, warnings })
     } else {
@@ -797,6 +938,7 @@ fn check_node(
     node: &CompositionNode,
     store: &(impl StageStore + ?Sized),
     errors: &mut Vec<GraphTypeError>,
+    subst: &mut Substitution,
 ) -> Option<ResolvedType> {
     match node {
         CompositionNode::Stage {
@@ -839,17 +981,21 @@ fn check_node(
             input: NType::Any,
             output: NType::Any,
         }),
-        CompositionNode::Sequential { stages } => check_sequential(stages, store, errors),
-        CompositionNode::Parallel { branches } => check_parallel(branches, store, errors),
+        CompositionNode::Sequential { stages } => check_sequential(stages, store, errors, subst),
+        CompositionNode::Parallel { branches } => check_parallel(branches, store, errors, subst),
         CompositionNode::Branch {
             predicate,
             if_true,
             if_false,
-        } => check_branch(predicate, if_true, if_false, store, errors),
-        CompositionNode::Fanout { source, targets } => check_fanout(source, targets, store, errors),
-        CompositionNode::Merge { sources, target } => check_merge(sources, target, store, errors),
-        CompositionNode::Retry { stage, .. } => check_node(stage, store, errors),
-        CompositionNode::Let { bindings, body } => check_let(bindings, body, store, errors),
+        } => check_branch(predicate, if_true, if_false, store, errors, subst),
+        CompositionNode::Fanout { source, targets } => {
+            check_fanout(source, targets, store, errors, subst)
+        }
+        CompositionNode::Merge { sources, target } => {
+            check_merge(sources, target, store, errors, subst)
+        }
+        CompositionNode::Retry { stage, .. } => check_node(stage, store, errors, subst),
+        CompositionNode::Let { bindings, body } => check_let(bindings, body, store, errors, subst),
     }
 }
 
@@ -870,6 +1016,7 @@ fn check_let(
     body: &CompositionNode,
     store: &(impl StageStore + ?Sized),
     errors: &mut Vec<GraphTypeError>,
+    subst: &mut Substitution,
 ) -> Option<ResolvedType> {
     if bindings.is_empty() {
         errors.push(GraphTypeError::EmptyNode {
@@ -884,7 +1031,8 @@ fn check_let(
     let mut any_input = false;
 
     for (name, node) in bindings {
-        let resolved = check_node(node, store, errors)?;
+        let resolved = check_node(node, store, errors, subst)?;
+        let resolved = apply_subst_to_resolved(subst, &resolved);
         binding_outputs.insert(name.clone(), resolved.output);
         match resolved.input {
             NType::Record(fields) => {
@@ -912,7 +1060,8 @@ fn check_let(
         body_input_fields.insert(name.clone(), out_ty.clone());
     }
 
-    let body_resolved = check_node(body, store, errors)?;
+    let body_resolved = check_node(body, store, errors, subst)?;
+    let body_resolved = apply_subst_to_resolved(subst, &body_resolved);
 
     // Verify the body's input is satisfied by the augmented record. For each
     // field the body requires, either it must come from a binding output (in
@@ -924,13 +1073,26 @@ fn check_let(
             let provided = body_input_fields.get(name).cloned();
             match provided {
                 Some(actual) => {
+                    // Var-bearing edge → unify and thread the binding
+                    // before falling back to is_subtype_of.
+                    let actual = apply_subst_to_ntype(subst, &actual);
+                    let expected_ty = apply_subst_to_ntype(subst, expected_ty);
+                    if try_unify_edge(
+                        &actual,
+                        &expected_ty,
+                        subst,
+                        &format!("let binding {name:?}"),
+                        errors,
+                    ) {
+                        continue;
+                    }
                     if let TypeCompatibility::Incompatible(reason) =
-                        is_subtype_of(&actual, expected_ty)
+                        is_subtype_of(&actual, &expected_ty)
                     {
                         errors.push(GraphTypeError::SequentialTypeMismatch {
                             position: 0,
                             from_output: actual,
-                            to_input: expected_ty.clone(),
+                            to_input: expected_ty,
                             reason,
                         });
                     }
@@ -979,6 +1141,7 @@ fn check_sequential(
     stages: &[CompositionNode],
     store: &(impl StageStore + ?Sized),
     errors: &mut Vec<GraphTypeError>,
+    subst: &mut Substitution,
 ) -> Option<ResolvedType> {
     if stages.is_empty() {
         errors.push(GraphTypeError::EmptyNode {
@@ -987,20 +1150,39 @@ fn check_sequential(
         return None;
     }
 
-    let resolved: Vec<Option<ResolvedType>> = stages
-        .iter()
-        .map(|s| check_node(s, store, errors))
-        .collect();
+    // Walk stages in order with the running substitution so Var bindings
+    // produced at edge i are visible at edge i+1. Pre-slice-2b this was
+    // a two-pass walk (resolve all, then check every adjacency in
+    // isolation); with unification, a binding from one edge must flow
+    // forward, so we unify the pair at each step and rewrite the
+    // downstream types before moving on.
+    let mut resolved: Vec<Option<ResolvedType>> = Vec::with_capacity(stages.len());
+    for stage in stages {
+        let r = check_node(stage, store, errors, subst);
+        let r = r.map(|r| apply_subst_to_resolved(subst, &r));
+        resolved.push(r);
+    }
 
-    // Check consecutive pairs
     for i in 0..resolved.len() - 1 {
         if let (Some(from), Some(to)) = (&resolved[i], &resolved[i + 1]) {
-            if let TypeCompatibility::Incompatible(reason) = is_subtype_of(&from.output, &to.input)
-            {
+            // Apply the latest substitution in case a previous edge
+            // updated it after these stages were resolved.
+            let from_out = apply_subst_to_ntype(subst, &from.output);
+            let to_in = apply_subst_to_ntype(subst, &to.input);
+            if try_unify_edge(
+                &from_out,
+                &to_in,
+                subst,
+                &format!("sequential position {i}"),
+                errors,
+            ) {
+                continue;
+            }
+            if let TypeCompatibility::Incompatible(reason) = is_subtype_of(&from_out, &to_in) {
                 errors.push(GraphTypeError::SequentialTypeMismatch {
                     position: i,
-                    from_output: from.output.clone(),
-                    to_input: to.input.clone(),
+                    from_output: from_out,
+                    to_input: to_in,
                     reason,
                 });
             }
@@ -1010,11 +1192,11 @@ fn check_sequential(
     let first_input = resolved
         .first()
         .and_then(|r| r.as_ref())
-        .map(|r| r.input.clone());
+        .map(|r| apply_subst_to_ntype(subst, &r.input));
     let last_output = resolved
         .last()
         .and_then(|r| r.as_ref())
-        .map(|r| r.output.clone());
+        .map(|r| apply_subst_to_ntype(subst, &r.output));
 
     match (first_input, last_output) {
         (Some(input), Some(output)) => Some(ResolvedType { input, output }),
@@ -1026,6 +1208,7 @@ fn check_parallel(
     branches: &BTreeMap<String, CompositionNode>,
     store: &(impl StageStore + ?Sized),
     errors: &mut Vec<GraphTypeError>,
+    subst: &mut Substitution,
 ) -> Option<ResolvedType> {
     if branches.is_empty() {
         errors.push(GraphTypeError::EmptyNode {
@@ -1038,7 +1221,8 @@ fn check_parallel(
     let mut output_fields = BTreeMap::new();
 
     for (name, node) in branches {
-        if let Some(resolved) = check_node(node, store, errors) {
+        if let Some(resolved) = check_node(node, store, errors, subst) {
+            let resolved = apply_subst_to_resolved(subst, &resolved);
             input_fields.insert(name.clone(), resolved.input);
             output_fields.insert(name.clone(), resolved.output);
         }
@@ -1060,17 +1244,21 @@ fn check_branch(
     if_false: &CompositionNode,
     store: &(impl StageStore + ?Sized),
     errors: &mut Vec<GraphTypeError>,
+    subst: &mut Substitution,
 ) -> Option<ResolvedType> {
-    let pred = check_node(predicate, store, errors);
-    let true_branch = check_node(if_true, store, errors);
-    let false_branch = check_node(if_false, store, errors);
+    let pred = check_node(predicate, store, errors, subst);
+    let true_branch = check_node(if_true, store, errors, subst);
+    let false_branch = check_node(if_false, store, errors, subst);
 
-    // Check predicate output is Bool
+    // Check predicate output is Bool — unify if the predicate carries a
+    // Var (so `<T> ~ Bool` binds T rather than silently passing the
+    // permissive `is_subtype_of` short-circuit).
     if let Some(ref p) = pred {
-        if let TypeCompatibility::Incompatible(_) = is_subtype_of(&p.output, &NType::Bool) {
-            errors.push(GraphTypeError::BranchPredicateNotBool {
-                actual: p.output.clone(),
-            });
+        let pred_out = apply_subst_to_ntype(subst, &p.output);
+        if try_unify_edge(&pred_out, &NType::Bool, subst, "branch predicate", errors) {
+            // Unification already pushed any error.
+        } else if let TypeCompatibility::Incompatible(_) = is_subtype_of(&pred_out, &NType::Bool) {
+            errors.push(GraphTypeError::BranchPredicateNotBool { actual: pred_out });
         }
     }
 
@@ -1091,6 +1279,7 @@ fn check_fanout(
     targets: &[CompositionNode],
     store: &(impl StageStore + ?Sized),
     errors: &mut Vec<GraphTypeError>,
+    subst: &mut Substitution,
 ) -> Option<ResolvedType> {
     if targets.is_empty() {
         errors.push(GraphTypeError::EmptyNode {
@@ -1099,22 +1288,33 @@ fn check_fanout(
         return None;
     }
 
-    let src = check_node(source, store, errors);
-    let tgts: Vec<Option<ResolvedType>> = targets
-        .iter()
-        .map(|t| check_node(t, store, errors))
-        .collect();
+    let src = check_node(source, store, errors, subst).map(|r| apply_subst_to_resolved(subst, &r));
+    let mut tgts: Vec<Option<ResolvedType>> = Vec::with_capacity(targets.len());
+    for t in targets {
+        let r = check_node(t, store, errors, subst);
+        tgts.push(r.map(|r| apply_subst_to_resolved(subst, &r)));
+    }
 
     // Check source output is subtype of each target input
     if let Some(ref s) = src {
         for (i, t) in tgts.iter().enumerate() {
             if let Some(ref t) = t {
-                if let TypeCompatibility::Incompatible(reason) = is_subtype_of(&s.output, &t.input)
-                {
+                let src_out = apply_subst_to_ntype(subst, &s.output);
+                let tgt_in = apply_subst_to_ntype(subst, &t.input);
+                if try_unify_edge(
+                    &src_out,
+                    &tgt_in,
+                    subst,
+                    &format!("fanout target {i}"),
+                    errors,
+                ) {
+                    continue;
+                }
+                if let TypeCompatibility::Incompatible(reason) = is_subtype_of(&src_out, &tgt_in) {
                     errors.push(GraphTypeError::FanoutInputMismatch {
                         target_index: i,
-                        source_output: s.output.clone(),
-                        target_input: t.input.clone(),
+                        source_output: src_out,
+                        target_input: tgt_in,
                         reason,
                     });
                 }
@@ -1145,6 +1345,7 @@ fn check_merge(
     target: &CompositionNode,
     store: &(impl StageStore + ?Sized),
     errors: &mut Vec<GraphTypeError>,
+    subst: &mut Substitution,
 ) -> Option<ResolvedType> {
     if sources.is_empty() {
         errors.push(GraphTypeError::EmptyNode {
@@ -1153,11 +1354,12 @@ fn check_merge(
         return None;
     }
 
-    let srcs: Vec<Option<ResolvedType>> = sources
-        .iter()
-        .map(|s| check_node(s, store, errors))
-        .collect();
-    let tgt = check_node(target, store, errors);
+    let mut srcs: Vec<Option<ResolvedType>> = Vec::with_capacity(sources.len());
+    for s in sources {
+        let r = check_node(s, store, errors, subst);
+        srcs.push(r.map(|r| apply_subst_to_resolved(subst, &r)));
+    }
+    let tgt = check_node(target, store, errors, subst).map(|r| apply_subst_to_resolved(subst, &r));
 
     // Build merged output record from sources
     let mut merged_fields = BTreeMap::new();
@@ -1168,12 +1370,19 @@ fn check_merge(
     }
     let merged_type = NType::Record(merged_fields);
 
-    // Check merged type is subtype of target input
+    // Check merged type is subtype of target input. Unify first if
+    // either the merged shape or the target input carries a Var.
     if let Some(ref t) = tgt {
-        if let TypeCompatibility::Incompatible(reason) = is_subtype_of(&merged_type, &t.input) {
+        let merged_applied = apply_subst_to_ntype(subst, &merged_type);
+        let tgt_in = apply_subst_to_ntype(subst, &t.input);
+        if try_unify_edge(&merged_applied, &tgt_in, subst, "merge target", errors) {
+            // error (if any) already pushed by try_unify_edge
+        } else if let TypeCompatibility::Incompatible(reason) =
+            is_subtype_of(&merged_applied, &tgt_in)
+        {
             errors.push(GraphTypeError::MergeOutputMismatch {
-                merged_type: merged_type.clone(),
-                target_input: t.input.clone(),
+                merged_type: merged_applied,
+                target_input: tgt_in,
                 reason,
             });
         }
@@ -1662,6 +1871,121 @@ mod tests {
             result.is_ok(),
             "Concrete-producing stage must feed a Var-consuming stage, got {result:?}"
         );
+    }
+
+    // ── Slice 2b: unification propagation through check_graph ─────────
+
+    #[test]
+    fn var_binding_propagates_through_identity_stage() {
+        // A: Text -> Number ; Ident: <T> -> <T>
+        // Pipeline A >> Ident must resolve output to Number, not <T>,
+        // because unification pinned T at the A→Ident edge.
+        let mut store = test_store();
+        store
+            .put(make_stage(
+                "ident",
+                NType::Var("T".into()),
+                NType::Var("T".into()),
+            ))
+            .unwrap();
+        let node = CompositionNode::Sequential {
+            stages: vec![stage("text_to_num"), stage("ident")],
+        };
+        let check = check_graph(&node, &store).expect("Var-binding must type-check");
+        assert_eq!(check.resolved.input, NType::Text);
+        assert_eq!(
+            check.resolved.output,
+            NType::Number,
+            "identity stage's Var must have bound to Number after unification, not stayed as Var"
+        );
+    }
+
+    #[test]
+    fn var_binding_propagates_through_chained_identity_stages() {
+        // A: Text -> Number ; Ident1: <T> -> <T> ; Ident2: <U> -> <U>
+        // Three-hop Var propagation: the binding from the first edge
+        // must survive through the second edge, not reset to a fresh
+        // Var at Ident2. Final resolved output is Number.
+        let mut store = test_store();
+        store
+            .put(make_stage(
+                "ident1",
+                NType::Var("T".into()),
+                NType::Var("T".into()),
+            ))
+            .unwrap();
+        store
+            .put(make_stage(
+                "ident2",
+                NType::Var("U".into()),
+                NType::Var("U".into()),
+            ))
+            .unwrap();
+        let node = CompositionNode::Sequential {
+            stages: vec![stage("text_to_num"), stage("ident1"), stage("ident2")],
+        };
+        let check = check_graph(&node, &store).expect("chained Var-binding must type-check");
+        assert_eq!(check.resolved.input, NType::Text);
+        assert_eq!(
+            check.resolved.output,
+            NType::Number,
+            "chained identity stages must propagate Number through every Var"
+        );
+    }
+
+    #[test]
+    fn var_binding_propagates_so_downstream_mismatch_is_caught() {
+        // A: Text -> Number ; B: <T> -> List<T> ; C: Text -> Bool
+        // A→B binds T to Number, so B's *effective* output is
+        // List<Number>. The B→C edge then finds List<Number> is not
+        // a subtype of Text — the mismatch must reach the error list
+        // as a SequentialTypeMismatch. The value of slice 2b is
+        // precisely that this check sees concrete types, not Vars.
+        let mut store = test_store();
+        store
+            .put(make_stage(
+                "wrap",
+                NType::Var("T".into()),
+                NType::List(Box::new(NType::Var("T".into()))),
+            ))
+            .unwrap();
+        store
+            .put(make_stage("text_to_bool", NType::Text, NType::Bool))
+            .unwrap();
+        let node = CompositionNode::Sequential {
+            stages: vec![stage("text_to_num"), stage("wrap"), stage("text_to_bool")],
+        };
+        let err = check_graph(&node, &store).expect_err("wrap output != text_to_bool input");
+        // After unification, position-1 edge sees List<Number> vs Text.
+        // The checker surfaces this through the standard path.
+        let mismatch = err.iter().find(|e| {
+            matches!(
+                e,
+                GraphTypeError::SequentialTypeMismatch { position: 1, from_output, .. }
+                    if matches!(from_output, NType::List(inner) if **inner == NType::Number)
+            )
+        });
+        assert!(
+            mismatch.is_some(),
+            "expected position-1 SequentialTypeMismatch with from_output = List<Number> \
+             (proving the Var got bound before the check), got errors: {err:?}"
+        );
+    }
+
+    #[test]
+    fn non_var_graph_resolves_identically_to_pre_slice_2b() {
+        // Regression guard: a graph with zero type variables must
+        // produce exactly the same resolved input/output as before
+        // the substitution threading landed. `text_to_num >>
+        // num_to_bool` has no Var anywhere; resolved must be Text →
+        // Bool and no unification-related error can be raised.
+        let store = test_store();
+        let node = CompositionNode::Sequential {
+            stages: vec![stage("text_to_num"), stage("num_to_bool")],
+        };
+        let check = check_graph(&node, &store).expect("pre-existing pipeline must still pass");
+        assert_eq!(check.resolved.input, NType::Text);
+        assert_eq!(check.resolved.output, NType::Bool);
     }
 
     #[test]
