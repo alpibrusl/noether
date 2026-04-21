@@ -7,6 +7,7 @@ use noether_engine::checker::{
 use noether_engine::executor::budget::{build_cost_map, BudgetedExecutor};
 use noether_engine::executor::pure_cache::PureStageCache;
 use noether_engine::executor::runner::run_composition_with_cache;
+use noether_engine::executor::validating::ValidatingExecutor;
 use noether_engine::lagrange::{
     compute_composition_id, parse_graph, resolve_stage_prefixes, CompositionGraph,
 };
@@ -303,25 +304,56 @@ pub fn cmd_run(
     } else {
         Some(PureStageCache::from_store(store))
     };
+    // Refinement enforcement wraps whichever executor chain we end up with,
+    // so the check fires once per stage call regardless of how many layers
+    // (budget, memoize) sit above it. Opt out with NOETHER_NO_REFINEMENT_CHECK=1
+    // for repros where you need the executor to see out-of-band values —
+    // `ValidatingExecutor` itself provides the env-var convention.
+    let skip_refinement =
+        ValidatingExecutor::<noether_engine::executor::composite::CompositeExecutor>::is_disabled();
     let result = if let Some(budget) = policies.budget_cents {
         let cost_map = build_cost_map(&graph.root, store);
         let budgeted = BudgetedExecutor::new(executor, cost_map, budget);
-        let r = run_composition_with_cache(
-            &graph.root,
-            input,
-            &budgeted,
-            &composition_id,
-            pure_cache.as_mut(),
-        );
-        r.map(|mut cr| {
-            cr.spent_cents = budgeted.spent_cents();
-            cr
-        })
-    } else {
+        if skip_refinement {
+            let r = run_composition_with_cache(
+                &graph.root,
+                input,
+                &budgeted,
+                &composition_id,
+                pure_cache.as_mut(),
+            );
+            r.map(|mut cr| {
+                cr.spent_cents = budgeted.spent_cents();
+                cr
+            })
+        } else {
+            let validated = ValidatingExecutor::from_store(budgeted, store);
+            let r = run_composition_with_cache(
+                &graph.root,
+                input,
+                &validated,
+                &composition_id,
+                pure_cache.as_mut(),
+            );
+            r.map(|mut cr| {
+                cr.spent_cents = validated.inner().spent_cents();
+                cr
+            })
+        }
+    } else if skip_refinement {
         run_composition_with_cache(
             &graph.root,
             input,
             &executor,
+            &composition_id,
+            pure_cache.as_mut(),
+        )
+    } else {
+        let validated = ValidatingExecutor::from_store(executor, store);
+        run_composition_with_cache(
+            &graph.root,
+            input,
+            &validated,
             &composition_id,
             pure_cache.as_mut(),
         )

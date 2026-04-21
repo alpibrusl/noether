@@ -27,12 +27,16 @@
 //!   treats `Refined` structurally: sub can drop a refinement to
 //!   match a non-refined sup, and two refinements must be equal to
 //!   be compatible.
-//! - **Automatic runtime enforcement.** [`validate`] is the function
-//!   callers invoke; wiring it into the executor at stage boundaries
-//!   is a follow-up PR. Today a stage can declare a refined type and
-//!   the validator is available, but the executor does not enforce
-//!   it automatically at execution time.
+//! - **Automatic runtime enforcement.** `noether run` wraps its
+//!   executor in `ValidatingExecutor` by default, which calls
+//!   [`validate`] on inputs and outputs at every stage boundary. A
+//!   violation fails the stage with an `input refinement violation` or
+//!   `output refinement violation` message. Embedders using the
+//!   library directly opt in by building their own
+//!   `ValidatingExecutor`; the `NOETHER_NO_REFINEMENT_CHECK=1` env
+//!   var is the CLI-level opt-out.
 
+use super::NType;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -178,6 +182,34 @@ pub fn validate(value: &Value, refinement: &Refinement) -> Result<(), String> {
             )),
         },
     }
+}
+
+/// Collect every refinement layer attached along a `Refined` chain,
+/// outermost-first — the order the validator applies them.
+///
+/// `Refined { base: Refined { base: Number, r1 }, r2 }` yields
+/// `[r2, r1]`. Non-`Refined` types return an empty slice.
+///
+/// Callers that also need the stripped base type can pair this with
+/// [`strip_refinements`].
+pub fn refinements_of(ty: &NType) -> Vec<&Refinement> {
+    let mut out = Vec::new();
+    let mut current = ty;
+    while let NType::Refined { base, refinement } = current {
+        out.push(refinement);
+        current = base;
+    }
+    out
+}
+
+/// Peel [`NType::Refined`] wrappers off `ty` and return the concrete
+/// base type underneath. Non-refined types are returned unchanged.
+pub fn strip_refinements(ty: &NType) -> &NType {
+    let mut current = ty;
+    while let NType::Refined { base, .. } = current {
+        current = base;
+    }
+    current
 }
 
 fn short_type_name(value: &Value) -> &'static str {
