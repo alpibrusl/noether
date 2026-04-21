@@ -33,6 +33,10 @@ impl fmt::Display for NType {
                 Ok(())
             }
             NType::VNode => write!(f, "VNode"),
+            // Angle brackets mark it visibly as a placeholder variable rather
+            // than a concrete type name — matches the informal `<T>` / `<U>`
+            // notation used in docs/roadmap and the unification tests.
+            NType::Var(name) => write!(f, "<{name}>"),
         }
     }
 }
@@ -77,5 +81,17 @@ mod tests {
     #[test]
     fn display_vnode() {
         assert_eq!(format!("{}", NType::VNode), "VNode");
+    }
+
+    #[test]
+    fn display_var() {
+        assert_eq!(format!("{}", NType::Var("T".into())), "<T>");
+        assert_eq!(format!("{}", NType::Var("Element".into())), "<Element>");
+    }
+
+    #[test]
+    fn display_list_of_var() {
+        let t = NType::List(Box::new(NType::Var("T".into())));
+        assert_eq!(format!("{t}"), "List<<T>>");
     }
 }

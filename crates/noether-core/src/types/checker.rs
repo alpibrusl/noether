@@ -76,6 +76,11 @@ fn is_nullable(t: &NType) -> bool {
     match t {
         NType::Null | NType::Any => true,
         NType::Union(variants) => variants.iter().any(is_nullable),
+        // A free type variable could be bound to Null later — we can't prove
+        // it isn't. Treat it as potentially nullable so a Record field of
+        // type `Var("T")` in sup is allowed to be absent in sub (same
+        // treatment as `Any`).
+        NType::Var(_) => true,
         _ => false,
     }
 }
@@ -92,6 +97,19 @@ pub fn is_subtype_of(sub: &NType, sup: &NType) -> TypeCompatibility {
 
     // Any absorbs everything in both directions
     if matches!(sup, Any) || matches!(sub, Any) {
+        return Compatible;
+    }
+
+    // A type variable (M3 parametric polymorphism) is compatible with anything
+    // on either side — the downstream unification pass pins it to a concrete
+    // type. This is symmetric: `Var` as sub, as sup, or both.
+    //
+    // The subtype check is deliberately permissive about Var; the stricter
+    // check lives in the unification layer (see types::unification). If a
+    // graph edge carries a Var, the engine's check_graph invokes unify() to
+    // work out the binding; if the graph has only concrete types, this short
+    // circuit is never touched.
+    if matches!(sup, Var(_)) || matches!(sub, Var(_)) {
         return Compatible;
     }
 
@@ -434,5 +452,44 @@ mod tests {
             &NType::Record(Default::default())
         ));
         assert!(!compatible(&NType::Text, &NType::VNode));
+    }
+
+    // ── Var tests (M3 parametric polymorphism) ─────────────────────────
+
+    #[test]
+    fn var_is_compatible_with_any_concrete_type_on_either_side() {
+        // The structural check is permissive: anything pairs with a Var.
+        // The real commitment happens at the unification layer.
+        let v = NType::Var("T".into());
+        assert!(compatible(&v, &NType::Text));
+        assert!(compatible(&NType::Text, &v));
+        assert!(compatible(&v, &NType::List(Box::new(NType::Number))));
+        assert!(compatible(&NType::List(Box::new(NType::Number)), &v));
+    }
+
+    #[test]
+    fn var_var_is_compatible() {
+        // Even two distinct-name variables unify-compatibly at the
+        // subtype level — the unifier will bind them.
+        assert!(compatible(&NType::Var("T".into()), &NType::Var("U".into())));
+    }
+
+    #[test]
+    fn var_inside_composite_still_leaves_the_outer_shape_to_unify() {
+        // List<T> vs List<Number>: the outer covariant recursion reaches
+        // the Var leaf, which is compatible with anything.
+        let list_var = NType::List(Box::new(NType::Var("T".into())));
+        let list_num = NType::List(Box::new(NType::Number));
+        assert!(compatible(&list_var, &list_num));
+        assert!(compatible(&list_num, &list_var));
+    }
+
+    #[test]
+    fn var_record_field_is_treated_as_nullable_for_absence() {
+        // A Var-typed field may be omitted from sub — it could be bound
+        // to Null. Same rule as Any.
+        let sup = NType::record([("name", NType::Text), ("extra", NType::Var("T".into()))]);
+        let sub = NType::record([("name", NType::Text)]);
+        assert!(compatible(&sub, &sup));
     }
 }

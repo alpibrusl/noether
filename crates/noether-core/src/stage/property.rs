@@ -467,6 +467,12 @@ impl Property {
                     // Can't prove the field is absent under Any; accept.
                     return self.validate_terminal(path, &NType::Any);
                 }
+                // A free type variable is shape-opaque (M3): we can't prove
+                // the field is absent under an unknown-type cursor. Same
+                // treatment as Any — accept and defer to runtime.
+                NType::Var(_) => {
+                    return self.validate_terminal(path, &NType::Any);
+                }
                 NType::Record(fields) => match fields.get(segment) {
                     Some(t) => t,
                     None => {
@@ -505,13 +511,15 @@ impl Property {
             // SetMember accepts anything — JSON-value equality is type-blind.
             Property::SetMember { .. } => Ok(()),
             // Range needs a Number (or Any / Union containing Number —
-            // we're permissive here).
+            // we're permissive here). A free type variable is accepted on
+            // the same grounds as Any: we can't prove at stage-registration
+            // time that the eventual binding isn't Number.
             Property::Range { .. } => match terminal {
-                NType::Number | NType::Any => Ok(()),
+                NType::Number | NType::Any | NType::Var(_) => Ok(()),
                 NType::Union(variants) => {
                     if variants
                         .iter()
-                        .any(|v| matches!(v, NType::Number | NType::Any))
+                        .any(|v| matches!(v, NType::Number | NType::Any | NType::Var(_)))
                     {
                         Ok(())
                     } else {
