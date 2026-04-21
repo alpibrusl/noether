@@ -152,9 +152,11 @@ When a user reports "noether did the wrong thing," the trace is the first artifa
 
 ---
 
-## Isolation-specific failures (v0.7+)
+## Isolation-specific failures (Phase 1, v0.7.x)
 
-From v0.7, stages run in a bubblewrap sandbox by default. The relevant failure modes:
+From v0.7, stages run in a bubblewrap sandbox by default. This is Phase 1 — a subprocess wrapper around bwrap. **Phase 2** (v0.8, roadmapped) replaces the subprocess with in-process `unshare` + Landlock + seccomp; same `IsolationPolicy` surface, finer-grained syscall control, lower startup cost. See [guides/sandbox-isolation](../guides/sandbox-isolation.md) for the full sandbox story and the [roadmap](../roadmap.md) for Phase 2 timing.
+
+Failure modes below apply to Phase 1:
 
 | Message | Cause | Remedy |
 |---|---|---|

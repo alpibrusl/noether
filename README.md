@@ -175,6 +175,14 @@ Full operator reference: **[Composition Graphs →](./docs/guides/composition-gr
 
 ---
 
+## What's new in v0.7
+
+- **Stage execution sandbox, default-on.** `--isolate=auto` wraps every Python / JavaScript / Bash stage subprocess in bubblewrap: fresh namespaces, UID-mapped to `nobody`, cap-drop ALL, sandbox-private `/work` tmpfs, network unshared unless the stage declares `Effect::Network`. `--require-isolation` (or `NOETHER_REQUIRE_ISOLATION=1`) turns the "bwrap not found → run unsandboxed" fallback into a hard error for CI and production. Details: **[guides/sandbox-isolation →](./docs/guides/sandbox-isolation.md)**.
+- **`noether-isolation` crate + `noether-sandbox` binary.** Extracted in v0.7.1 for non-Rust consumers. `IsolationPolicy` + `build_bwrap_command` as a library; `noether-sandbox` as a standalone binary that reads a policy as JSON on stdin and runs an arbitrary argv inside the sandbox. Covers agentspec's delegation path without embedding the engine.
+- **Scoped filesystem trust — `rw_binds` + `Effect::FsRead(path)` / `Effect::FsWrite(path)`.** `IsolationPolicy` now carries a `Vec<RwBind>` alongside the existing `ro_binds`, and `from_effects` derives both automatically from path-scoped filesystem effects declared in the stage signature. Mount order `rw → ro → work_host` lets a narrower RO shadow a broader RW parent (the canonical `workdir RW, .ssh RO` pattern). Details: **[guides/filesystem-effects →](./docs/guides/filesystem-effects.md)**.
+- **Graph optimizer (M3, v0.7.3).** New `noether_engine::optimizer` module runs between type-check and plan. Three semantics-preserving passes: `canonical_structural` (flatten nested Sequential, collapse singleton Sequential, fuse adjacent Retry), `dead_branch` (fold `Branch(Const(bool), …)` into the selected arm), `memoize_pure` (repeated `(stage_id, input)` pairs on Pure-tagged stages skip re-execution within a run). `NOETHER_NO_OPTIMIZE=1` and `NOETHER_NO_MEMOIZE=1` disable each independently. Details: **[architecture/optimizer →](./docs/architecture/optimizer.md)**.
+- **Parametric polymorphism foundation (M3, in progress).** `NType::Var(name)` variant + Robinson-style unification module (`noether_core::types::unification`) + `NType ↔ Ty` conversion layer. Today stage signatures can carry `Var` and type-check through the permissive subtype path. Unification binding propagation through `check_graph` and generic stdlib stages (`identity`, `head`, `tail`, `map`) are slice 2b and slice 3, tracked on the [roadmap](./docs/roadmap.md).
+
 ## What's new in v0.4
 
 - **`noether-grid`** — distributed execution for composition graphs.

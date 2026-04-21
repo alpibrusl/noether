@@ -87,9 +87,14 @@ Output (abbreviated):
 
 The trace is the ground truth — stderr is a summary.
 
-## Isolation-specific failures (v0.7+)
+## Isolation-specific failures (Phase 1 — v0.7.x bwrap)
 
-If running with `--isolate=bwrap`:
+Noether's isolation layer ships in two phases:
+
+- **Phase 1 (v0.7.x, shipped)** — bubblewrap as a subprocess wrapper. Fresh namespaces, UID-mapped to `nobody`, cap-drop ALL, sandbox-private `/work` tmpfs, network unshared unless declared. Good enough for LLM-synthesized code you haven't audited; not a hardened multi-tenant boundary.
+- **Phase 2 (v0.8, roadmapped)** — replace the bwrap subprocess with in-process `unshare` + Landlock + seccomp. Same `IsolationPolicy` surface, ~10× lower startup, finer-grained syscall control. See issue [#44](https://github.com/alpibrusl/noether/issues/44) for the compliance-matrix work landing alongside.
+
+Failure modes below apply to Phase 1. With `--isolate=bwrap`:
 
 | Message | Cause | Remedy |
 | --- | --- | --- |

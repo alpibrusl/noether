@@ -119,6 +119,8 @@ The canonical form of this graph gets a `composition_id` (SHA-256 of the JCS-ser
 
 The engine runs the checker against the graph, builds an `ExecutionPlan`, and only then dispatches the stages. Every execution writes a trace indexed by the composition id, so `noether trace <id>` reproduces the full story.
 
+**Between the checker and the planner, an optimizer applies semantics-preserving rewrites** — flatten nested `Sequential`, collapse singletons, fold `Branch` with a constant predicate, memoize Pure-tagged stages within a run. These never touch leaf stage identities, so the `composition_id` stays stable. Disable with `NOETHER_NO_OPTIMIZE=1` if you want the literal authored graph to reach the executor (useful for trace debugging). Details: [architecture/optimizer.md](../architecture/optimizer.md).
+
 See [architecture/composition-engine.md](../architecture/composition-engine.md) for the operator semantics.
 
 ---

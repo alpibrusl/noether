@@ -1,0 +1,53 @@
+{
+  "name": "take_first_n",
+  "description": "Return the first n elements of a list. The two bounds on the output length (non-negative n, output ≤ input) are declared as properties and checked against every example at `stage add` time.",
+  "input": {
+    "kind": "Record",
+    "value": {
+      "items": { "kind": "List", "value": { "kind": "Any" } },
+      "n": { "kind": "Number" }
+    }
+  },
+  "output": { "kind": "List", "value": { "kind": "Any" } },
+  "effects": [ { "effect": "Pure" } ],
+  "language": "rust",
+  "implementation": {
+    "language": "rust",
+    "code": "fn execute(input: &serde_json::Value) -> serde_json::Value {\n    let items = input.get(\"items\").and_then(|v| v.as_array()).cloned().unwrap_or_default();\n    let n = input.get(\"n\").and_then(|v| v.as_u64()).unwrap_or(0) as usize;\n    let taken: Vec<_> = items.into_iter().take(n).collect();\n    serde_json::Value::Array(taken)\n}"
+  },
+  "properties": [
+    {
+      "kind": "Range",
+      "field": "input.n",
+      "min": 0
+    },
+    {
+      "kind": "FieldLengthMax",
+      "subject_field": "output",
+      "bound_field": "input.items"
+    },
+    {
+      "kind": "SubsetOf",
+      "subject_field": "output",
+      "super_field": "input.items"
+    }
+  ],
+  "examples": [
+    {
+      "input": { "items": [1, 2, 3, 4, 5], "n": 0 },
+      "output": []
+    },
+    {
+      "input": { "items": [1, 2, 3, 4, 5], "n": 3 },
+      "output": [1, 2, 3]
+    },
+    {
+      "input": { "items": ["a", "b", "c"], "n": 10 },
+      "output": ["a", "b", "c"]
+    },
+    {
+      "input": { "items": [], "n": 5 },
+      "output": []
+    }
+  ]
+}

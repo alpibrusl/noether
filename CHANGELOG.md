@@ -4,6 +4,22 @@ Notable changes to Noether. Follows [Keep a Changelog](https://keepachangelog.co
 
 ## Unreleased
 
+### Docs — parity pass with v0.7.x features
+
+README, mkdocs, and the tutorial section had drifted behind the last four shipped deliverables. This pass closes the gap:
+
+- **README** — new "What's new in v0.7" section covering the sandbox default, `noether-isolation` / `noether-sandbox`, `rw_binds` + `Effect::FsRead` / `FsWrite`, the M3 optimizer (`canonical_structural` / `dead_branch` / `memoize_pure`), and the parametric-polymorphism foundation (unification module + `NType::Var`).
+- **`docs/architecture/optimizer.md`** — new page. Pipeline position, per-pass semantics with before/after, the `OptimizerPass` trait contract, `NOETHER_NO_OPTIMIZE` / `NOETHER_NO_MEMOIZE` opt-outs, how the remaining M3 passes (`fuse_pure_sequential`, `hoist_invariant`) need planner-level work not AST passes.
+- **`docs/guides/sandbox-isolation.md`** — new page. The `--isolate=` flag, what bwrap actually guarantees, caller-managed filesystem trust via `rw_binds` / `ro_binds` / `work_host`, common failure modes, Phase 1 → Phase 2 roadmap (v0.8 native namespaces + Landlock + seccomp).
+- **`docs/guides/filesystem-effects.md`** — new page. `Effect::FsRead(path)` / `FsWrite(path)` wire form, how `from_effects` derives `rw_binds` / `ro_binds` automatically, mount-order semantics, the trust framing (the crate can't validate whether a declared path is sensible — caller decision).
+- **`docs/agents/debug-a-failed-graph.md`** — isolation section reworked to distinguish Phase 1 (v0.7.x bwrap) from Phase 2 (v0.8 native namespaces, roadmapped) so agents parsing the playbook don't mistake current-shipped for final-state.
+- **`docs/tutorial/concepts.md`** — 3-sentence optimizer subsection pointing at the architecture page.
+- **`docs/tutorial/when-things-go-wrong.md`** — Phase 1 / Phase 2 framing on the isolation failure section with a forward-reference to the new sandbox guide.
+- **`examples/property-annotated/`** — new worked example. A `take_first_n` stage declaring three properties (`Range`, `FieldLengthMax`, `SubsetOf`) with four examples that exercise each. Demonstrates what the property DSL catches that the type system can't.
+- **`mkdocs.yml`** — 3 new nav entries: `Sandbox & Isolation` and `Filesystem-scoped Effects` under Guides; `Optimizer` under Concepts.
+
+No code changes. mkdocs build clean; existing pre-existing `../../STABILITY.md` / `../../SECURITY.md` warnings unchanged by this pass.
+
 ### Added — Robinson-style unification module (M3 parametric-polymorphism foundation)
 
 New `noether_core::types::unification` module ships the algorithm foundation for parametric polymorphism on stage signatures:
