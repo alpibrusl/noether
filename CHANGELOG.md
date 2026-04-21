@@ -4,6 +4,17 @@ Notable changes to Noether. Follows [Keep a Changelog](https://keepachangelog.co
 
 ## Unreleased
 
+### Changed — `noether run` memoizes Pure stages by default (M3 `memoize_pure`)
+
+The `PureStageCache` has existed in the engine since earlier hardening but `cmd_run` was calling the non-cached `run_composition` variant, so the cache only fired when callers opted in manually. Now `cmd_run` builds a `PureStageCache::from_store(store)` and passes it to `run_composition_with_cache` on every invocation. Within a single run, a repeated `(stage_id, input)` pair on a Pure-tagged stage hits the cache instead of re-executing.
+
+The cache is in-memory, single-run, never persisted. Non-Pure stages are unaffected: the cache rejects them at `get`/`put` time via the pre-populated `pure_ids` set.
+
+- **Opt out:** `NOETHER_NO_MEMOIZE=1` (or `=true`) — matches the shape of `NOETHER_NO_OPTIMIZE` for benchmarks and bug repros where every dispatch must go through the executor.
+- **ACLI envelope:** the success response gains a `memoize: { enabled, hits, misses }` field when at least one hit fired or the opt-out was set. A run with no hits and memoization on leaves the envelope alone to avoid clutter.
+
+This is the M3 `memoize_pure` deliverable, landed as a thin executor-level wiring change rather than a new AST pass. No new cache logic — the existing `PureStageCache` was already well-tested in `crates/noether-engine/src/executor/pure_cache.rs`.
+
 ### Added — `canonical_structural` optimizer pass (M3 second slice)
 
 Lifts the M1 canonical-form structural rewrites (flatten nested `Sequential`, collapse singleton `Sequential`, fuse adjacent `Retry`) from hash-time into the execution pipeline. Today `canonicalise` shapes the form we hash; this pass makes the **executor** see the same canonical form, removing pointless wrapper nodes from plans and traces.
