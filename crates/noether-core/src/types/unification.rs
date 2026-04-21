@@ -50,8 +50,10 @@
 //! before unifying them (standard Robinson-style iteration); this
 //! module exposes [`Substitution::compose`] for that pattern.
 
+use crate::types::NType;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Minimal type representation for unification.
 ///
@@ -315,6 +317,168 @@ fn unify_ref_slices(lhs: &[&Ty], rhs: &[&Ty]) -> Result<Substitution, Unificatio
     Ok(subst)
 }
 
+// ── NType ↔ Ty conversion (M3 slice 2) ─────────────────────────────────────
+//
+// The unification algorithm works on [`Ty`], a small closed representation
+// with exactly the shapes unification needs. The rest of the type system
+// works on [`NType`], the content-hashed surface. Graph-edge type checking
+// bridges the two: convert both sides to `Ty`, run unification, and push
+// the resulting substitution back through NType when a concrete answer is
+// required.
+//
+// Not every `Ty` shape corresponds cleanly to an `NType` — an unbound
+// `Ty::Var` part-way through a unification pass has no NType peer except
+// `NType::Var`. The [`try_ty_to_ntype`] function returns `None` for the
+// one case that is genuinely ambiguous: an `App` with an unknown constructor
+// name. Everything else round-trips faithfully.
+//
+// The reverse (`NType → Ty`) is total. `NType::Any` becomes a **fresh**
+// `Ty::Var`: two `NType::Any` values in the same signature are treated as
+// two independent unknowns, which is what the graph-edge checker wants.
+// (A shared-Any behaviour would need an explicit Var in the source NType.)
+
+/// Counter used by [`ntype_to_ty`] to mint unique variable names for each
+/// `NType::Any`. Private; callers that want deterministic names should pass
+/// their own counter via [`ntype_to_ty_with_counter`].
+static ANY_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Convert an [`NType`] to a [`Ty`], allocating a fresh variable name for
+/// every `NType::Any`. Each call uses a process-global counter — useful for
+/// one-off conversions where the caller doesn't need reproducible names.
+///
+/// For a deterministic conversion (tests, golden vectors), use
+/// [`ntype_to_ty_with_counter`] and pass in a local counter.
+pub fn ntype_to_ty(t: &NType) -> Ty {
+    ntype_to_ty_inner(t, &ANY_COUNTER)
+}
+
+/// Convert an [`NType`] to a [`Ty`] using a caller-provided counter for
+/// fresh-variable allocation. Same algorithm as [`ntype_to_ty`] but the
+/// names produced depend only on the counter's starting value.
+pub fn ntype_to_ty_with_counter(t: &NType, counter: &AtomicU64) -> Ty {
+    ntype_to_ty_inner(t, counter)
+}
+
+fn ntype_to_ty_inner(t: &NType, counter: &AtomicU64) -> Ty {
+    match t {
+        // Primitive scalar types → `Ty::Con("Name")`. The names are
+        // intentionally the same bytes that `NType::Display` emits so that
+        // error messages from the unifier mention the concrete type by the
+        // name a user would recognise.
+        NType::Text => Ty::Con("Text".into()),
+        NType::Number => Ty::Con("Number".into()),
+        NType::Bool => Ty::Con("Bool".into()),
+        NType::Bytes => Ty::Con("Bytes".into()),
+        NType::Null => Ty::Con("Null".into()),
+        NType::VNode => Ty::Con("VNode".into()),
+
+        // Any → fresh Ty::Var. Two `NType::Any` values in the same graph
+        // signature are two independent unknowns (the user wrote "I don't
+        // care about this type", not "this type equals that other type").
+        NType::Any => {
+            let n = counter.fetch_add(1, Ordering::Relaxed);
+            Ty::Var(format!("_any_{n}"))
+        }
+
+        // Var → Ty::Var with the same name. Round-trips exactly.
+        NType::Var(name) => Ty::Var(name.clone()),
+
+        // Parametric type constructors → Ty::App with the canonical name.
+        NType::List(inner) => Ty::App("List".into(), vec![ntype_to_ty_inner(inner, counter)]),
+        NType::Stream(inner) => Ty::App("Stream".into(), vec![ntype_to_ty_inner(inner, counter)]),
+        NType::Map { key, value } => Ty::App(
+            "Map".into(),
+            vec![
+                ntype_to_ty_inner(key, counter),
+                ntype_to_ty_inner(value, counter),
+            ],
+        ),
+
+        // Union → Ty::App("Union", variants). Unification of
+        // `App("Union", [A, B])` ~ `App("Union", [C, D])` unifies pairwise —
+        // which is strictly too strong for true set-semantic unions, but
+        // matches the existing NType behaviour where normalised unions have
+        // a fixed order. Callers that need set-semantic union unification
+        // must handle it before dispatching to unify().
+        NType::Union(variants) => Ty::App(
+            "Union".into(),
+            variants
+                .iter()
+                .map(|v| ntype_to_ty_inner(v, counter))
+                .collect(),
+        ),
+
+        // Record → Ty::Record with the same keys.
+        NType::Record(fields) => Ty::Record(
+            fields
+                .iter()
+                .map(|(k, v)| (k.clone(), ntype_to_ty_inner(v, counter)))
+                .collect(),
+        ),
+    }
+}
+
+/// Convert a [`Ty`] back to an [`NType`]. Returns `None` when the `Ty`
+/// can't be expressed as an `NType` — today the only case is a `Ty::App`
+/// whose constructor name isn't one of the known ones (`List`, `Stream`,
+/// `Map`, `Union`) or whose arity doesn't match that constructor.
+///
+/// A `Ty::Var` round-trips to `NType::Var` with the same name. Callers
+/// that have a [`Substitution`] should apply it first (via
+/// [`Substitution::apply`]) to collapse bound variables into concrete
+/// shapes before converting.
+pub fn try_ty_to_ntype(t: &Ty) -> Option<NType> {
+    match t {
+        Ty::Var(name) => Some(NType::Var(name.clone())),
+
+        Ty::Con(name) => match name.as_str() {
+            "Text" => Some(NType::Text),
+            "Number" => Some(NType::Number),
+            "Bool" => Some(NType::Bool),
+            "Bytes" => Some(NType::Bytes),
+            "Null" => Some(NType::Null),
+            "VNode" => Some(NType::VNode),
+            // Unknown Con — no corresponding NType.
+            _ => None,
+        },
+
+        Ty::App(name, args) => match name.as_str() {
+            "List" if args.len() == 1 => Some(NType::List(Box::new(try_ty_to_ntype(&args[0])?))),
+            "Stream" if args.len() == 1 => {
+                Some(NType::Stream(Box::new(try_ty_to_ntype(&args[0])?)))
+            }
+            "Map" if args.len() == 2 => Some(NType::Map {
+                key: Box::new(try_ty_to_ntype(&args[0])?),
+                value: Box::new(try_ty_to_ntype(&args[1])?),
+            }),
+            "Union" => {
+                let variants: Option<Vec<NType>> = args.iter().map(try_ty_to_ntype).collect();
+                variants.map(|vs| {
+                    // Use the normalising constructor so nested unions
+                    // flatten and single-variant unions unwrap — matches
+                    // how NType Unions are constructed everywhere else.
+                    NType::union(vs)
+                })
+            }
+            _ => None,
+        },
+
+        Ty::Record(fields) => {
+            let converted: Option<BTreeMap<String, NType>> = fields
+                .iter()
+                .map(|(k, v)| try_ty_to_ntype(v).map(|nt| (k.clone(), nt)))
+                .collect();
+            converted.map(NType::Record)
+        }
+    }
+}
+
+impl From<&NType> for Ty {
+    fn from(t: &NType) -> Self {
+        ntype_to_ty(t)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -538,5 +702,157 @@ mod tests {
         let json = serde_json::to_string(&t).unwrap();
         let back: Ty = serde_json::from_str(&json).unwrap();
         assert_eq!(t, back);
+    }
+
+    // ── NType ↔ Ty conversion tests (M3 slice 2) ───────────────────────
+
+    /// Build a converter with a private counter — tests that need
+    /// deterministic `_any_N` names use this.
+    fn converter() -> AtomicU64 {
+        AtomicU64::new(0)
+    }
+
+    #[test]
+    fn ntype_primitives_round_trip() {
+        // Every concrete-primitive NType makes it back as-is.
+        for t in [
+            NType::Text,
+            NType::Number,
+            NType::Bool,
+            NType::Bytes,
+            NType::Null,
+            NType::VNode,
+        ] {
+            let c = converter();
+            let ty = ntype_to_ty_with_counter(&t, &c);
+            let back = try_ty_to_ntype(&ty).expect("primitive must round-trip");
+            assert_eq!(t, back, "round-trip failed for {t:?}");
+        }
+    }
+
+    #[test]
+    fn ntype_var_round_trips_preserving_name() {
+        let t = NType::Var("T".into());
+        let c = converter();
+        let ty = ntype_to_ty_with_counter(&t, &c);
+        assert_eq!(ty, Ty::Var("T".into()));
+        assert_eq!(try_ty_to_ntype(&ty), Some(NType::Var("T".into())));
+    }
+
+    #[test]
+    fn ntype_any_becomes_fresh_var_each_time() {
+        // Two separate Any values get two distinct fresh names so a
+        // downstream unify() doesn't accidentally bind them together.
+        let c = converter();
+        let a1 = ntype_to_ty_with_counter(&NType::Any, &c);
+        let a2 = ntype_to_ty_with_counter(&NType::Any, &c);
+        assert_ne!(a1, a2, "distinct Any values must mint distinct vars");
+        // Both must be Ty::Var.
+        assert!(matches!(a1, Ty::Var(_)));
+        assert!(matches!(a2, Ty::Var(_)));
+    }
+
+    #[test]
+    fn ntype_list_round_trips() {
+        let t = NType::List(Box::new(NType::Number));
+        let c = converter();
+        let ty = ntype_to_ty_with_counter(&t, &c);
+        assert_eq!(ty, Ty::App("List".into(), vec![Ty::Con("Number".into())]));
+        assert_eq!(try_ty_to_ntype(&ty), Some(t));
+    }
+
+    #[test]
+    fn ntype_stream_round_trips() {
+        let t = NType::Stream(Box::new(NType::Bool));
+        let c = converter();
+        let ty = ntype_to_ty_with_counter(&t, &c);
+        assert_eq!(ty, Ty::App("Stream".into(), vec![Ty::Con("Bool".into())]));
+        assert_eq!(try_ty_to_ntype(&ty), Some(t));
+    }
+
+    #[test]
+    fn ntype_map_round_trips() {
+        let t = NType::Map {
+            key: Box::new(NType::Text),
+            value: Box::new(NType::Number),
+        };
+        let c = converter();
+        let ty = ntype_to_ty_with_counter(&t, &c);
+        assert_eq!(
+            ty,
+            Ty::App(
+                "Map".into(),
+                vec![Ty::Con("Text".into()), Ty::Con("Number".into())]
+            )
+        );
+        assert_eq!(try_ty_to_ntype(&ty), Some(t));
+    }
+
+    #[test]
+    fn ntype_record_round_trips() {
+        let t = NType::record([("name", NType::Text), ("age", NType::Number)]);
+        let c = converter();
+        let ty = ntype_to_ty_with_counter(&t, &c);
+        assert_eq!(try_ty_to_ntype(&ty), Some(t));
+    }
+
+    #[test]
+    fn ntype_union_round_trips() {
+        // Go through the normalising constructor to match what callers
+        // hand to the conversion layer in practice.
+        let t = NType::union(vec![NType::Text, NType::Null]);
+        let c = converter();
+        let ty = ntype_to_ty_with_counter(&t, &c);
+        // Converting back uses NType::union() so re-normalisation is
+        // idempotent.
+        assert_eq!(try_ty_to_ntype(&ty), Some(t));
+    }
+
+    #[test]
+    fn ntype_list_of_var_round_trips() {
+        // The case the graph-edge checker will hit most often: a
+        // generic container.
+        let t = NType::List(Box::new(NType::Var("T".into())));
+        let c = converter();
+        let ty = ntype_to_ty_with_counter(&t, &c);
+        assert_eq!(ty, Ty::App("List".into(), vec![Ty::Var("T".into())]));
+        assert_eq!(try_ty_to_ntype(&ty), Some(t));
+    }
+
+    #[test]
+    fn unknown_ty_constructor_fails_to_convert() {
+        // Ty from outside the NType peer set (e.g. a stale unifier
+        // state) produces None rather than a panic.
+        let ty = Ty::App("MysteryConstructor".into(), vec![Ty::Con("Text".into())]);
+        assert_eq!(try_ty_to_ntype(&ty), None);
+    }
+
+    #[test]
+    fn unknown_ty_constant_fails_to_convert() {
+        let ty = Ty::Con("ThisIsNotARealNTypeName".into());
+        assert_eq!(try_ty_to_ntype(&ty), None);
+    }
+
+    #[test]
+    fn conversion_pipes_into_unification() {
+        // End-to-end plumbing: NType::List(Var("T")) ~ NType::List(Number)
+        // via the conversion layer must produce T → Number.
+        let lhs = NType::List(Box::new(NType::Var("T".into())));
+        let rhs = NType::List(Box::new(NType::Number));
+        let c = converter();
+        let ty_lhs = ntype_to_ty_with_counter(&lhs, &c);
+        let ty_rhs = ntype_to_ty_with_counter(&rhs, &c);
+        let s = unify(&ty_lhs, &ty_rhs).expect("unification must succeed");
+        assert_eq!(s.get("T"), Some(&Ty::Con("Number".into())));
+    }
+
+    #[test]
+    fn from_trait_delegates_to_ntype_to_ty() {
+        // `(&NType).into()` goes through the public conversion entry
+        // point — exercises the `From` impl distinct from the counter-
+        // less `ntype_to_ty` call.
+        let t = NType::Var("T".into());
+        let ty: Ty = (&t).into();
+        assert_eq!(ty, Ty::Var("T".into()));
     }
 }

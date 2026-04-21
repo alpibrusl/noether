@@ -29,6 +29,19 @@ pub enum NType {
     /// tag/props/children structure as sub-types. The JS reactive runtime owns
     /// VNode semantics; the type checker only needs to know a VNode is a VNode.
     VNode,
+    /// A type variable for parametric polymorphism (M3 slice 2).
+    ///
+    /// `Var("T")` stands for an unknown type that unification will pin down
+    /// to a concrete `NType` at graph-check time. A `Var` is **compatible
+    /// with anything** in [`is_subtype_of`](crate::types::is_subtype_of) —
+    /// the graph-edge checker treats "has a Var" as "call unification, the
+    /// concrete shape will drop out of that pass". Example / JSON-shape
+    /// inference treats an unbound `Var` as `Any`.
+    ///
+    /// Placed at the end of the enum so the discriminant ordering of every
+    /// pre-existing variant is preserved — the on-wire form of every stage
+    /// in the registry stays byte-identical when no `Var` is used.
+    Var(String),
 }
 
 impl NType {
@@ -61,6 +74,11 @@ impl NType {
     /// Create a Record from field pairs.
     pub fn record(fields: impl IntoIterator<Item = (impl Into<String>, NType)>) -> NType {
         NType::Record(fields.into_iter().map(|(k, v)| (k.into(), v)).collect())
+    }
+
+    /// Convenience constructor for a type variable.
+    pub fn var(name: impl Into<String>) -> NType {
+        NType::Var(name.into())
     }
 }
 
@@ -126,6 +144,7 @@ mod tests {
             NType::Stream(Box::new(NType::Bool)),
             NType::Any,
             NType::VNode,
+            NType::Var("T".into()),
         ];
         for t in types {
             let json = serde_json::to_string(&t).unwrap();
@@ -138,5 +157,24 @@ mod tests {
     fn vnode_ord_after_union() {
         // VNode sorts after Union alphabetically, which keeps Ord stable.
         assert!(NType::VNode > NType::Union(vec![NType::Text]));
+    }
+
+    #[test]
+    fn var_ord_is_deterministic() {
+        // Var is the newest variant and sorts after every pre-existing one
+        // (it's last in the enum definition, so it has the highest discriminant).
+        // This keeps the ordering of every already-stored signature stable.
+        assert!(NType::Var("T".into()) > NType::VNode);
+        assert!(NType::Var("T".into()) > NType::Text);
+        assert!(NType::Var("A".into()) < NType::Var("B".into()));
+    }
+
+    #[test]
+    fn var_serde_shape_is_tagged() {
+        // Wire-format check: Var serialises as a tagged object so older
+        // readers encounter a recognisable shape rather than a bare string.
+        let t = NType::Var("T".into());
+        let json = serde_json::to_value(&t).unwrap();
+        assert_eq!(json, serde_json::json!({ "kind": "Var", "value": "T" }));
     }
 }

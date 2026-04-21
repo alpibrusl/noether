@@ -23,6 +23,17 @@ fn resolve_union_hint(hint: &NType) -> Option<NType> {
     None
 }
 
+/// Collapse a `Var` hint to `None` (no useful shape guidance). In practice
+/// unification would have replaced the Var with a concrete NType before we
+/// got here; if it hasn't, we have no grounds to push a shape onto the JSON
+/// value, so we drop the hint. Called at every hint lookup in `infer_type_with_hint`.
+fn strip_var_hint(hint: Option<&NType>) -> Option<&NType> {
+    match hint {
+        Some(NType::Var(_)) => None,
+        other => other,
+    }
+}
+
 /// Infer NType with an optional type hint.
 ///
 /// When the hint is `Map<K, V>`, a JSON object is inferred as `Map<Text, V'>`
@@ -34,6 +45,10 @@ pub fn infer_type_with_hint(value: &serde_json::Value, hint: Option<&NType>) -> 
     // specific non-Null variant to use as the real hint.
     let resolved_hint = hint.and_then(resolve_union_hint);
     let hint = resolved_hint.as_ref().or(hint);
+    // If the effective hint is a Var, strip it — an unbound variable carries
+    // no shape information, so we fall back to inferring from the JSON value
+    // alone (effectively treating the hint as Any).
+    let hint = strip_var_hint(hint);
 
     match value {
         Value::Null => NType::Null,

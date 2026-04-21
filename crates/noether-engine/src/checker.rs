@@ -1579,6 +1579,91 @@ mod tests {
         assert!(violations[0].message.contains("network"));
     }
 
+    // ── Parametric polymorphism (M3 slice 2) ────────────────────────────────
+
+    #[test]
+    fn var_bearing_stage_signature_passes_graph_check() {
+        // End-to-end regression: a hand-constructed stage with a Var in
+        // its signature composes cleanly against concrete wiring.
+        //
+        // This doesn't exercise full unification (there are no generic
+        // stdlib stages yet — that's slice 3); it confirms that
+        // `check_graph` flows through NType::Var edges without blowing
+        // up on the new variant.
+        //
+        // Pipeline: text_to_num (Text -> Number) >> generic (<T> -> <T>)
+        //           >> num_to_bool (Number -> Bool)
+        //
+        // The `generic` stage's Var signature must be compatible with
+        // both the Number upstream and the Number input downstream. With
+        // Var treated as universally compatible at the subtype level,
+        // the graph type-checks; unification would further pin <T> to
+        // Number in slice 2b.
+        let mut store = test_store();
+        store
+            .put(make_stage(
+                "generic_passthrough",
+                NType::Var("T".into()),
+                NType::Var("T".into()),
+            ))
+            .unwrap();
+        let node = CompositionNode::Sequential {
+            stages: vec![
+                stage("text_to_num"),
+                stage("generic_passthrough"),
+                stage("num_to_bool"),
+            ],
+        };
+        let result = check_graph(&node, &store).expect("Var-bearing pipeline must type-check");
+        // The overall input/output are taken from first/last stages
+        // (slice 2 doesn't propagate bindings back through the graph;
+        // that's slice 2b).
+        assert_eq!(result.resolved.input, NType::Text);
+        assert_eq!(result.resolved.output, NType::Bool);
+    }
+
+    #[test]
+    fn var_to_concrete_at_graph_edge_is_accepted() {
+        // Simplest wiring: producer emits <T>, consumer expects Number.
+        // is_subtype_of returns Compatible; check_graph produces no errors.
+        let mut store = test_store();
+        store
+            .put(make_stage(
+                "produces_var",
+                NType::Text,
+                NType::Var("T".into()),
+            ))
+            .unwrap();
+        let node = CompositionNode::Sequential {
+            stages: vec![stage("produces_var"), stage("num_to_bool")],
+        };
+        let result = check_graph(&node, &store);
+        assert!(
+            result.is_ok(),
+            "Var-producing stage must compose with a concrete consumer, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn concrete_to_var_at_graph_edge_is_accepted() {
+        let mut store = test_store();
+        store
+            .put(make_stage(
+                "consumes_var",
+                NType::Var("T".into()),
+                NType::Text,
+            ))
+            .unwrap();
+        let node = CompositionNode::Sequential {
+            stages: vec![stage("text_to_num"), stage("consumes_var")],
+        };
+        let result = check_graph(&node, &store);
+        assert!(
+            result.is_ok(),
+            "Concrete-producing stage must feed a Var-consuming stage, got {result:?}"
+        );
+    }
+
     #[test]
     fn effect_policy_restrict_allows_matching_effect() {
         let mut store = MemoryStore::new();
