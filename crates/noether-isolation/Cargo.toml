@@ -10,7 +10,7 @@ categories.workspace = true
 description = "Stage-execution sandbox policy + bubblewrap command builder. Extracted from noether-engine for consumers that want isolation without the full composition engine."
 
 [dependencies]
-noether-core = { path = "../noether-core", version = "0.7" }
+noether-core = { path = "../noether-core", version = "0.8" }
 serde        = { workspace = true }
 thiserror    = { workspace = true }
 tracing      = "0.1"

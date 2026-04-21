@@ -4,6 +4,33 @@ Notable changes to Noether. Follows [Keep a Changelog](https://keepachangelog.co
 
 ## Unreleased
 
+## 0.8.0 — 2026-04-21
+
+**M3: Optimizer + Richer Types — shipped.** Four tracks landed in one push: a real graph optimizer, parametric polymorphism end-to-end, row polymorphism on records, and refinement types with a runtime validator. The entries below recap what shipped since v0.7.3.
+
+### Headline additions
+
+- **Parametric polymorphism.** Stage signatures can carry `NType::Var("T")`; `check_graph` threads substitutions through every edge so `text_to_num >> identity` resolves its output to `Number`, not `<T>`. Stdlib gains `identity`, `head`, `tail`.
+- **Row polymorphism.** `NType::RecordWith { fields, rest }` captures unknown extra fields via a row variable; `Record ~ RecordWith` unification binds the tail, so `{ name, age } >> mark_done` resolves to `Record { name, age, done }` instead of silently dropping the extras.
+- **Refinement types.** `NType::Refined { base, refinement }` attaches runtime-checkable predicates — `Range`, `OneOf`, `NonEmpty`. Available as type-level constraints today; auto-enforcement at stage-execute boundaries is a v0.8.x follow-up.
+- **Graph optimizer.** Runs between type-check and plan: `canonical_structural` flattens nested wrappers, `dead_branch` folds `Branch(Const(bool), …)`, `memoize_pure` caches repeated Pure-stage invocations within a run. Opt-outs via `NOETHER_NO_OPTIMIZE=1` / `NOETHER_NO_MEMOIZE=1`.
+
+### Stdlib: 85 stages (was 80)
+
+Five new polymorphic / refined stages: `identity`, `head`, `tail`, `mark_done`, `clamp_percent`. Existing stages are unchanged — content-addressing means no migration needed.
+
+### Wire-format compatibility
+
+Every v0.7.x payload is a valid v0.8 payload. The three new `NType` variants (`Var`, `RecordWith`, `Refined`) are additive and placed at the end of the enum so discriminant ordering of existing stages stays bit-identical.
+
+### Deferred follow-ups (flagged honestly)
+
+- Refinement runtime auto-enforcement at stage-execute boundaries
+- Predicate implication for refinement subtyping (e.g., `Range(0..=10) <: Range(0..=100)`)
+- `RecordWith ↔ RecordWith` unification with shared-tail splitting
+- Higher-order stdlib generics (`map`, `filter` as true `<A> → <B>` stages) — need stage-as-value support
+- `fuse_pure_sequential` + `hoist_invariant` as planner-level passes
+
 ### Added — refinement types (M3 last slice)
 
 `NType::Refined { base, refinement }` attaches a runtime-checkable predicate to any base type. A refinement is one of:
