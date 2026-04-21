@@ -15,6 +15,7 @@ pub mod mock;
 pub mod pure_cache;
 pub mod runner;
 pub mod stages;
+pub mod validating;
 
 pub use inline::InlineRegistry;
 

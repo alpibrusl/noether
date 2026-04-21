@@ -1,6 +1,6 @@
 use crate::stage::schema::Stage;
 use crate::types::refinement::validate as validate_refinement;
-use crate::types::{is_subtype_of, NType, Refinement};
+use crate::types::{is_subtype_of, refinements_of, strip_refinements, NType};
 use std::collections::BTreeMap;
 use std::fmt;
 
@@ -200,32 +200,6 @@ impl fmt::Display for ValidationError {
     }
 }
 
-/// Peel [`NType::Refined`] wrappers down to the concrete base type.
-/// Validation uses the stripped base for the structural subtype
-/// check and invokes [`validate_refinement`] separately for the
-/// predicate side.
-fn strip_refinements(ty: &NType) -> &NType {
-    let mut current = ty;
-    while let NType::Refined { base, .. } = current {
-        current = base;
-    }
-    current
-}
-
-/// Collect every refinement layer attached along a `Refined` chain.
-/// `Refined { base: Refined { base: Number, r1 }, r2 }` yields
-/// `[r2, r1]` — outermost-first, because that's the order the
-/// validator applies them.
-fn collect_refinements(ty: &NType) -> Vec<&Refinement> {
-    let mut out = Vec::new();
-    let mut current = ty;
-    while let NType::Refined { base, refinement } = current {
-        out.push(refinement);
-        current = base;
-    }
-    out
-}
-
 /// Validate a stage's examples against its declared type signature.
 pub fn validate_stage(stage: &Stage, min_examples: usize) -> ValidationResult {
     let mut errors = Vec::new();
@@ -272,7 +246,7 @@ pub fn validate_stage(stage: &Stage, min_examples: usize) -> ValidationResult {
         // against the example's concrete value. A violation is
         // surfaced as an InputTypeMismatch so the existing
         // reporter path carries it.
-        for refinement in collect_refinements(&stage.signature.input) {
+        for refinement in refinements_of(&stage.signature.input) {
             if let Err(reason) = validate_refinement(&example.input, refinement) {
                 errors.push(ValidationError::InputTypeMismatch {
                     index: i,
@@ -296,7 +270,7 @@ pub fn validate_stage(stage: &Stage, min_examples: usize) -> ValidationResult {
                 reason: format!("{reason}"),
             });
         }
-        for refinement in collect_refinements(&stage.signature.output) {
+        for refinement in refinements_of(&stage.signature.output) {
             if let Err(reason) = validate_refinement(&example.output, refinement) {
                 errors.push(ValidationError::OutputTypeMismatch {
                     index: i,

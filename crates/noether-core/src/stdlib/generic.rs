@@ -160,8 +160,10 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
         // cleanly.
         //
         // Runtime validation via `noether_core::types::validate_refinement`
-        // is available but not yet auto-enforced at stage boundaries;
-        // executor wiring lands in a follow-up.
+        // runs automatically when `noether run` wraps the executor in
+        // `ValidatingExecutor` (opt out with `NOETHER_NO_REFINEMENT_CHECK=1`),
+        // so an out-of-range value that somehow slips past type-check is
+        // rejected at the stage boundary rather than silently propagated.
         StageBuilder::new("clamp_percent")
             .input(NType::refined(
                 NType::Number,
