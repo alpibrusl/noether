@@ -4,6 +4,32 @@ Notable changes to Noether. Follows [Keep a Changelog](https://keepachangelog.co
 
 ## Unreleased
 
+### Added — three generic stdlib stages (M3 parametric polymorphism slice 3)
+
+First stdlib stages whose signatures carry `NType::Var`. Slice 2b (PR #62) made `check_graph` propagate bindings end-to-end; these three stages are what that propagation now visibly does.
+
+- **`identity: <T> → <T>`** — returns the input unchanged. Simplest possible polymorphic stage; the test probe for "does slice 2b's substitution threading actually reach the stdlib."
+- **`head: List<<T>> → <T>`** (Pure + Fallible) — first element of a list. Empty list surfaces as a typed `StageFailed` error, matching the Fallible effect.
+- **`tail: List<<T>> → List<<T>>`** — every element except the first. Total: empty input → empty output. Declares two properties: `FieldLengthMax` (output no longer than input) and `SubsetOf` (every output element came from the input).
+
+A polymorphic `list_length: List<<T>> → Number` was considered and skipped — the existing `list_length: List<Any> → Number` in `collections.rs` already resolves concrete upstreams via the Any-is-compatible rule, so a Var-shaped copy would be a name-clashing duplicate without new semantics.
+
+### Tests — end-to-end polymorphism verification
+
+New `crates/noether-engine/tests/generic_stdlib_polymorphism.rs`: five tests that pipe concrete upstream stages into the polymorphic stdlib stages and assert that `CheckResult.resolved.output` is the concrete type, not a `Var`. Before slice 2b these would have trivially passed via the permissive `is_subtype_of` short-circuit without proving anything; after slice 2b they are meaningful — a regression in the substitution-threading code would make them fail loudly.
+
+- `identity_resolves_to_concrete_output` — single-hop propagation
+- `chained_identity_propagates_through_multiple_hops` — `identity >> identity` stays bound
+- `head_of_concrete_list_resolves_to_element_type` — `List<Number>` piped into `head` yields `Number`
+- `tail_preserves_list_element_type` — `tail` preserves `List<Number>`
+- `head_then_identity_binds_both_vars_to_same_concrete` — two distinct Vars (T in `head`, T in `identity`) both bind to the same concrete type along the pipeline
+
+### What this does NOT do
+
+- **No `map` / `filter`.** They need higher-order type support (a stage passed as a value). That's a separate milestone, not slice 3.
+- **No rewrite of the existing `list_length`.** The Any version works; deprecating it to promote a Var version is a stdlib-curation decision for M4.
+- **No removal of the permissive `Var` short-circuit** in `is_subtype_of`. Tightening it comes after row polymorphism and refinement types — both still pending for M3.
+
 ### Changed — `check_graph` threads unification through every edge (M3 parametric polymorphism slice 2b)
 
 Slice 2 (PR #60) added `NType::Var` and made it permissively compatible in `is_subtype_of`. Slice 2b makes the propagation real: the checker carries a `Substitution` through the graph walk, and at every edge where either side contains a `Var` it invokes the unifier to extend the substitution and rewrite downstream types so later edges see the bound concrete form.

@@ -1,6 +1,7 @@
 mod collections;
 mod control;
 mod data;
+mod generic;
 mod internal;
 mod io;
 mod kv;
@@ -38,6 +39,7 @@ pub fn load_stdlib() -> Vec<Stage> {
     stages.extend(validation::stages(&key));
     stages.extend(ui::stages(&key));
     stages.extend(process::stages(&key));
+    stages.extend(generic::stages(&key));
     stages
 }
 
@@ -46,9 +48,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn load_stdlib_returns_50_stages() {
+    fn load_stdlib_returns_expected_stage_count() {
         let stages = load_stdlib();
-        assert_eq!(stages.len(), 80); // 76 existing + 4 process stages
+        // 76 existing + 4 process + 3 generic (M3 slice 3: identity,
+        // head, tail — `list_length` is already covered by the Any
+        // variant in collections.rs)
+        assert_eq!(stages.len(), 83);
     }
 
     #[test]

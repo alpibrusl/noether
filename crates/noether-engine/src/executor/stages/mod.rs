@@ -3,6 +3,7 @@ pub mod arrow;
 pub mod collections;
 pub mod control;
 pub mod data;
+pub mod generic;
 #[cfg(feature = "native")]
 pub mod io;
 #[cfg(feature = "native")]
@@ -25,6 +26,13 @@ pub type StageFn = fn(&Value) -> Result<Value, ExecutionError>;
 /// Returns None for stages without real implementations (LLM, Arrow, internal).
 pub fn find_implementation(description: &str) -> Option<StageFn> {
     match description {
+        // Generic (polymorphic — M3 slice 3)
+        "Return the input unchanged. Polymorphic: <T> -> <T>." => Some(generic::identity),
+        "Return the first element of a list. Empty list is a Fallible error." => Some(generic::head),
+        "Return every element of a list except the first. Empty list -> empty list." => {
+            Some(generic::tail)
+        }
+
         // Scalar
         "Convert any value to its text representation" => Some(scalar::to_text),
         "Parse a value as a number; fails on non-numeric text" => Some(scalar::to_number),
