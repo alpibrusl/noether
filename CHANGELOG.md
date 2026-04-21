@@ -4,6 +4,21 @@ Notable changes to Noether. Follows [Keep a Changelog](https://keepachangelog.co
 
 ## Unreleased
 
+### Added — Robinson-style unification module (M3 parametric-polymorphism foundation)
+
+New `noether_core::types::unification` module ships the algorithm foundation for parametric polymorphism on stage signatures:
+
+- `Ty` — minimal type representation (`Var` / `Con` / `App` / `Record`) carried separately from [`NType`] so the algorithm can be tested and iterated without disturbing the 10-variant content-hashed surface.
+- `Substitution` — idempotent mapping from type-variable name to `Ty`. `apply` for substitution, `compose` for composing two substitutions along a unification chain.
+- `unify(lhs, rhs) -> Result<Substitution, UnificationError>` — the Robinson algorithm: Var-Any / Var-Var / Con-Con / App-App (constructor + arity match) / Record-Record (exact field-set match). Includes the occurs check to prevent infinite types.
+- `UnificationError` — typed failure shapes (`OccursCheck { var, ty }`, `Mismatch { lhs, rhs, reason }`) so call sites can react surgically.
+
+22 unit tests cover: substitution basics (apply on every Ty shape, identity, compose idempotence), every unification rule (var-any, var-var identity, con match/mismatch, app constructor/arity, records), occurs-check firing (inside `App`, inside `Record`) and not firing on identity, transitive substitution propagation via pairwise unification, MGU property, and serde wire round-trip.
+
+### What this does NOT do
+
+`NType` is unchanged — no new variant, no exhaustive-match-site churn. Integration with `NType` + graph-edge type-checker is the next PR in the parametric-polymorphism track. Generic stdlib stages (`identity`, `head`, `tail`, `map`) follow once the integration settles.
+
 ### Changed — `noether run` memoizes Pure stages by default (M3 `memoize_pure`)
 
 The `PureStageCache` has existed in the engine since earlier hardening but `cmd_run` was calling the non-cached `run_composition` variant, so the cache only fired when callers opted in manually. Now `cmd_run` builds a `PureStageCache::from_store(store)` and passes it to `run_composition_with_cache` on every invocation. Within a single run, a repeated `(stage_id, input)` pair on a Pure-tagged stage hits the cache instead of re-executing.
