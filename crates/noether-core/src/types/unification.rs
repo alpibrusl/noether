@@ -71,6 +71,17 @@ pub enum Ty {
     /// Structural record. Keys are field names; values are the
     /// field types. `BTreeMap` keeps the ordering deterministic.
     Record(BTreeMap<String, Ty>),
+    /// Row-polymorphic record: known fields plus a row variable
+    /// capturing any other fields the concrete counterpart carries.
+    /// Mirrors [`NType::RecordWith`](super::NType::RecordWith). The
+    /// row variable name is a plain string (same namespace as
+    /// `Ty::Var` names — unify deliberately distinguishes the two
+    /// kinds of variables so a row variable cannot accidentally
+    /// bind to a non-record value).
+    RecordWith {
+        fields: BTreeMap<String, Ty>,
+        rest: String,
+    },
 }
 
 /// A substitution — a map from type-variable name to the type it
@@ -131,6 +142,45 @@ impl Substitution {
                     .map(|(k, v)| (k.clone(), self.apply(v)))
                     .collect(),
             ),
+            Ty::RecordWith { fields, rest } => {
+                // Apply substitution to field values first.
+                let applied_fields: BTreeMap<String, Ty> = fields
+                    .iter()
+                    .map(|(k, v)| (k.clone(), self.apply(v)))
+                    .collect();
+                // Look up the row variable. If bound to a `Record`, merge
+                // its fields in and collapse to a closed Record. If bound
+                // to another `RecordWith`, merge the known fields and
+                // carry through the tail row variable. Anything else
+                // (including an unbound Var) leaves the RecordWith
+                // structure intact so later bindings can still close it.
+                match self.bindings.get(rest) {
+                    Some(Ty::Record(extras)) => {
+                        let mut merged = applied_fields;
+                        for (k, v) in extras {
+                            merged.entry(k.clone()).or_insert_with(|| v.clone());
+                        }
+                        Ty::Record(merged)
+                    }
+                    Some(Ty::RecordWith {
+                        fields: ex_fields,
+                        rest: ex_rest,
+                    }) => {
+                        let mut merged = applied_fields;
+                        for (k, v) in ex_fields {
+                            merged.entry(k.clone()).or_insert_with(|| v.clone());
+                        }
+                        Ty::RecordWith {
+                            fields: merged,
+                            rest: ex_rest.clone(),
+                        }
+                    }
+                    _ => Ty::RecordWith {
+                        fields: applied_fields,
+                        rest: rest.clone(),
+                    },
+                }
+            }
         }
     }
 
@@ -184,6 +234,15 @@ fn free_vars(ty: &Ty) -> BTreeSet<String> {
 
 fn collect_free_vars(ty: &Ty, out: &mut BTreeSet<String>) {
     match ty {
+        Ty::RecordWith { fields, rest } => {
+            for v in fields.values() {
+                collect_free_vars(v, out);
+            }
+            // Row variables live in the same namespace as Ty::Var for
+            // occurs-check purposes — binding `R → RecordWith { …, rest: R }`
+            // is as cyclic as `T → List<T>`.
+            out.insert(rest.clone());
+        }
         Ty::Var(v) => {
             out.insert(v.clone());
         }
@@ -206,6 +265,14 @@ fn collect_free_vars(ty: &Ty, out: &mut BTreeSet<String>) {
 /// Robinson-style: walk both types in parallel; each variable
 /// encounter adds a binding; an occurs check prevents infinite
 /// types.
+//
+// `result_large_err`: the `UnificationError::Mismatch` variant carries
+// two `Ty` values for error context, which pushes the Err arm above
+// the lint's default size threshold. Boxing the error would make the
+// common Ok path pay a redirect for zero runtime payoff — unification
+// failures are exceptional, not hot-path. Allow with an explanatory
+// line so a future reviewer doesn't rediscover it.
+#[allow(clippy::result_large_err)]
 pub fn unify(lhs: &Ty, rhs: &Ty) -> Result<Substitution, UnificationError> {
     match (lhs, rhs) {
         // Var-Var: same name → identity. Different names → bind lhs to rhs.
@@ -264,6 +331,47 @@ pub fn unify(lhs: &Ty, rhs: &Ty) -> Result<Substitution, UnificationError> {
             unify_ref_slices(&lhs_tys, &rhs_tys)
         }
 
+        // Record vs RecordWith (either order): the closed record must
+        // contain every known field of the open one. The leftover
+        // closed-record fields bind the row variable.
+        (Ty::Record(closed), Ty::RecordWith { fields: open, rest })
+        | (Ty::RecordWith { fields: open, rest }, Ty::Record(closed)) => {
+            // Every "known" field on the open side must exist in closed
+            // with a unifying value type.
+            let mut subst = Substitution::empty();
+            for (k, open_ty) in open {
+                let Some(closed_ty) = closed.get(k) else {
+                    return Err(UnificationError::Mismatch {
+                        lhs: lhs.clone(),
+                        rhs: rhs.clone(),
+                        reason: "open record requires a field that the closed record lacks",
+                    });
+                };
+                let step = unify(&subst.apply(open_ty), &subst.apply(closed_ty))?;
+                subst = subst.compose(&step);
+            }
+            // Leftover fields bind the row variable to a closed Record.
+            let mut leftover = BTreeMap::new();
+            for (k, v) in closed {
+                if !open.contains_key(k) {
+                    leftover.insert(k.clone(), subst.apply(v));
+                }
+            }
+            let rest_binding = Ty::Record(leftover);
+            let rest_step = bind_var(rest, &rest_binding)?;
+            Ok(subst.compose(&rest_step))
+        }
+
+        // RecordWith-RecordWith: deferred — needs a shared-tail row
+        // variable to split the overlapping fields. Common graphs hit
+        // the Record-↔-RecordWith case, so returning an honest error
+        // here is better than a partial implementation that misbinds.
+        (Ty::RecordWith { .. }, Ty::RecordWith { .. }) => Err(UnificationError::Mismatch {
+            lhs: lhs.clone(),
+            rhs: rhs.clone(),
+            reason: "RecordWith ↔ RecordWith unification is not yet supported",
+        }),
+
         // Any other pair — incompatible shapes.
         _ => Err(UnificationError::Mismatch {
             lhs: lhs.clone(),
@@ -274,6 +382,7 @@ pub fn unify(lhs: &Ty, rhs: &Ty) -> Result<Substitution, UnificationError> {
 }
 
 /// Bind `var` to `ty`, enforcing the occurs check.
+#[allow(clippy::result_large_err)]
 fn bind_var(var: &str, ty: &Ty) -> Result<Substitution, UnificationError> {
     if let Ty::Var(v) = ty {
         if v == var {
@@ -292,6 +401,7 @@ fn bind_var(var: &str, ty: &Ty) -> Result<Substitution, UnificationError> {
 /// Unify two slices of types pairwise. Standard Robinson iteration:
 /// unify the first pair, apply the resulting substitution to all
 /// subsequent pairs, repeat; compose substitutions along the way.
+#[allow(clippy::result_large_err)]
 fn unify_pairwise(lhs: &[Ty], rhs: &[Ty]) -> Result<Substitution, UnificationError> {
     let mut subst = Substitution::empty();
     for (a, b) in lhs.iter().zip(rhs.iter()) {
@@ -306,6 +416,7 @@ fn unify_pairwise(lhs: &[Ty], rhs: &[Ty]) -> Result<Substitution, UnificationErr
 /// Same as [`unify_pairwise`] but takes slices of references to
 /// sidestep an unnecessary clone when called with reference
 /// collections.
+#[allow(clippy::result_large_err)]
 fn unify_ref_slices(lhs: &[&Ty], rhs: &[&Ty]) -> Result<Substitution, UnificationError> {
     let mut subst = Substitution::empty();
     for (a, b) in lhs.iter().zip(rhs.iter()) {
@@ -415,6 +526,16 @@ fn ntype_to_ty_inner(t: &NType, counter: &AtomicU64) -> Ty {
                 .map(|(k, v)| (k.clone(), ntype_to_ty_inner(v, counter)))
                 .collect(),
         ),
+        // RecordWith → Ty::RecordWith. The row variable name is
+        // preserved verbatim so substitution bindings keyed on it
+        // survive the round-trip.
+        NType::RecordWith { fields, rest } => Ty::RecordWith {
+            fields: fields
+                .iter()
+                .map(|(k, v)| (k.clone(), ntype_to_ty_inner(v, counter)))
+                .collect(),
+            rest: rest.clone(),
+        },
     }
 }
 
@@ -469,6 +590,17 @@ pub fn try_ty_to_ntype(t: &Ty) -> Option<NType> {
                 .map(|(k, v)| try_ty_to_ntype(v).map(|nt| (k.clone(), nt)))
                 .collect();
             converted.map(NType::Record)
+        }
+
+        Ty::RecordWith { fields, rest } => {
+            let converted: Option<BTreeMap<String, NType>> = fields
+                .iter()
+                .map(|(k, v)| try_ty_to_ntype(v).map(|nt| (k.clone(), nt)))
+                .collect();
+            converted.map(|f| NType::RecordWith {
+                fields: f,
+                rest: rest.clone(),
+            })
         }
     }
 }
@@ -854,5 +986,91 @@ mod tests {
         let t = NType::Var("T".into());
         let ty: Ty = (&t).into();
         assert_eq!(ty, Ty::Var("T".into()));
+    }
+
+    // ── Row polymorphism (M3 row-poly slice) ───────────────────────
+
+    fn record_with(fields: &[(&str, Ty)], rest: &str) -> Ty {
+        Ty::RecordWith {
+            fields: fields
+                .iter()
+                .cloned()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect(),
+            rest: rest.to_string(),
+        }
+    }
+
+    #[test]
+    fn unify_record_with_record_binds_row_to_extras() {
+        // { a: Number, b: Text, c: Bool } ~ { a: <T>, ...R }
+        //   → T → Number, R → { b: Text, c: Bool }
+        // This is the canonical row-polymorphism case: the concrete
+        // record covers the open record's known fields; the row
+        // variable captures the rest.
+        let closed = record(&[("a", con("Number")), ("b", con("Text")), ("c", con("Bool"))]);
+        let open = record_with(&[("a", var("T"))], "R");
+        let s = unify(&closed, &open).unwrap();
+        assert_eq!(s.get("T"), Some(&con("Number")));
+        assert_eq!(
+            s.get("R"),
+            Some(&record(&[("b", con("Text")), ("c", con("Bool"))]))
+        );
+    }
+
+    #[test]
+    fn unify_record_with_missing_required_field_is_mismatch() {
+        // { b: Text } ~ { a: <T>, ...R }  → `a` missing on closed side.
+        let closed = record(&[("b", con("Text"))]);
+        let open = record_with(&[("a", var("T"))], "R");
+        let err = unify(&closed, &open).unwrap_err();
+        assert!(
+            matches!(err, UnificationError::Mismatch { reason, .. } if reason.contains("lacks"))
+        );
+    }
+
+    #[test]
+    fn unify_two_record_withs_is_deferred_mismatch() {
+        // Two open records: deliberately returns `Mismatch` in this
+        // first slice. A shared-tail binding would be correct here;
+        // returning an honest error is better than a partial impl.
+        let r1 = record_with(&[("a", con("Number"))], "R1");
+        let r2 = record_with(&[("b", con("Text"))], "R2");
+        let err = unify(&r1, &r2).unwrap_err();
+        assert!(
+            matches!(err, UnificationError::Mismatch { reason, .. } if reason.contains("not yet supported"))
+        );
+    }
+
+    #[test]
+    fn applying_bound_row_collapses_to_closed_record() {
+        // Given subst R → { b: Text, c: Bool }, applying to
+        // { a: Number, ...R } should yield { a: Number, b: Text, c: Bool }.
+        let subst = Substitution::singleton("R", record(&[("b", con("Text")), ("c", con("Bool"))]));
+        let open = record_with(&[("a", con("Number"))], "R");
+        let applied = subst.apply(&open);
+        assert_eq!(
+            applied,
+            record(&[("a", con("Number")), ("b", con("Text")), ("c", con("Bool")),])
+        );
+    }
+
+    #[test]
+    fn ntype_record_with_round_trips_through_ty_conversion() {
+        // End-to-end conversion: NType::RecordWith preserves fields
+        // and row-variable name through ntype_to_ty + try_ty_to_ntype.
+        let t = NType::record_with([("a", NType::Number)], "R");
+        let ty = ntype_to_ty(&t);
+        let back = try_ty_to_ntype(&ty).unwrap();
+        assert_eq!(t, back);
+    }
+
+    #[test]
+    fn occurs_check_fires_on_row_var_inside_record_with() {
+        // R ~ { a: Text, ...R } would create an infinite record
+        // (binding R to a record that itself contains R as the
+        // tail). Occurs check must catch this.
+        let err = unify(&var("R"), &record_with(&[("a", con("Text"))], "R")).unwrap_err();
+        assert!(matches!(err, UnificationError::OccursCheck { var, .. } if var == "R"));
     }
 }

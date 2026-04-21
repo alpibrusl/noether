@@ -42,6 +42,41 @@ pub enum NType {
     /// pre-existing variant is preserved — the on-wire form of every stage
     /// in the registry stays byte-identical when no `Var` is used.
     Var(String),
+    /// A record with **known fields plus a row-variable tail** (M3 row
+    /// polymorphism).
+    ///
+    /// `RecordWith { fields: { a: Text }, rest: "R" }` reads as "has at
+    /// least field `a` of type Text; whatever other fields exist are
+    /// captured by row variable `R`." When composed against a concrete
+    /// upstream like `Record { a: Text, b: Number, c: Bool }`, unification
+    /// binds `R` to `Record { b: Number, c: Bool }`. Downstream stages
+    /// declaring `RecordWith { fields: { timestamp: Number }, rest: "R" }`
+    /// then output `Record { timestamp: Number, b: Number, c: Bool }` —
+    /// the extra fields flow through rather than getting silently dropped.
+    ///
+    /// # Subtyping
+    ///
+    /// - `Record(f_sub) <: RecordWith { f_sup, _ }` iff `f_sub` contains
+    ///   every key of `f_sup` with subtype values. The row variable is
+    ///   a promise that the remaining fields are *captured*; at subtype
+    ///   level we accept them without constraint.
+    /// - `RecordWith { f_sub, r } <: Record(f_sup)` is a harder check
+    ///   (sub has unknown extra fields; sup is closed). Treated as
+    ///   `Incompatible` for now — an open record can't silently narrow
+    ///   to a closed one without the row variable being provably empty.
+    /// - `RecordWith ~ RecordWith` is deferred for a follow-up; common
+    ///   agent-composed graphs hit the `Record ~ RecordWith` case.
+    ///
+    /// # Serialization
+    ///
+    /// The tagged enum form is
+    /// `{"kind": "RecordWith", "value": { "fields": {...}, "rest": "R" }}`
+    /// — same outer shape as every other variant. Placed last in the
+    /// enum definition so existing stages stay bit-identical on the wire.
+    RecordWith {
+        fields: BTreeMap<String, NType>,
+        rest: String,
+    },
 }
 
 impl NType {
@@ -79,6 +114,17 @@ impl NType {
     /// Convenience constructor for a type variable.
     pub fn var(name: impl Into<String>) -> NType {
         NType::Var(name.into())
+    }
+
+    /// Convenience constructor for an open record with a row variable.
+    pub fn record_with(
+        fields: impl IntoIterator<Item = (impl Into<String>, NType)>,
+        rest: impl Into<String>,
+    ) -> NType {
+        NType::RecordWith {
+            fields: fields.into_iter().map(|(k, v)| (k.into(), v)).collect(),
+            rest: rest.into(),
+        }
     }
 }
 
@@ -176,5 +222,28 @@ mod tests {
         let t = NType::Var("T".into());
         let json = serde_json::to_value(&t).unwrap();
         assert_eq!(json, serde_json::json!({ "kind": "Var", "value": "T" }));
+    }
+
+    #[test]
+    fn record_with_round_trips_through_json() {
+        // M3 row polymorphism: the RecordWith variant must round-trip
+        // cleanly via the existing `#[serde(tag = "kind", content = "value")]`
+        // shape so non-Rust consumers see the same schema form.
+        let t = NType::record_with([("id", NType::Text), ("age", NType::Number)], "R");
+        let json = serde_json::to_string(&t).unwrap();
+        let back: NType = serde_json::from_str(&json).unwrap();
+        assert_eq!(t, back);
+        assert!(json.contains("\"kind\":\"RecordWith\""));
+        assert!(json.contains("\"rest\":\"R\""));
+    }
+
+    #[test]
+    fn record_with_ord_is_deterministic() {
+        // RecordWith is the newest variant (after Var) and has the
+        // highest discriminant — so every pre-existing stage's on-wire
+        // ordering stays stable.
+        let rw = NType::record_with([("a", NType::Text)], "R");
+        assert!(rw > NType::Var("T".into()));
+        assert!(rw > NType::Text);
     }
 }

@@ -177,6 +177,48 @@ fn tail_preserves_list_element_type() {
 }
 
 #[test]
+fn mark_done_preserves_upstream_fields_via_row_polymorphism() {
+    // M3 row-poly: mark_done has signature
+    //   input:  RecordWith { fields: {}, rest: R }
+    //   output: RecordWith { fields: { done: Bool }, rest: R }
+    //
+    // Piping a concrete Record { name: Text, age: Number } into it
+    // should resolve the output to
+    //   Record { name: Text, age: Number, done: Bool }
+    // — proving the row variable actually captured and carried through
+    // the upstream's extra fields, not silently dropped them.
+    use std::collections::BTreeMap;
+    let mut store = init_store();
+    // Upstream: produces a concrete record with two fields.
+    store
+        .put(make_stage(
+            "make_person",
+            NType::Text,
+            NType::record([("name", NType::Text), ("age", NType::Number)]),
+        ))
+        .unwrap();
+    let mark_done_id = find_stdlib(&store, "mark_done");
+    let graph = CompositionNode::Sequential {
+        stages: vec![probe("make_person"), stage_ref(mark_done_id)],
+    };
+    let check = check_graph(&graph, &store).expect("mark_done composition must type-check");
+
+    let expected: BTreeMap<String, NType> = [
+        ("age".to_string(), NType::Number),
+        ("done".to_string(), NType::Bool),
+        ("name".to_string(), NType::Text),
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(
+        check.resolved.output,
+        NType::Record(expected),
+        "row variable must have bound the upstream's name+age fields so the \
+         output is a closed Record with name, age, done"
+    );
+}
+
+#[test]
 fn head_then_identity_binds_both_vars_to_same_concrete() {
     // num_to_list >> head >> identity
     // head binds its <T> to Number. identity's independent <T> must

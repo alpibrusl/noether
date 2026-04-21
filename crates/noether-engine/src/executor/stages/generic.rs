@@ -52,6 +52,21 @@ pub fn tail(input: &Value) -> Result<Value, ExecutionError> {
     Ok(Value::Array(out))
 }
 
+/// `mark_done: RecordWith { …, ...R } -> RecordWith { done: Bool, ...R }`
+/// — clone the input record, set (or overwrite) `done: true`. The
+/// row variable `R` makes every other field flow through untouched.
+pub fn mark_done(input: &Value) -> Result<Value, ExecutionError> {
+    let obj = input
+        .as_object()
+        .ok_or_else(|| ExecutionError::StageFailed {
+            stage_id: StageId("mark_done".into()),
+            message: format!("expected record, got {input}"),
+        })?;
+    let mut cloned = obj.clone();
+    cloned.insert("done".into(), Value::Bool(true));
+    Ok(Value::Object(cloned))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -690,6 +690,10 @@ fn contains_var(ty: &NType) -> bool {
         NType::Map { key, value } => contains_var(key) || contains_var(value),
         NType::Union(variants) => variants.iter().any(contains_var),
         NType::Record(fields) => fields.values().any(contains_var),
+        // An open record always carries a row variable, which is by
+        // definition unbound until unified. Treat it as "has a Var" so
+        // edges involving one route through unification.
+        NType::RecordWith { .. } => true,
         _ => false,
     }
 }
@@ -726,6 +730,50 @@ fn apply_subst_to_ntype(subst: &Substitution, ty: &NType) -> NType {
                 .map(|(k, v)| (k.clone(), apply_subst_to_ntype(subst, v)))
                 .collect(),
         ),
+        // Row-polymorphic record: apply substitution to each known
+        // field first, then look up the row variable. If it's bound
+        // to a Record, merge the extra fields in and collapse to a
+        // closed Record (the canonical use case — upstream's extras
+        // flow into the downstream output). If unbound or bound to
+        // another open record, keep the RecordWith shape.
+        NType::RecordWith { fields, rest } => {
+            let applied_fields: std::collections::BTreeMap<String, NType> = fields
+                .iter()
+                .map(|(k, v)| (k.clone(), apply_subst_to_ntype(subst, v)))
+                .collect();
+            match subst.get(rest) {
+                Some(bound) => match try_ty_to_ntype(bound) {
+                    Some(NType::Record(extra)) => {
+                        let mut merged = applied_fields;
+                        for (k, v) in extra {
+                            merged.entry(k).or_insert(v);
+                        }
+                        NType::Record(merged)
+                    }
+                    Some(NType::RecordWith {
+                        fields: ex_fields,
+                        rest: ex_rest,
+                    }) => {
+                        let mut merged = applied_fields;
+                        for (k, v) in ex_fields {
+                            merged.entry(k).or_insert(v);
+                        }
+                        NType::RecordWith {
+                            fields: merged,
+                            rest: ex_rest,
+                        }
+                    }
+                    _ => NType::RecordWith {
+                        fields: applied_fields,
+                        rest: rest.clone(),
+                    },
+                },
+                None => NType::RecordWith {
+                    fields: applied_fields,
+                    rest: rest.clone(),
+                },
+            }
+        }
         _ => ty.clone(),
     }
 }

@@ -81,6 +81,8 @@ fn is_nullable(t: &NType) -> bool {
         // type `Var("T")` in sup is allowed to be absent in sub (same
         // treatment as `Any`).
         NType::Var(_) => true,
+        // A record is a record — even an open one. Never Null-like.
+        NType::Record(_) | NType::RecordWith { .. } => false,
         _ => false,
     }
 }
@@ -167,6 +169,117 @@ pub fn is_subtype_of(sub: &NType, sup: &NType) -> TypeCompatibility {
         // forcing every upstream stage to carry the field through its own
         // output schema.
         (Record(sub_fields), Record(sup_fields)) => {
+            for (field_name, sup_type) in sup_fields {
+                match sub_fields.get(field_name) {
+                    None => {
+                        if !is_nullable(sup_type) {
+                            return Incompatible(MissingField {
+                                field: field_name.clone(),
+                            });
+                        }
+                    }
+                    Some(sub_type) => {
+                        if let Incompatible(r) = is_subtype_of(sub_type, sup_type) {
+                            return Incompatible(FieldTypeMismatch {
+                                field: field_name.clone(),
+                                reason: Box::new(r),
+                            });
+                        }
+                    }
+                }
+            }
+            Compatible
+        }
+
+        // Record <: RecordWith — the concrete record is an acceptable
+        // substitute for the open one. Every known field on the open
+        // side must exist in sub with a subtype value; the remaining
+        // fields are what the row variable captures at unification
+        // time. At the plain-subtype level we don't need to bind the
+        // row variable ourselves — that's the unifier's job when
+        // either side has a Var that needs pinning. Here we just
+        // confirm compatibility.
+        (
+            Record(sub_fields),
+            RecordWith {
+                fields: sup_fields,
+                rest: _,
+            },
+        ) => {
+            for (field_name, sup_type) in sup_fields {
+                match sub_fields.get(field_name) {
+                    None => {
+                        if !is_nullable(sup_type) {
+                            return Incompatible(MissingField {
+                                field: field_name.clone(),
+                            });
+                        }
+                    }
+                    Some(sub_type) => {
+                        if let Incompatible(r) = is_subtype_of(sub_type, sup_type) {
+                            return Incompatible(FieldTypeMismatch {
+                                field: field_name.clone(),
+                                reason: Box::new(r),
+                            });
+                        }
+                    }
+                }
+            }
+            Compatible
+        }
+
+        // RecordWith <: Record — deliberately treated like
+        // `Record <: Record` width-subtype check for the known fields.
+        // The open side has **at least** its declared fields plus an
+        // unknown tail; as a subtype, those extra fields are an
+        // acceptable `record-has-more-fields-than-required` situation.
+        // Downstream consumers won't see the extras unless unification
+        // binds the row variable.
+        (
+            RecordWith {
+                fields: sub_fields,
+                rest: _,
+            },
+            Record(sup_fields),
+        ) => {
+            for (field_name, sup_type) in sup_fields {
+                match sub_fields.get(field_name) {
+                    None => {
+                        if !is_nullable(sup_type) {
+                            return Incompatible(MissingField {
+                                field: field_name.clone(),
+                            });
+                        }
+                    }
+                    Some(sub_type) => {
+                        if let Incompatible(r) = is_subtype_of(sub_type, sup_type) {
+                            return Incompatible(FieldTypeMismatch {
+                                field: field_name.clone(),
+                                reason: Box::new(r),
+                            });
+                        }
+                    }
+                }
+            }
+            Compatible
+        }
+
+        // RecordWith <: RecordWith — compatible if the sub's known
+        // fields cover the sup's known fields with subtype values. The
+        // row-variable bookkeeping (shared tails, etc.) is the unifier's
+        // concern; here we just confirm structural compatibility so
+        // graphs with Var-bearing records inside open records don't
+        // blanket-fail at subtype time.
+        (
+            RecordWith {
+                fields: sub_fields,
+                rest: _,
+            },
+            RecordWith {
+                fields: sup_fields,
+                rest: _,
+            },
+        ) => {
             for (field_name, sup_type) in sup_fields {
                 match sub_fields.get(field_name) {
                     None => {

@@ -4,6 +4,52 @@ Notable changes to Noether. Follows [Keep a Changelog](https://keepachangelog.co
 
 ## Unreleased
 
+### Added — row polymorphism (M3 row-poly slice)
+
+New `NType::RecordWith { fields, rest }` variant: an open record with **known fields plus a row-variable tail** capturing whatever other fields the concrete counterpart carries. Unification binds the row variable; substitution collapses it back to a closed record.
+
+Motivating case: a stage like `mark_done: { ...R } → { done: Bool, ...R }` composed against a concrete upstream `{ name: Text, age: Number }` now resolves its output to `Record { name: Text, age: Number, done: Bool }` — extras flow through rather than getting silently dropped by width subtyping.
+
+**`NType` / `Ty` surface:**
+
+- `NType::RecordWith { fields, rest }` — variant placed last in the enum; preserves existing discriminant order so on-wire stages stay bit-identical.
+- `Ty::RecordWith { fields, rest }` — mirror shape for the unifier.
+- `ntype_to_ty` / `try_ty_to_ntype` round-trip both.
+
+**Subtyping rules (all four pairings):**
+
+- `Record <: Record` — unchanged (width + depth).
+- `Record <: RecordWith` — sub has all sup's known fields with subtype values; extras are the row variable's business at unification time.
+- `RecordWith <: Record` — mirror; the open side has at least the closed side's fields.
+- `RecordWith <: RecordWith` — sub's known fields cover sup's known fields; row variable bookkeeping deferred to unification.
+
+**Unification rules:**
+
+- `Record ~ RecordWith` — unify shared fields; the row variable binds to a `Record` of the leftover fields. This is where the extras actually flow.
+- `RecordWith ~ RecordWith` — returns `Mismatch` (shared-tail splitting deferred). Most agent-composed graphs hit the Record↔RecordWith case, so an honest error beats a partial implementation.
+- Occurs check covers row variables (so `R ~ { a: Text, ...R }` fails loudly).
+- `Substitution::apply` and the engine's `apply_subst_to_ntype` both know about `RecordWith`; applying a substitution that binds the row variable collapses the open record to a closed one.
+
+**Stdlib:**
+
+- New `mark_done: RecordWith { {}, R } → RecordWith { { done: Bool }, R }` (Pure). Sets `done: true` on any record; the row variable preserves whatever else the upstream produced. Five examples cover empty records, single-field records, multi-field records, pre-existing `done` overwrite, and records with nullable / array values.
+
+**Tests (+6 unification, +1 integration):**
+
+- `unify_record_with_record_binds_row_to_extras` — the canonical case
+- `unify_record_with_missing_required_field_is_mismatch`
+- `unify_two_record_withs_is_deferred_mismatch`
+- `applying_bound_row_collapses_to_closed_record`
+- `ntype_record_with_round_trips_through_ty_conversion`
+- `occurs_check_fires_on_row_var_inside_record_with`
+- `mark_done_preserves_upstream_fields_via_row_polymorphism` in the integration suite — pipes `{ name, age }` into `mark_done`, asserts output is `{ name, age, done }`.
+
+**What this does NOT do:**
+
+- **RecordWith ↔ RecordWith unification** — deferred. The correct rule needs a shared-tail row variable; common graphs don't hit it and I'd rather ship an honest error than a misbinding.
+- **No new ergonomic surface** on `StageBuilder` — authors use the `NType::record_with(...)` constructor. A sugar macro can come later if the pattern proves heavy.
+- **No removal of the permissive `Var` short-circuit** in `is_subtype_of`. Same story as prior slices.
+
 ### Added — three generic stdlib stages (M3 parametric polymorphism slice 3)
 
 First stdlib stages whose signatures carry `NType::Var`. Slice 2b (PR #62) made `check_graph` propagate bindings end-to-end; these three stages are what that propagation now visibly does.

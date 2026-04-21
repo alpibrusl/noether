@@ -25,7 +25,7 @@ fn build_index(store: &MemoryStore) -> SemanticIndex {
 fn index_all_stdlib_stages() {
     let store = init_store();
     let index = build_index(&store);
-    assert_eq!(index.len(), 83); // 76 existing + 4 process + 3 generic (M3 slice 3)
+    assert_eq!(index.len(), 84); // + 3 generic (M3 slice 3) + 1 row-poly (mark_done)
 }
 
 #[test]

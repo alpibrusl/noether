@@ -37,6 +37,16 @@ impl fmt::Display for NType {
             // than a concrete type name — matches the informal `<T>` / `<U>`
             // notation used in docs/roadmap and the unification tests.
             NType::Var(name) => write!(f, "<{name}>"),
+            // Row-polymorphic record: known fields first, then a `...R`
+            // tail marking the captured rest. Reads like the informal
+            // record-extension notation from the ML family.
+            NType::RecordWith { fields, rest } => {
+                write!(f, "Record {{ ")?;
+                for (name, ty) in fields.iter() {
+                    write!(f, "{name}: {ty}, ")?;
+                }
+                write!(f, "...<{rest}> }}")
+            }
         }
     }
 }

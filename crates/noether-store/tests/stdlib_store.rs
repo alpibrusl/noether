@@ -9,7 +9,7 @@ fn load_all_stdlib_into_store() {
     for stage in stages {
         store.put(stage).unwrap();
     }
-    assert_eq!(store.len(), 83); // + 3 generic (M3 slice 3)
+    assert_eq!(store.len(), 84); // + 3 generic (slice 3) + 1 row-poly (mark_done)
 }
 
 #[test]
@@ -19,7 +19,7 @@ fn all_stdlib_stages_are_active_in_store() {
         store.put(stage).unwrap();
     }
     let active = store.list(Some(&StageLifecycle::Active));
-    assert_eq!(active.len(), 83); // + 3 generic (M3 slice 3)
+    assert_eq!(active.len(), 84); // + 3 generic (slice 3) + 1 row-poly (mark_done)
 }
 
 #[test]
@@ -29,8 +29,8 @@ fn store_stats_after_stdlib_load() {
         store.put(stage).unwrap();
     }
     let stats = store.stats();
-    assert_eq!(stats.total, 83); // + 3 generic (M3 slice 3)
-    assert_eq!(stats.by_lifecycle.get("active"), Some(&83));
+    assert_eq!(stats.total, 84);
+    assert_eq!(stats.by_lifecycle.get("active"), Some(&84));
 }
 
 #[test]

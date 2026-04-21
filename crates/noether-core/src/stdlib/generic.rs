@@ -109,13 +109,44 @@ pub fn stages(key: &SigningKey) -> Vec<Stage> {
             .alias("list_tail")
             .build_stdlib(key)
             .unwrap(),
-        // (A separate polymorphic `list_length: List<<T>> -> Number` was
-        // considered here. Skipped: the existing `list_length` in
-        // `collections.rs` has signature `List<Any> -> Number`, which
-        // already resolves a concrete upstream via the Any-is-compatible
-        // rule, so an additional Var-shaped copy would be a name-clashing
-        // duplicate without buying new semantics. The point of slice 3
-        // is demonstrated by `identity` / `head` / `tail` — each of which
-        // declares a Var the existing stdlib does not.)
+        // mark_done : RecordWith { …, ...R } -> RecordWith { done: Bool, ...R }
+        //
+        // The row-polymorphism demonstrator (M3 row slice). Takes ANY
+        // record and returns the same record with a `done: true` field
+        // added. Upstream fields flow through the row variable — a
+        // concrete upstream producing `Record { name: Text, age: Number }`
+        // piped into `mark_done` resolves its output to
+        // `Record { name: Text, age: Number, done: Bool }`, not to a
+        // lossy `Record { done: Bool }`.
+        //
+        // When an upstream already had a `done` field, it's overwritten
+        // (the implementation assigns `done: true` unconditionally),
+        // so the declared type remains `Bool` rather than widening to
+        // the upstream's type.
+        StageBuilder::new("mark_done")
+            .input(NType::record_with(Vec::<(String, NType)>::new(), "R"))
+            .output(NType::record_with([("done", NType::Bool)], "R"))
+            .pure()
+            .description("Return the input record with `done: true` added; preserves any other fields via row polymorphism.")
+            .example(json!({}), json!({ "done": true }))
+            .example(json!({ "a": 1 }), json!({ "a": 1, "done": true }))
+            .example(
+                json!({ "name": "alice", "age": 30 }),
+                json!({ "name": "alice", "age": 30, "done": true }),
+            )
+            .example(json!({ "done": false }), json!({ "done": true }))
+            .example(
+                json!({ "a": [1, 2], "b": null }),
+                json!({ "a": [1, 2], "b": null, "done": true }),
+            )
+            .tag("generic")
+            .tag("polymorphic")
+            .tag("record")
+            .tag("row")
+            .tag("pure")
+            .alias("mark_visited")
+            .alias("set_done")
+            .build_stdlib(key)
+            .unwrap(),
     ]
 }

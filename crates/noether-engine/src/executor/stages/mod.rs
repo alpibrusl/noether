@@ -26,11 +26,14 @@ pub type StageFn = fn(&Value) -> Result<Value, ExecutionError>;
 /// Returns None for stages without real implementations (LLM, Arrow, internal).
 pub fn find_implementation(description: &str) -> Option<StageFn> {
     match description {
-        // Generic (polymorphic — M3 slice 3)
+        // Generic (polymorphic — M3 slice 3 + row-poly slice)
         "Return the input unchanged. Polymorphic: <T> -> <T>." => Some(generic::identity),
         "Return the first element of a list. Empty list is a Fallible error." => Some(generic::head),
         "Return every element of a list except the first. Empty list -> empty list." => {
             Some(generic::tail)
+        }
+        "Return the input record with `done: true` added; preserves any other fields via row polymorphism." => {
+            Some(generic::mark_done)
         }
 
         // Scalar

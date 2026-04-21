@@ -50,10 +50,9 @@ mod tests {
     #[test]
     fn load_stdlib_returns_expected_stage_count() {
         let stages = load_stdlib();
-        // 76 existing + 4 process + 3 generic (M3 slice 3: identity,
-        // head, tail — `list_length` is already covered by the Any
-        // variant in collections.rs)
-        assert_eq!(stages.len(), 83);
+        // 76 existing + 4 process + 4 generic (M3 slice 3: identity,
+        // head, tail + row-poly slice: mark_done)
+        assert_eq!(stages.len(), 84);
     }
 
     #[test]
