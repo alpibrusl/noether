@@ -4,6 +4,30 @@ Notable changes to Noether. Follows [Keep a Changelog](https://keepachangelog.co
 
 ## Unreleased
 
+### Changed — `check_graph` threads unification through every edge (M3 parametric polymorphism slice 2b)
+
+Slice 2 (PR #60) added `NType::Var` and made it permissively compatible in `is_subtype_of`. Slice 2b makes the propagation real: the checker carries a `Substitution` through the graph walk, and at every edge where either side contains a `Var` it invokes the unifier to extend the substitution and rewrite downstream types so later edges see the bound concrete form.
+
+Concretely:
+
+- **`check_graph` carries a `Substitution`** that accumulates Var bindings across every sequential, fanout, merge, branch, and let edge. The final substitution is applied to `CheckResult.resolved` before return, so a graph like `A: Text → Number` followed by `Ident: <T> → <T>` resolves to `Text → Number`, not `Text → <T>`.
+- **New `GraphTypeError::UnificationFailure { edge, from, to, error }`** variant covers `OccursCheck` and shape-mismatch cases the unifier surfaces. The `edge` string (e.g. `"sequential position 2"`, `"let binding \"tmp\""`) tells operators where the failure fired.
+- **`is_subtype_of` stays permissive on Var**; it's still the fallback for graphs that don't trip unification. Non-Var edges take the pre-slice-2b path unchanged — byte-identical `CheckResult` for every graph that doesn't declare type variables.
+- **`apply_subst_to_ntype`** walks `NType` directly instead of round-tripping through `Ty`, so `NType::Any` stays `NType::Any` (the `ntype_to_ty` conversion freshens Any to `Var("_any_N")` and that name must not leak into the resolved type).
+
+### Tests — four new regression tests in `noether-engine::checker`
+
+- `var_binding_propagates_through_identity_stage`: `A: Text → Number >> Ident: <T> → <T>` resolves output to `Number`.
+- `var_binding_propagates_through_chained_identity_stages`: three-hop `A >> Ident1 >> Ident2` still yields `Number`, proving the substitution survives through multiple Var-bearing edges.
+- `var_binding_propagates_so_downstream_mismatch_is_caught`: `A >> Wrap: <T> → List<T> >> C: Text → Bool` fails at position 1 with `List<Number>` vs `Text` — the value of slice 2b is that this check sees concrete types, not Vars.
+- `non_var_graph_resolves_identically_to_pre_slice_2b`: regression guard asserting non-Var graphs produce the same `ResolvedType` as before.
+
+### What this does NOT do
+
+- **No generic stdlib stages yet.** That's slice 3 (next): `identity`, `head`, `tail`, `list_length` added to `noether-core::stdlib`.
+- **No removal of the permissive `Var` short-circuit in `is_subtype_of`.** Keeping it means graphs that don't trip unification behave identically; tightening it is a follow-up once slice 3 proves unification covers every case.
+- **No planner / executor change.** Execution still goes through the existing path; substitutions are a type-check-time concern.
+
 ### Docs — parity pass with v0.7.x features
 
 README, mkdocs, and the tutorial section had drifted behind the last four shipped deliverables. This pass closes the gap:
