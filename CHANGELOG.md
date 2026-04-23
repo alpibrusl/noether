@@ -4,6 +4,19 @@ Notable changes to Noether. Follows [Keep a Changelog](https://keepachangelog.co
 
 ## Unreleased
 
+## 0.8.1 — 2026-04-23
+
+Patch release. Two goals: repair a partial v0.8.0 crates.io publish, and ship the refinement-enforcement follow-up that merged to `main` post-tag.
+
+### Fixed — crates.io publish repair
+
+`noether-engine` and `noether-cli` did not publish at v0.8.0. The release workflow failed because `noether-engine/Cargo.toml` declared `llm-here-core` via `git = "..."` without a version constraint; crates.io rejects unversioned git deps on publish. Meanwhile `noether-core`, `noether-store`, and `noether-isolation` did publish, leaving crates.io with a mixed view of the workspace (cli still on 0.7.3).
+
+Fix: publish `llm-here-core` to crates.io and switch `noether-engine` to the crates.io coordinate.
+
+- `llm-here-core` 0.4.0 published to crates.io from `alpibrusl/llm-here`.
+- `noether-engine/Cargo.toml`: `llm-here-core = { version = "0.4.0", optional = true }` (dropped `git` + `tag`).
+
 ### Added — refinement runtime enforcement
 
 `ValidatingExecutor` wraps any `StageExecutor` and enforces declared refinements at every stage boundary. Inputs are checked before the stage runs; outputs are checked after. A violation aborts with `ExecutionError::StageFailed` carrying the refinement and the validator's reason.
