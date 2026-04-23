@@ -29,3 +29,4 @@ crates/noether-engine/data.csv
 crates/noether-engine/empty.txt
 crates/noether-engine/log.txt
 crates/noether-engine/out.json
+site/
