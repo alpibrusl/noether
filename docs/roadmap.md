@@ -23,7 +23,7 @@ Current implementation status and future directions for Noether.
 
 ## Milestones (post-phase 9)
 
-Noether shifted from sequential "phase" numbering to milestone tracking with the v0.5 release. Milestones correspond to the [Rock-Solid Plan](roadmap/2026-04-18-rock-solid-plan.md).
+Noether shifted from sequential "phase" numbering to milestone tracking with the v0.5 release. Milestones correspond to the [Rock-Solid Plan](https://github.com/alpibrusl/noether/blob/main/docs/roadmap/2026-04-18-rock-solid-plan.md).
 
 | Milestone | Name | Status | Shipped as | Key deliverables |
 |---|---|---|---|---|
@@ -59,10 +59,10 @@ These are not scheduled — they are design explorations:
 
 | Idea | Notes |
 |---|---|
-| **Grid — capability generalisation** | Lift grid routing beyond `Effect::Llm` to any capability kind (GPU time, DB connections, scraper rotation). See [research](research/grid-capabilities.md). |
-| **`llm-here`** | Unify caloron's `_llm.py`, agentspec's resolver, and grid's `cli_provider.rs` behind one shared tool. See [research](research/llm-here.md). |
-| **NoetherReact** | Content-addressed UI components as stages; `UI = f(stage_graph(state))`. See [research](research/noether-react.md). |
-| **WASM stdlib** | Compile Pure Rust stdlib stages to WASM for zero-latency in-browser execution. See [research](research/wasm-target.md). |
+| **Grid — capability generalisation** | Lift grid routing beyond `Effect::Llm` to any capability kind (GPU time, DB connections, scraper rotation). See [research](https://github.com/alpibrusl/noether/blob/main/docs/research/grid-capabilities.md). |
+| **`llm-here`** | Unify caloron's `_llm.py`, agentspec's resolver, and grid's `cli_provider.rs` behind one shared tool. See [research](https://github.com/alpibrusl/noether/blob/main/docs/research/llm-here.md). |
+| **NoetherReact** | Content-addressed UI components as stages; `UI = f(stage_graph(state))`. See [research](https://github.com/alpibrusl/noether/blob/main/docs/research/noether-react.md). |
+| **WASM stdlib** | Compile Pure Rust stdlib stages to WASM for zero-latency in-browser execution. See [research](https://github.com/alpibrusl/noether/blob/main/docs/research/wasm-target.md). |
 | **Multi-tenant stores** | Separate stage namespaces per agent / team |
 | **Pure-stage caching** | Automatic output memoisation for `Pure`-annotated stages |
 | **Remote gRPC executor** | High-throughput data routing via gRPC + Apache Arrow for stream stages |
