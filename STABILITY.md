@@ -54,12 +54,13 @@ after the deprecation announcement.
 ### Composition ID — stable under canonicalisation
 
 The **composition ID** is the SHA-256 of the canonical form of the
-composition graph (see `docs/architecture/semantics.md`). Two graphs that
+composition graph. Canonicalisation is defined by the `canonicalise`
+module in `crates/noether-engine/src/lagrange/`; two graphs that
 canonicalise to identical trees have identical composition IDs.
 
-**Promise.** The canonicalisation rules listed in `semantics.md` are
-frozen at 1.0 and may only grow additive in 1.x. A graph's composition
-ID computed in 1.0 is the same when recomputed in 1.9.
+**Promise.** The canonicalisation rules are frozen at 1.0 and may only
+grow additive in 1.x. A graph's composition ID computed in 1.0 is the
+same when recomputed in 1.9.
 
 **Not promised.** Stability across major versions. 2.0 may add rules
 that cause semantically-equivalent graphs to hash differently than they
@@ -69,14 +70,15 @@ did under 1.x.
 
 ## Operator semantics — frozen at 1.0
 
-Every composition operator documented in `docs/architecture/semantics.md`
-is frozen at its 1.0 meaning:
+Every composition operator is frozen at its 1.0 meaning:
 
 - `Sequential`, `Parallel`, `Fanout`, `Branch`, `Merge`, `Retry`, `Const`,
   `Let`, `Stage`, `RemoteStage`
 
-**Promise.** Denotational meaning as written in semantics.md will not
-change in 1.x. Property laws `L1–L13` pass in every 1.x release.
+**Promise.** Denotational meaning as defined by the `canonicalise`
+module and the `L1–L13` property laws (in
+`crates/noether-engine/tests/laws.rs`) will not change in 1.x.
+Property laws pass in every 1.x release.
 
 **Not promised.** New operators added in 1.x. Those are additive — they
 don't change what existing operators do.

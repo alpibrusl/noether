@@ -161,8 +161,7 @@ fn validate_python_execute(code: &str) -> Result<(), String> {
             "Python stage implementation must define a top-level function \
              `def execute(input): ...` that takes the parsed input dict and \
              returns the output dict. Do not read from stdin or print to stdout — \
-             the Noether runtime handles I/O for you. \
-             See docs/guides/custom-stages.md (Python Stage Contract)."
+             the Noether runtime handles I/O for you."
                 .into(),
         );
     }

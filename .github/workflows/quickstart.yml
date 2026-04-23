@@ -14,7 +14,6 @@ on:
   pull_request:
     paths:
       - 'README.md'
-      - 'docs/getting-started/**'
       - 'examples/**'
       - '.github/workflows/quickstart.yml'
   workflow_dispatch:

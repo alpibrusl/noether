@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Dense, machine-readable map of Noether for AI agents. Humans reading this for the first time: start at [`README.md`](README.md), then [`docs/architecture.md`](docs/architecture.md) — both are narrative-shaped. This file is indexable fragments optimised for token-efficient agent consumption.
+Dense, machine-readable map of Noether for AI agents. Humans reading this for the first time: start at [`README.md`](README.md) — it's narrative-shaped. This file is indexable fragments optimised for token-efficient agent consumption.
 
 ## What Noether is, in one paragraph
 
@@ -11,7 +11,7 @@ Content-addressed, typed, composable stages (functions) wired into verified pipe
 - [`STABILITY.md`](STABILITY.md) — v1.x wire-format contract. What's frozen, what's additive, what's deprecated. Authoritative on what your code can rely on.
 - [`SECURITY.md`](SECURITY.md) — trust model. Isolation semantics, capability boundaries, what the sandbox does and doesn't defend against.
 - [`CHANGELOG.md`](CHANGELOG.md) — per-release delta. Start here when checking "what changed between vX and vY."
-- [`docs/architecture.md`](docs/architecture.md) — 4-layer architecture (Nix execution, stage store, composition engine, agent interface). Decision-maker's read.
+- [`docs/roadmap.md`](docs/roadmap.md) — what ships vs. what's planned.
 - [`docs/agents/`](docs/agents/) — intent-keyed playbooks. Each answers one concrete "how do I…?" question.
 
 ## Agent entry points

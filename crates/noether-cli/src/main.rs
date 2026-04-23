@@ -35,8 +35,7 @@ enum Commands {
     /// AI-agent documentation. Emits playbooks from `docs/agents/`
     /// as structured JSON so an agent can query by intent keyword
     /// instead of parsing prose. Human-facing narrative lives in
-    /// docs/architecture.md — this subcommand is for the
-    /// machine-readable path.
+    /// README.md; this subcommand is for the machine-readable path.
     AgentDocs {
         /// Playbook key (e.g. `compose-a-graph`). When omitted,
         /// lists available playbooks.

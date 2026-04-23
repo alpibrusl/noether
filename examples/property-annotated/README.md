@@ -44,4 +44,4 @@ Every example runs through the property checker at registration time. Violations
 ## Further reading
 
 - [`express-a-property`](../../docs/agents/express-a-property.md) — the dense agent-facing reference for picking property kinds and wiring field paths
-- [`architecture/type-system`](../../docs/architecture/type-system.md) — why properties sit alongside, not inside, the type system
+- [`STABILITY.md — Stage properties wire format`](../../STABILITY.md#stage-properties-wire-format--additive-kinds) — the kinds frozen at 1.0 and what each one means
