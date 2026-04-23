@@ -9,7 +9,7 @@ Current implementation status and future directions for Noether.
 | Phase | Name | Status | Key deliverables |
 |---|---|---|---|
 | 0 | Foundation | ✅ Done | `NType` structural type system, SHA-256 content addressing, Ed25519 signing, stage schema |
-| 1 | Store + Stdlib | ✅ Done | `StageStore` trait, `MemoryStore` / `JsonFileStore`, 76-stage stdlib, lifecycle validation |
+| 1 | Store + Stdlib | ✅ Done | `StageStore` trait, `MemoryStore` / `JsonFileStore`, stdlib (85 stages today; shipped at 76 in phase 1 and grew through M2–M3), lifecycle validation |
 | 2 | Composition Engine | ✅ Done | Lagrange graph format, type checker, `ExecutionPlan`, `run_composition`, structured traces |
 | 3 | Agent Interface | ✅ Done | Composition Agent, three-index semantic search, `VertexAiLlmProvider`, `noether compose` |
 | 4 | Hardening | ✅ Done | `noether build` + `--target browser`, store dedup, `noether build --serve :PORT` dashboard |
@@ -32,10 +32,10 @@ Noether shifted from sequential "phase" numbering to milestone tracking with the
 | M2.4 | Stage execution isolation — Phase 1 | ✅ Done | v0.7.0 | Bubblewrap sandbox by default, UID mapping to `nobody`, sandbox-private `/work` tmpfs, trusted `bwrap` path discovery, `--require-isolation` CI gate, DNS/TLS binds when network declared, adversarial escape-test suite |
 | M2.5 | Property DSL expansion | ✅ Done | v0.7.0 | `FieldLengthEq` / `FieldLengthMax` / `SubsetOf` / `Equals` / `FieldTypeIn`, typed `JsonKind` enum, shadowed-kind ingest rejection |
 | M2.x | `noether-isolation` crate extraction | ✅ Done | v0.7.1 | Standalone crate + `noether-sandbox` binary for non-Rust consumers (agentspec, future Python/Node/Go bindings) |
-| M3 | Optimizer + Richer Types | ✅ Done | v0.8.0 (next) | Graph optimizer (framework + `dead_branch` + `canonical_structural` + `memoize_pure`; `fuse_pure_sequential` / `hoist_invariant` moved to planner follow-ups). Parametric polymorphism end-to-end: unification module + `NType::Var` + `check_graph` substitution threading + generic stdlib (`identity` / `head` / `tail`). Row polymorphism: `NType::RecordWith` + Record↔RecordWith unification + `mark_done` stdlib. Refinement types: `NType::Refined` + `Refinement` DSL (`Range` / `OneOf` / `NonEmpty`) + runtime `validate_refinement` + `validate_stage` integration + `clamp_percent` stdlib. Runtime auto-enforcement at stage boundaries shipped in v0.8.1 as `ValidatingExecutor` (opt-out via `NOETHER_NO_REFINEMENT_CHECK=1`). |
-| M3.x | Filesystem-scoped effects | ✅ Done | unreleased (next tag) | `Effect::FsRead(path)` / `FsWrite(path)` variants wired through `IsolationPolicy::from_effects` so path-scoped binds fall out of the signature — closes the gap [#39](https://github.com/alpibrusl/noether/issues/39) flagged around `from_effects` being unable to drive `rw_binds` |
+| M3 | Optimizer + Richer Types | ✅ Done | v0.8.0 | Graph optimizer (framework + `dead_branch` + `canonical_structural` + `memoize_pure`; `fuse_pure_sequential` / `hoist_invariant` moved to planner follow-ups). Parametric polymorphism end-to-end: unification module + `NType::Var` + `check_graph` substitution threading + generic stdlib (`identity` / `head` / `tail`). Row polymorphism: `NType::RecordWith` + Record↔RecordWith unification + `mark_done` stdlib. Refinement types: `NType::Refined` + `Refinement` DSL (`Range` / `OneOf` / `NonEmpty`) + runtime `validate_refinement` + `validate_stage` integration + `clamp_percent` stdlib. Runtime auto-enforcement at stage boundaries is merged on `main` as `ValidatingExecutor` (opt-out via `NOETHER_NO_REFINEMENT_CHECK=1`); ships in the next tag after v0.8.0. |
+| M3.x | Filesystem-scoped effects | ✅ Done | v0.8.0 | `Effect::FsRead(path)` / `FsWrite(path)` variants wired through `IsolationPolicy::from_effects` so path-scoped binds fall out of the signature — closes the gap [#39](https://github.com/alpibrusl/noether/issues/39) flagged around `from_effects` being unable to drive `rw_binds` |
 | M4 | Stdlib Curation + Vertical Depth + 1.0 | ⏳ Planned | targeting 1.0.0 | Stdlib audit, vertical depth in a chosen domain, freeze |
-| Phase 2 isolation | Native namespaces + Landlock + seccomp | ⏳ Planned | targeting v0.8.0 | Replace bwrap subprocess with direct `unshare` + Landlock + seccomp; same `IsolationPolicy` surface, ~10× lower startup |
+| Phase 2 isolation | Native namespaces + Landlock + seccomp | ⏳ Planned | no fixed version yet (missed its v0.8.0 target) | Replace bwrap subprocess with direct `unshare` + Landlock + seccomp; same `IsolationPolicy` surface, ~10× lower startup |
 
 ---
 
@@ -49,7 +49,6 @@ Smaller tech-debt items tracked outside the milestone cadence:
 | `NixExecutor::warmup()` caller | Warmup is implemented but never called at CLI startup |
 | `get_live` CLI integration | `RemoteStageStore::get_live` is never called from the CLI |
 | Scheduler `registry_url` docs | The scheduler's remote-store config is undocumented outside source code |
-| Registry unconditional LLM-provider init | `routes::compositions::run` constructs a `reqwest::blocking::Client` even when no LLM env is set, which blocks HTTP-level integration testing from `#[tokio::test]` in noether-cloud. Make provider construction lazy or env-gated |
 | `validate_against_types` for relational property variants | Structural checks (length-on-numeric, equals-on-disjoint-types) currently punt at registration; land naturally with M3 refinement types |
 
 ---
