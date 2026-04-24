@@ -62,6 +62,27 @@ back to unsandboxed with a warning. Pass `--require-isolation` (or set
 `NOETHER_REQUIRE_ISOLATION=1`) to turn that fallback into a hard error
 in CI.
 
+## Grid (broker + worker)
+
+`noether-grid` pools LLM capacity across a company — see the
+[broker README](https://github.com/alpibrusl/noether/tree/main/crates/noether-grid-broker)
+for the full pitch and deployment guide.
+
+Install from crates.io (v0.8.2+):
+
+```bash
+cargo install noether-grid-broker
+cargo install noether-grid-worker
+```
+
+Or download prebuilt binaries from
+[GitHub Releases](https://github.com/alpibrusl/noether/releases/latest)
+— Linux / macOS / Windows artifacts published per tag, same as the CLI.
+
+Both crates carry a `"RESEARCH —"` prefix in their crates.io descriptions:
+shipped and supported, but the operator surface is still evolving
+release-to-release. Pin to exact versions in production.
+
 ## Verify the install
 
 ```bash

@@ -57,6 +57,8 @@ jobs:
           cargo build -p noether-cli --release --target ${{ matrix.target }}
           cargo build -p noether-scheduler --release --target ${{ matrix.target }}
           cargo build -p noether-sandbox --release --target ${{ matrix.target }}
+          cargo build -p noether-grid-broker --release --target ${{ matrix.target }}
+          cargo build -p noether-grid-worker --release --target ${{ matrix.target }}
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
 
@@ -70,8 +72,14 @@ jobs:
           tar czf "$ARCHIVE" -C "$DIR" noether
           SCHED_ARCHIVE=noether-scheduler-${VERSION}-${{ matrix.target }}.tar.gz
           tar czf "$SCHED_ARCHIVE" -C "$DIR" noether-scheduler
+          BROKER_ARCHIVE=noether-grid-broker-${VERSION}-${{ matrix.target }}.tar.gz
+          tar czf "$BROKER_ARCHIVE" -C "$DIR" noether-grid-broker
+          WORKER_ARCHIVE=noether-grid-worker-${VERSION}-${{ matrix.target }}.tar.gz
+          tar czf "$WORKER_ARCHIVE" -C "$DIR" noether-grid-worker
           echo "ASSET_CLI=$ARCHIVE" >> $GITHUB_ENV
           echo "ASSET_SCHED=$SCHED_ARCHIVE" >> $GITHUB_ENV
+          echo "ASSET_BROKER=$BROKER_ARCHIVE" >> $GITHUB_ENV
+          echo "ASSET_WORKER=$WORKER_ARCHIVE" >> $GITHUB_ENV
 
       - name: Package (Windows)
         if: matrix.archive == 'zip'
@@ -83,8 +91,14 @@ jobs:
           Compress-Archive -Path "$dir/noether.exe" -DestinationPath $archive
           $sched = "noether-scheduler-${version}-${{ matrix.target }}.zip"
           Compress-Archive -Path "$dir/noether-scheduler.exe" -DestinationPath $sched
+          $broker = "noether-grid-broker-${version}-${{ matrix.target }}.zip"
+          Compress-Archive -Path "$dir/noether-grid-broker.exe" -DestinationPath $broker
+          $worker = "noether-grid-worker-${version}-${{ matrix.target }}.zip"
+          Compress-Archive -Path "$dir/noether-grid-worker.exe" -DestinationPath $worker
           echo "ASSET_CLI=$archive" | Out-File -FilePath $env:GITHUB_ENV -Append
           echo "ASSET_SCHED=$sched" | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "ASSET_BROKER=$broker" | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "ASSET_WORKER=$worker" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       # noether-sandbox is only packaged for Linux targets: bubblewrap
       # is Linux-only, so shipping a sandbox tarball for macOS or Windows
@@ -113,6 +127,8 @@ jobs:
             ${{ env.ASSET_CLI }}
             ${{ env.ASSET_SCHED }}
             ${{ env.ASSET_SANDBOX }}
+            ${{ env.ASSET_BROKER }}
+            ${{ env.ASSET_WORKER }}
           generate_release_notes: true
 
   publish-crates:
@@ -126,29 +142,38 @@ jobs:
       # Dependency order (any publish that runs ahead of its deps will
       # fail with "no matching package" — this is what broke v0.7.1 and
       # v0.7.2 when noether-isolation was missing from the list):
-      #   core        — no internal deps
-      #   isolation   — depends on core
-      #   store       — depends on core
-      #   engine      — depends on core + store + isolation
-      #   cli         — depends on core + store + engine
-      #   scheduler   — depends on core + engine
-      #   sandbox     — depends on core + isolation
+      #   core           — no internal deps
+      #   grid-protocol  — no internal deps (only serde/serde_json/chrono)
+      #   isolation      — depends on core
+      #   store          — depends on core
+      #   engine         — depends on core + store + isolation
+      #   cli            — depends on core + store + engine
+      #   scheduler      — depends on core + engine
+      #   sandbox        — depends on core + isolation
+      #   grid-broker    — depends on grid-protocol + engine + store + core
+      #   grid-worker    — depends on grid-protocol + engine + store + core
       # `sleep 30` between each gives the crates.io index enough time
       # to index the previous publish before the next resolve.
       - name: Publish crates (in dependency order)
         run: |
-          cargo publish -p noether-core        --no-verify
+          cargo publish -p noether-core           --no-verify
           sleep 30
-          cargo publish -p noether-isolation   --no-verify
+          cargo publish -p noether-grid-protocol  --no-verify
           sleep 30
-          cargo publish -p noether-store       --no-verify
+          cargo publish -p noether-isolation      --no-verify
           sleep 30
-          cargo publish -p noether-engine      --no-verify
+          cargo publish -p noether-store          --no-verify
           sleep 30
-          cargo publish -p noether-cli         --no-verify
+          cargo publish -p noether-engine         --no-verify
           sleep 30
-          cargo publish -p noether-scheduler   --no-verify
+          cargo publish -p noether-cli            --no-verify
           sleep 30
-          cargo publish -p noether-sandbox     --no-verify
+          cargo publish -p noether-scheduler      --no-verify
+          sleep 30
+          cargo publish -p noether-sandbox        --no-verify
+          sleep 30
+          cargo publish -p noether-grid-broker    --no-verify
+          sleep 30
+          cargo publish -p noether-grid-worker    --no-verify
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

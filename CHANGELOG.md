@@ -4,6 +4,23 @@ Notable changes to Noether. Follows [Keep a Changelog](https://keepachangelog.co
 
 ## Unreleased
 
+## 0.8.2 — 2026-04-24
+
+### Added — `noether-grid` publishes to crates.io and ships prebuilt binaries
+
+Dropped `publish = false` from `noether-grid-protocol`, `noether-grid-broker`, and `noether-grid-worker`. They publish alongside the other crates in the dependency chain now:
+
+```bash
+cargo install noether-grid-broker
+cargo install noether-grid-worker
+```
+
+The release workflow also builds and uploads prebuilt broker + worker archives alongside the CLI / scheduler / sandbox tarballs, for every Linux / macOS / Windows target — operators running a worker on a developer laptop no longer need a Rust toolchain.
+
+Descriptions keep the `"RESEARCH —"` prefix. The operator surface is supported but still evolving release-to-release; pin to exact versions in production.
+
+Also bumped `acli` 0.4 → 0.5 (noether doesn't touch the breaking `skill`-subcommand surface; drop-in).
+
 ## 0.8.1 — 2026-04-23
 
 Patch release. Two goals: repair a partial v0.8.0 crates.io publish, and ship the refinement-enforcement follow-up that merged to `main` post-tag.

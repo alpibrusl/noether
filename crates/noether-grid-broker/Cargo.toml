@@ -8,7 +8,6 @@ homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "RESEARCH — noether-grid broker: pools worker LLM capacity, dispatches jobs"
-publish = false
 
 [[bin]]
 name = "noether-grid-broker"
