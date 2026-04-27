@@ -30,7 +30,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 uuid = { version = "1", features = ["v4"] }
 tower-http = { version = "0.6", features = ["cors", "trace"] }
 clap = { version = "4", features = ["derive", "env"] }
-prometheus = { version = "0.13", default-features = false, features = ["process"] }
+prometheus = { version = "0.14", default-features = false, features = ["process"] }
 # Postgres-backed durability — opt in with `--features postgres` (off by
 # default so the binary stays small and the pure intra-LAN demo path
 # doesn't need a database). When enabled, pass `--postgres-url
