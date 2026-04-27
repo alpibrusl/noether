@@ -96,21 +96,21 @@ jobs:
             --lcov --output-path coverage-engine.lcov \
             --ignore-filename-regex '(tests?/|examples/)'
       - name: Upload noether-core coverage
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v6
         with:
           files: coverage-core.lcov
           flags: core
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
       - name: Upload noether-store coverage
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v6
         with:
           files: coverage-store.lcov
           flags: store
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
       - name: Upload noether-engine coverage
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v6
         with:
           files: coverage-engine.lcov
           flags: engine
