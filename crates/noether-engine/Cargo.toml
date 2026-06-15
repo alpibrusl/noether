@@ -33,7 +33,7 @@ ed25519-dalek = { workspace = true }
 rand = { workspace = true }
 tracing = "0.1"
 rusqlite = { version = "0.39.0", features = ["bundled"], optional = true }
-arrow = { version = "58", optional = true, default-features = false, features = ["ipc"] }
+arrow = { version = "59", optional = true, default-features = false, features = ["ipc"] }
 base64 = { version = "0.22", optional = true }
 wasm-bindgen = { version = "0.2", optional = true }
 # CLI detection + dispatch delegated to llm-here (shared across caloron,
